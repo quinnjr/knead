@@ -4,6 +4,7 @@ export {
   HttpApplication,
   HttpCoreModule,
   type ListenOptions,
+  redirectToHttps,
 } from './application.js';
 export type { BunHandler, RouteTableEntry } from './compiler.js';
 export * from './decorators.js';

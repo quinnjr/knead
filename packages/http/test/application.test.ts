@@ -152,7 +152,7 @@ beforeAll(async () => {
   app = await start(AppModule);
 });
 afterAll(async () => {
-  app.server.stop(true);
+  await app.close();
 });
 
 describe('routing and response mapping', () => {
@@ -351,7 +351,7 @@ describe('global registration', () => {
     expect(blocked.status).toBe(403);
     expect(blocked.headers.get('x-chain')).toBe('imperative');
     expect(() => app2.useGlobalMiddleware(tag('late'))).toThrow(HttpConfigError);
-    app2.server.stop(true);
+    await app2.close();
   });
 
   test('APP_GUARD providers apply to every route', async () => {
@@ -373,7 +373,7 @@ describe('global registration', () => {
     class M {}
     const app3 = await start(M);
     expect((await fetch(new URL('/y', app3.url))).status).toBe(403);
-    app3.server.stop(true);
+    await app3.close();
   });
 });
 
@@ -402,7 +402,7 @@ describe('global middleware ordering', () => {
     const res = await fetch(new URL('/o', a.url));
     // appended on the way out: innermost first, so the reverse of run order
     expect(res.headers.get('x-chain')).toBe('imperative5, imperative10, provider10');
-    a.server.stop(true);
+    await a.close();
   });
 });
 
@@ -420,7 +420,7 @@ describe('listen atomicity and global provider scope', () => {
     expect(a.routes).toEqual([]);
     a.get(WsRegistry).register('/after', { upgrade: () => ({}) });
     await a.listen({ port: 0, hostname: '127.0.0.1' });
-    a.server.stop(true);
+    await a.close();
     blocker.stop(true);
   });
 
@@ -447,7 +447,7 @@ describe('listen atomicity and global provider scope', () => {
     const a = await start(M);
     expect((await fetch(new URL('/g', a.url))).status).toBe(403);
     expect((await fetch(new URL('/g', a.url), { headers: { 'x-secret': 's3' } })).status).toBe(200);
-    a.server.stop(true);
+    await a.close();
   });
 });
 
@@ -491,6 +491,6 @@ describe('bootstrap errors', () => {
     class M {}
     const a = await start(M);
     await expect(a.listen({ port: 0 })).rejects.toThrow(HttpConfigError);
-    a.server.stop(true);
+    await a.close();
   });
 });

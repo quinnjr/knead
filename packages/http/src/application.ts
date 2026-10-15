@@ -59,8 +59,20 @@ export class HpmwsFactory {
   }
 }
 
+/** 308 redirect to the same URL on the HTTPS listener. */
+export function redirectToHttps(req: Request, httpsPort: number): Response {
+  const url = new URL(req.url);
+  url.protocol = 'https:';
+  url.port = httpsPort === 443 ? '' : String(httpsPort);
+  return new Response(null, { status: 308, headers: { location: url.toString() } });
+}
+
 export class HttpApplication {
   #server: Server<WsData> | undefined;
+  #retired: Server<WsData>[] = [];
+  #redirect: Server<undefined> | undefined;
+  #closing: Promise<void> | undefined;
+  readonly #signalHandlers: [NodeJS.Signals, () => void][] = [];
   #compiled: CompiledApp | undefined;
   readonly #extraMiddleware: GlobalMiddleware[] = [];
   readonly #extraGuards: GuardRef<any>[] = [];
@@ -110,6 +122,68 @@ export class HttpApplication {
     return this.#compiled?.table ?? [];
   }
 
+  get redirectUrl(): URL | undefined {
+    return this.#redirect?.url;
+  }
+
+  /**
+   * Bun's server.reload() keeps the original certificate, so a replacement listener is bound
+   * to the same port (SO_REUSEPORT) and the old one drains its in-flight requests.
+   */
+  async reloadTls(tls: TLSOptions | TLSOptions[]): Promise<void> {
+    if (!this.serveOptions?.tls) {
+      throw new HttpConfigError('reloadTls() requires an application that listens with tls.');
+    }
+    if (process.platform !== 'linux') {
+      throw new HttpConfigError('reloadTls() requires Linux (SO_REUSEPORT load balancing).');
+    }
+    const previous = this.server;
+    const next = { ...this.serveOptions, tls, port: previous.port };
+    this.#server = Bun.serve(next as unknown as Serve.Options<WsData, string>);
+    this.serveOptions = next;
+    this.#retired.push(previous);
+    await previous.stop(false);
+    this.#retired = this.#retired.filter((s) => s !== previous);
+  }
+
+  /** Graceful, idempotent shutdown. */
+  close(signal?: string): Promise<void> {
+    this.#closing ??= this.#shutdown(signal);
+    return this.#closing;
+  }
+
+  enableShutdownHooks(
+    signals: NodeJS.Signals[] = ['SIGTERM', 'SIGINT'],
+    options: { exit?: boolean } = {},
+  ): this {
+    for (const signal of signals) {
+      const handler = () => {
+        void this.close(signal).finally(() => {
+          if (options.exit ?? true) process.exit(0);
+        });
+      };
+      process.once(signal, handler);
+      this.#signalHandlers.push([signal, handler]);
+    }
+    return this;
+  }
+
+  async #shutdown(signal?: string): Promise<void> {
+    const servers = [...this.#retired, ...(this.#server ? [this.#server] : [])];
+    if (servers.length > 0) {
+      for (const server of servers) void server.stop(false);
+      this.#redirect?.stop(true);
+      const deadline = Date.now() + this.shutdownTimeout;
+      const pending = () => servers.reduce((n, server) => n + server.pendingRequests, 0);
+      while (pending() > 0 && Date.now() < deadline) await Bun.sleep(10);
+      this.context.get(WsRegistry).closeAll(1001, 'Server shutting down');
+      await Promise.all(servers.map((server) => server.stop(true)));
+    }
+    for (const [sig, handler] of this.#signalHandlers) process.off(sig, handler);
+    this.#signalHandlers.length = 0;
+    await this.context.close(signal);
+  }
+
   async listen(options: ListenOptions = {}): Promise<Server<WsData>> {
     if (this.#server) throw new HttpConfigError('listen() was already called.');
     const root = this.context.root.injector;
@@ -152,7 +226,11 @@ export class HttpApplication {
       fetch: compiled.fetch,
       websocket: ws.handler(),
     };
-    if (options.tls !== undefined) serveOptions.tls = options.tls;
+    if (options.tls !== undefined) {
+      serveOptions.tls = options.tls;
+      // Required by reloadTls(): a replacement listener binds the same port.
+      serveOptions.reusePort = true;
+    }
     if (options.maxRequestBodySize !== undefined)
       serveOptions.maxRequestBodySize = options.maxRequestBodySize;
     if (options.idleTimeout !== undefined) serveOptions.idleTimeout = options.idleTimeout;
@@ -167,8 +245,18 @@ export class HttpApplication {
     return this.#server;
   }
 
-  /** Hook for Task 15 (redirect listener). */
-  protected onListening(_options: ListenOptions): void {}
+  protected onListening(options: ListenOptions): void {
+    if (!options.redirectHttp) return;
+    const httpsPort = this.server.port;
+    if (httpsPort === undefined) {
+      throw new HttpConfigError('redirectHttp requires a TCP listener.');
+    }
+    this.#redirect = Bun.serve({
+      port: options.redirectHttp.port,
+      hostname: options.redirectHttp.hostname ?? options.hostname ?? '0.0.0.0',
+      fetch: (req) => redirectToHttps(req, httpsPort),
+    });
+  }
 
   #assertNotListening(method: string): void {
     if (this.#server) throw new HttpConfigError(`${method}() must be called before listen().`);
