@@ -1,0 +1,21 @@
+{
+  "name": "@hpmws/example-rest-api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun src/main.ts",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@hpmws/core": "workspace:^",
+    "@hpmws/cors": "workspace:^",
+    "@hpmws/http": "workspace:^",
+    "@hpmws/rate-limit": "workspace:^",
+    "@hpmws/sanitize": "workspace:^",
+    "@hpmws/security-headers": "workspace:^",
+    "valibot": "^1.5.0"
+  },
+  "devDependencies": {
+    "@hpmws/testing": "workspace:^"
+  }
+}
