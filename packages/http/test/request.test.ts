@@ -95,4 +95,30 @@ describe('parseBody (Review Focus 1)', () => {
     ).catch((e) => e);
     expect(none).toBeInstanceOf(UnsupportedMediaTypeException);
   });
+
+  test('an unsupported declared content type is rejected without reading the body', async () => {
+    const req = post('<a/>', 'application/xml');
+    await parseBody(req).catch(() => undefined);
+    expect(req.bodyUsed).toBe(false);
+  });
+
+  test('a failing body stream is a 400', async () => {
+    const failing = () =>
+      new ReadableStream({
+        start(c) {
+          c.error(new Error('aborted'));
+        },
+      });
+    for (const type of ['application/json', 'text/plain', 'application/x-www-form-urlencoded']) {
+      const req = new Request('http://localhost/', {
+        method: 'POST',
+        body: failing(),
+        headers: { 'content-type': type },
+        duplex: 'half',
+      } as RequestInit);
+      const error = (await parseBody(req).catch((e) => e)) as BadRequestException;
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect(error.detail).toBe('Failed to read request body');
+    }
+  });
 });

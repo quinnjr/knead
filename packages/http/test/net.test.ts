@@ -77,17 +77,46 @@ describe('resolveClientIp', () => {
   });
 });
 
+describe('resolveClientIp with invalid entries', () => {
+  test('hop mode falls back to the nearest valid address to the right', () => {
+    expect(resolveClientIp('10.0.0.1', 'unknown', compileTrust(1))).toBe('10.0.0.1');
+    expect(resolveClientIp('10.0.0.1', 'unknown, 10.0.0.2', compileTrust(2))).toBe('10.0.0.2');
+  });
+  test('CIDR mode falls back to the nearest valid address to the right', () => {
+    const trust = compileTrust(['10.0.0.0/8']);
+    expect(resolveClientIp('10.0.0.1', 'unknown', trust)).toBe('10.0.0.1');
+    expect(resolveClientIp('10.0.0.1', '1.2.3.4, unknown, 10.0.0.2', trust)).toBe('10.0.0.2');
+  });
+});
+
 describe('resolveSecure', () => {
   test('TLS listeners are always secure', () => {
-    expect(resolveSecure(true, '1.1.1.1', null, compileTrust(false))).toBe(true);
+    expect(resolveSecure(true, '1.1.1.1', null, null, compileTrust(false))).toBe(true);
   });
   test('X-Forwarded-Proto is honoured only from a trusted peer', () => {
-    expect(resolveSecure(false, '10.0.0.1', 'https', compileTrust(false))).toBe(false);
-    expect(resolveSecure(false, '10.0.0.1', 'https', compileTrust(1))).toBe(true);
-    expect(resolveSecure(false, '10.0.0.1', 'HTTPS, http', compileTrust(['10.0.0.0/8']))).toBe(
+    expect(resolveSecure(false, '10.0.0.1', null, 'https', compileTrust(false))).toBe(false);
+    expect(resolveSecure(false, '10.0.0.1', null, 'https', compileTrust(1))).toBe(true);
+    expect(resolveSecure(false, '10.0.0.1', null, 'HTTPS', compileTrust(['10.0.0.0/8']))).toBe(
       true,
     );
-    expect(resolveSecure(false, '8.8.8.8', 'https', compileTrust(['10.0.0.0/8']))).toBe(false);
-    expect(resolveSecure(false, '10.0.0.1', 'http', compileTrust(1))).toBe(false);
+    expect(resolveSecure(false, '8.8.8.8', null, 'https', compileTrust(['10.0.0.0/8']))).toBe(
+      false,
+    );
+    expect(resolveSecure(false, '10.0.0.1', null, 'http', compileTrust(1))).toBe(false);
+  });
+  test('a client-supplied left-most value cannot upgrade the scheme', () => {
+    expect(resolveSecure(false, '10.0.0.1', null, 'https, http', compileTrust(1))).toBe(false);
+  });
+  test('the value is anchored to the outermost trusted proxy', () => {
+    expect(resolveSecure(false, '10.0.0.1', 'client, proxy', 'https, http', compileTrust(2))).toBe(
+      true,
+    );
+    const cidr = compileTrust(['10.0.0.0/8']);
+    expect(
+      resolveSecure(false, '10.0.0.1', '203.0.113.9, 10.0.0.2', 'https, http, http', cidr),
+    ).toBe(false);
+    expect(
+      resolveSecure(false, '10.0.0.1', '203.0.113.9, 10.0.0.2', 'http, https, http', cidr),
+    ).toBe(true);
   });
 });

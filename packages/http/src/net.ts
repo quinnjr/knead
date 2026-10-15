@@ -101,6 +101,20 @@ export function compileTrust(trust: TrustProxy): CompiledTrust {
   return { kind: 'cidr', isTrusted: cidrMatcher(trust) };
 }
 
+function splitList(value: string | null): string[] {
+  return (value ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .reverse();
+}
+
+/** Nearest valid IP at or to the right of `index` (towards the socket peer); the peer itself is the last resort. */
+function validAtOrBefore(chain: readonly string[], index: number): string {
+  for (let i = index; i > 0; i--) if (parseIp(chain[i]!)) return chain[i]!;
+  return chain[0]!;
+}
+
 export function resolveClientIp(
   remote: string | undefined,
   forwardedFor: string | null,
@@ -108,25 +122,42 @@ export function resolveClientIp(
 ): string | undefined {
   if (remote === undefined) return undefined;
   if (trust.kind === 'none' || !forwardedFor) return normalizeIp(remote);
-  const hops = forwardedFor
-    .split(',')
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0)
-    .reverse();
-  const chain = [remote, ...hops];
-  if (trust.kind === 'hops') return normalizeIp(chain[Math.min(trust.hops, chain.length - 1)]!);
-  for (const address of chain) if (!trust.isTrusted(address)) return normalizeIp(address);
-  return normalizeIp(chain[chain.length - 1]!);
+  const chain = [remote, ...splitList(forwardedFor)];
+  // Hop-count mode: the peer is trusted by definition (the operator declared N proxies in front).
+  if (trust.kind === 'hops')
+    return normalizeIp(validAtOrBefore(chain, Math.min(trust.hops, chain.length - 1)));
+  let selected = chain.length - 1;
+  for (const [i, address] of chain.entries()) {
+    if (!trust.isTrusted(address)) {
+      selected = i;
+      break;
+    }
+  }
+  return normalizeIp(validAtOrBefore(chain, selected));
 }
 
 export function resolveSecure(
   tls: boolean,
   remote: string | undefined,
+  forwardedFor: string | null,
   forwardedProto: string | null,
   trust: CompiledTrust,
 ): boolean {
   if (tls) return true;
   if (remote === undefined || !forwardedProto || trust.kind === 'none') return false;
-  const peerTrusted = trust.kind === 'hops' ? true : trust.isTrusted(remote);
-  return peerTrusted && forwardedProto.split(',')[0]!.trim().toLowerCase() === 'https';
+  let index: number;
+  if (trust.kind === 'hops') {
+    // Hop-count mode: the peer is trusted by definition.
+    index = trust.hops - 1;
+  } else {
+    if (!trust.isTrusted(remote)) return false;
+    const chain = [remote, ...splitList(forwardedFor)];
+    let trusted = 0;
+    while (trusted < chain.length && trust.isTrusted(chain[trusted]!)) trusted++;
+    index = trusted - 1;
+  }
+  // Index 0 is the value appended by the nearest proxy; the left-most values are client-controlled.
+  const protos = splitList(forwardedProto);
+  if (protos.length === 0) return false;
+  return protos[Math.min(index, protos.length - 1)]!.toLowerCase() === 'https';
 }

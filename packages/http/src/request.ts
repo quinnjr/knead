@@ -23,11 +23,19 @@ export function headersToObject(headers: Headers): Record<string, string> {
   return out;
 }
 
+async function readBody<T>(read: () => Promise<T>): Promise<T> {
+  try {
+    return await read();
+  } catch {
+    throw new BadRequestException('Failed to read request body');
+  }
+}
+
 export async function parseBody(req: Request): Promise<unknown> {
   if (req.body === null) return undefined;
   const type = (req.headers.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase();
   if (type === 'application/json' || type.endsWith('+json')) {
-    const text = await req.text();
+    const text = await readBody(() => req.text());
     if (text.length === 0) return undefined;
     try {
       return JSON.parse(text);
@@ -36,7 +44,7 @@ export async function parseBody(req: Request): Promise<unknown> {
     }
   }
   if (type === 'application/x-www-form-urlencoded') {
-    return parseQuery(new URLSearchParams(await req.text()));
+    return parseQuery(new URLSearchParams(await readBody(() => req.text())));
   }
   if (type === 'multipart/form-data') {
     let form: Iterable<[string, string | File]>;
@@ -47,8 +55,10 @@ export async function parseBody(req: Request): Promise<unknown> {
     }
     return collect(form);
   }
-  if (type.startsWith('text/')) return req.text();
-  const bytes = await req.arrayBuffer();
+  if (type.startsWith('text/')) return readBody(() => req.text());
+  // Declared but unsupported: reject without consuming the body.
+  if (type) throw new UnsupportedMediaTypeException(`Unsupported content type: ${type}`);
+  const bytes = await readBody(() => req.arrayBuffer());
   if (bytes.byteLength === 0) return undefined;
-  throw new UnsupportedMediaTypeException(`Unsupported content type: ${type || '(none)'}`);
+  throw new UnsupportedMediaTypeException('Unsupported content type: (none)');
 }

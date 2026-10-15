@@ -62,6 +62,7 @@ export class RequestContext implements Ctx<any> {
     this.#secure ??= resolveSecure(
       this.net.tls,
       this.#remote(),
+      this.req.headers.get('x-forwarded-for'),
       this.req.headers.get('x-forwarded-proto'),
       this.net.trust,
     );

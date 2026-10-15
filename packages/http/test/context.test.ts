@@ -33,6 +33,15 @@ describe('RequestContext', () => {
     expect(makeCtx('/', { net: { tls: true } }).secure).toBe(true);
   });
 
+  test('an untrusted peer cannot spoof forwarding headers under CIDR trust', () => {
+    const req = new Request('http://localhost/', {
+      headers: { 'x-forwarded-for': '1.2.3.4', 'x-forwarded-proto': 'https' },
+    });
+    const ctx = makeCtx(req, { address: '8.8.8.8', net: { trust: compileTrust(['10.0.0.0/8']) } });
+    expect(ctx.ip).toBe('8.8.8.8');
+    expect(ctx.secure).toBe(false);
+  });
+
   test('json() parses once and is memoized', async () => {
     const ctx = makeCtx(
       new Request('http://localhost/', {
