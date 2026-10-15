@@ -1,9 +1,9 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type BeforeApplicationShutdown, inject, Module, type OnModuleInit } from '@hpmws/core';
-import { redirectToHttps } from '../src/application.js';
+import { HpmwsFactory, redirectToHttps } from '../src/application.js';
 import { Controller, type Ctx, Get, HttpConfigError, WsRegistry } from '../src/index.js';
 import { MemoryLogger } from '../src/logger.js';
 import { start } from './helpers.js';
@@ -162,22 +162,26 @@ describe.skipIf(!hasOpenssl)('TLS', () => {
   test('redirectHttp bind failure rolls back the HTTPS listener', async () => {
     @Module({})
     class M {}
+    const probe = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response('x') });
+    const freePort = probe.port as number;
+    probe.stop(true);
     const blocker = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response('x') });
-    const app = await start(M);
-    await app.close();
-    const { HpmwsFactory } = await import('../src/application.js');
-    const app2 = await HpmwsFactory.create(M, { logger: new MemoryLogger(), development: false });
+    const app = await HpmwsFactory.create(M, { logger: new MemoryLogger(), development: false });
     await expect(
-      app2.listen({
-        port: 0,
+      app.listen({
+        port: freePort,
         hostname: '127.0.0.1',
         tls: makeCert('first'),
         redirectHttp: { port: blocker.port as number, hostname: '127.0.0.1' },
       }),
     ).rejects.toThrow();
-    const server = await app2.listen({ port: 0, hostname: '127.0.0.1', tls: makeCert('first') });
-    expect(server.port).toBeGreaterThan(0);
-    await app2.close();
+    const server = await app.listen({
+      port: freePort,
+      hostname: '127.0.0.1',
+      tls: makeCert('first'),
+    });
+    expect(server.port).toBe(freePort);
+    await app.close();
     blocker.stop(true);
   });
 
@@ -203,7 +207,6 @@ test('reloadTls without TLS is a configuration error', async () => {
 test('redirectHttp without tls is a configuration error', async () => {
   @Module({})
   class M {}
-  const { HpmwsFactory } = await import('../src/application.js');
   const app = await HpmwsFactory.create(M, { logger: new MemoryLogger(), development: false });
   await expect(
     app.listen({ port: 0, hostname: '127.0.0.1', redirectHttp: { port: 0 } }),
@@ -214,7 +217,6 @@ test('redirectHttp without tls is a configuration error', async () => {
 test('port throws before listen', async () => {
   @Module({})
   class M {}
-  const { HpmwsFactory } = await import('../src/application.js');
   const app = await HpmwsFactory.create(M, { logger: new MemoryLogger(), development: false });
   expect(() => app.port).toThrow(HttpConfigError);
   await app.close();
@@ -325,5 +327,36 @@ describe('graceful shutdown', () => {
       true,
     );
     expect(process.listenerCount('SIGUSR2')).toBe(before);
+  });
+  test('enableShutdownHooks exits 0 on success and 1 on failure', async () => {
+    class Failing implements BeforeApplicationShutdown {
+      beforeApplicationShutdown() {
+        throw new Error('hook boom');
+      }
+    }
+    @Module({})
+    class Ok {}
+    @Module({ providers: [Failing] })
+    class Bad {}
+    const exit = spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    try {
+      const ok = await start(Ok);
+      ok.enableShutdownHooks(['SIGUSR2']);
+      process.emit('SIGUSR2', 'SIGUSR2');
+      await ok.close();
+      await Bun.sleep(10);
+      expect(exit).toHaveBeenLastCalledWith(0);
+
+      const logger = new MemoryLogger();
+      const bad = await start(Bad, {}, { logger });
+      bad.enableShutdownHooks(['SIGUSR2']);
+      process.emit('SIGUSR2', 'SIGUSR2');
+      await bad.close().catch(() => {});
+      await Bun.sleep(10);
+      expect(exit).toHaveBeenLastCalledWith(1);
+      expect(logger.entries.some((e) => e.level === 'error')).toBe(true);
+    } finally {
+      exit.mockRestore();
+    }
   });
 });

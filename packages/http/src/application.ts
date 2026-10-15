@@ -277,7 +277,11 @@ export class HttpApplication {
     try {
       redirect = this.#startRedirect(options, server);
     } catch (error) {
-      await server.stop(true);
+      try {
+        await server.stop(true);
+      } catch (stopError) {
+        this.logger.error('Failed to release the HTTPS listener after a bind failure', stopError);
+      }
       throw error;
     }
     ws.seal();
