@@ -144,16 +144,21 @@ describe('createErrorHandler', () => {
 
   test('a filter returning a non-Response is logged and falls back to the default response', async () => {
     logger.clear();
-    const bad = { catch: () => 'oops' } as unknown as ExceptionFilter;
+    class StringFilter {
+      catch() {
+        return 'oops';
+      }
+    }
+    const bad = new StringFilter() as unknown as ExceptionFilter;
     const res = await createErrorHandler(
       [bad],
       logger,
       false,
     )(new NotFoundException(), makeCtx('/y'));
     expect(res.status).toBe(404);
-    expect(logger.entries.some((e) => e.level === 'error' && e.message.includes('filter'))).toBe(
-      true,
-    );
+    expect(
+      logger.entries.some((e) => e.level === 'error' && e.message.includes('StringFilter')),
+    ).toBe(true);
   });
 
   test('unknown errors are 500 problem+json, detailed only in development', async () => {

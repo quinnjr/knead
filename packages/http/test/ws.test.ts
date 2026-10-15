@@ -36,6 +36,13 @@ describe('WsRegistry', () => {
     expect(() => ws.register('/late', { upgrade: () => ({}) })).toThrow(/after listen/);
   });
 
+  test('registering a duplicate path after seal() throws the after-listen error', async () => {
+    const { ws } = await registry();
+    ws.register('/dup', { upgrade: () => ({}) });
+    ws.seal();
+    expect(() => ws.register('/dup', { upgrade: () => ({}) })).toThrow(/after listen/);
+  });
+
   test('dispatches events to the endpoint named in socket data and tracks open sockets', async () => {
     const { ws } = await registry();
     const events: string[] = [];
