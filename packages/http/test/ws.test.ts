@@ -30,6 +30,14 @@ describe('WsRegistry', () => {
     expect([...ws.entries()].map(([p]) => p)).toEqual(['/chat']);
   });
 
+  test('rejects parameter and wildcard paths', async () => {
+    const { ws } = await registry();
+    expect(() => ws.register('/rooms/:id', { upgrade: () => ({}) })).toThrow(
+      'WebSocket endpoint paths must be exact; got /rooms/:id',
+    );
+    expect(() => ws.register('/files/*', { upgrade: () => ({}) })).toThrow(HttpConfigError);
+  });
+
   test('registering after seal() is rejected', async () => {
     const { ws } = await registry();
     ws.seal();

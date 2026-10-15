@@ -278,6 +278,43 @@ describe('websocket endpoints', () => {
     socket.close();
   });
 
+  test('a rejected upgrade is answered with 403', async () => {
+    const statusLine = await new Promise<string>((resolve, reject) => {
+      let buf = '';
+      Bun.connect({
+        hostname: '127.0.0.1',
+        port: Number(app.url.port),
+        socket: {
+          open(sock) {
+            sock.write(
+              [
+                'GET /chat?token=bad HTTP/1.1',
+                `Host: 127.0.0.1:${app.url.port}`,
+                'Upgrade: websocket',
+                'Connection: Upgrade',
+                'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
+                'Sec-WebSocket-Version: 13',
+                '',
+                '',
+              ].join('\r\n'),
+            );
+          },
+          data(sock, chunk) {
+            buf += chunk.toString();
+            if (buf.includes('\r\n')) {
+              resolve(buf.split('\r\n')[0] ?? '');
+              sock.end();
+            }
+          },
+          error(_s, e) {
+            reject(e);
+          },
+        },
+      }).catch(reject);
+    });
+    expect(statusLine).toContain('403');
+  });
+
   test('a rejected upgrade never opens', async () => {
     const socket = new WebSocket(wsUrl('/chat?token=bad'));
     const opened = await new Promise<boolean>((resolve) => {
@@ -337,6 +374,80 @@ describe('global registration', () => {
     const app3 = await start(M);
     expect((await fetch(new URL('/y', app3.url))).status).toBe(403);
     app3.server.stop(true);
+  });
+});
+
+describe('global middleware ordering', () => {
+  test('higher priority first; ties by registration order, providers before imperative', async () => {
+    @Controller('/o')
+    class O {
+      @Get('/') o() {
+        return 'o';
+      }
+    }
+    @Module({
+      controllers: [O],
+      providers: [
+        {
+          provide: APP_MIDDLEWARE,
+          multi: true,
+          useValue: { middleware: tag('provider10'), priority: 10 },
+        },
+      ],
+    })
+    class M {}
+    const a = await HpmwsFactory.create(M, { logger: new MemoryLogger() });
+    a.useGlobalMiddleware(tag('imperative5'), 5).useGlobalMiddleware(tag('imperative10'), 10);
+    await a.listen({ port: 0, hostname: '127.0.0.1' });
+    const res = await fetch(new URL('/o', a.url));
+    // appended on the way out: innermost first, so the reverse of run order
+    expect(res.headers.get('x-chain')).toBe('imperative5, imperative10, provider10');
+    a.server.stop(true);
+  });
+});
+
+describe('listen atomicity and global provider scope', () => {
+  test('a failed listen leaves no partial state', async () => {
+    const blocker = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response('x') });
+    class Gw implements OnModuleInit {
+      readonly ws = inject(WsRegistry);
+      onModuleInit() {}
+    }
+    @Module({ providers: [Gw] })
+    class M {}
+    const a = await HpmwsFactory.create(M, { logger: new MemoryLogger() });
+    await expect(a.listen({ port: blocker.port, hostname: '127.0.0.1' })).rejects.toThrow();
+    expect(a.routes).toEqual([]);
+    a.get(WsRegistry).register('/after', { upgrade: () => ({}) });
+    await a.listen({ port: 0, hostname: '127.0.0.1' });
+    a.server.stop(true);
+    blocker.stop(true);
+  });
+
+  test('class refs from APP_GUARD in a feature module resolve with that module injector', async () => {
+    class Secret {
+      readonly value = 's3';
+    }
+    class SecretGuard implements Guard {
+      readonly secret = inject(Secret);
+      canActivate(ctx: Ctx) {
+        return ctx.req.headers.get('x-secret') === this.secret.value;
+      }
+    }
+    @Module({ providers: [Secret, { provide: APP_GUARD, multi: true, useValue: SecretGuard }] })
+    class Feature {}
+    @Controller('/g')
+    class G {
+      @Get('/') g() {
+        return 'g';
+      }
+    }
+    @Module({ imports: [Feature], controllers: [G] })
+    class M {}
+    const a = await start(M);
+    expect((await fetch(new URL('/g', a.url))).status).toBe(403);
+    expect((await fetch(new URL('/g', a.url), { headers: { 'x-secret': 's3' } })).status).toBe(200);
+    a.server.stop(true);
   });
 });
 

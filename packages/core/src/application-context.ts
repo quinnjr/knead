@@ -1,5 +1,5 @@
 import type { ModuleImport } from './decorators.js';
-import { ContainerState } from './injector.js';
+import { ContainerState, type ModuleInjector } from './injector.js';
 import { buildModuleGraph, type ModuleRef } from './modules.js';
 import type { Provider } from './providers.js';
 import type { Token } from './tokens.js';
@@ -69,10 +69,15 @@ export class ApplicationContext {
   }
 
   collect<T>(token: Token<T[]>): T[] {
-    const out: T[] = [];
+    return this.collectEntries(token).map((e) => e.value);
+  }
+
+  /** Like collect, but pairs each contribution with the injector of the module that provides it. */
+  collectEntries<T>(token: Token<T[]>): { value: T; injector: ModuleInjector }[] {
+    const out: { value: T; injector: ModuleInjector }[] = [];
     for (const m of this.modules) {
       for (const record of m.injector.records.get(token) ?? [])
-        out.push(this.state.resolve(record) as T);
+        out.push({ value: this.state.resolve(record) as T, injector: m.injector });
     }
     return out;
   }

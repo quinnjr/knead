@@ -112,20 +112,33 @@ export class HttpApplication {
 
   async listen(options: ListenOptions = {}): Promise<Server<WsData>> {
     if (this.#server) throw new HttpConfigError('listen() was already called.');
-    const injector = this.context.root.injector;
-    const entries = [...this.context.collect(APP_MIDDLEWARE), ...this.#extraMiddleware]
-      .map((entry, index) => ({ entry, index }))
+    const root = this.context.root.injector;
+    const entries = [
+      ...this.context
+        .collectEntries(APP_MIDDLEWARE)
+        .map(({ value, injector }) => ({ entry: value, injector })),
+      ...this.#extraMiddleware.map((entry) => ({ entry, injector: root })),
+    ]
+      .map((item, index) => ({ ...item, index }))
       .sort((a, b) => (b.entry.priority ?? 0) - (a.entry.priority ?? 0) || a.index - b.index);
     const ws = this.context.get(WsRegistry);
-    this.#compiled = compileApplication({
+    const compiled = compileApplication({
       modules: this.context.modules,
-      globalMiddleware: entries.map(({ entry }) => resolveMiddleware(entry.middleware, injector)),
-      globalGuards: [...this.context.collect(APP_GUARD), ...this.#extraGuards].map((g) =>
-        resolveGuard(g, injector),
+      globalMiddleware: entries.map(({ entry, injector }) =>
+        resolveMiddleware(entry.middleware, injector),
       ),
-      globalFilters: [...this.context.collect(APP_FILTER), ...this.#extraFilters].map((f) =>
-        resolveFilter(f, injector),
-      ),
+      globalGuards: [
+        ...this.context
+          .collectEntries(APP_GUARD)
+          .map(({ value, injector }) => resolveGuard(value, injector)),
+        ...this.#extraGuards.map((g) => resolveGuard(g, root)),
+      ],
+      globalFilters: [
+        ...this.context
+          .collectEntries(APP_FILTER)
+          .map(({ value, injector }) => resolveFilter(value, injector)),
+        ...this.#extraFilters.map((f) => resolveFilter(f, root)),
+      ],
       logger: this.logger,
       development: this.development,
       net: { trust: compileTrust(options.trustProxy ?? false), tls: options.tls !== undefined },
@@ -135,17 +148,20 @@ export class HttpApplication {
     const serveOptions: Record<string, unknown> = {
       port: options.port ?? 3000,
       hostname: options.hostname ?? '0.0.0.0',
-      routes: this.#compiled.routes,
-      fetch: this.#compiled.fetch,
+      routes: compiled.routes,
+      fetch: compiled.fetch,
       websocket: ws.handler(),
     };
     if (options.tls !== undefined) serveOptions.tls = options.tls;
     if (options.maxRequestBodySize !== undefined)
       serveOptions.maxRequestBodySize = options.maxRequestBodySize;
     if (options.idleTimeout !== undefined) serveOptions.idleTimeout = options.idleTimeout;
+    const server = Bun.serve(serveOptions as unknown as Serve.Options<WsData, string>);
+    ws.seal();
+    this.#compiled = compiled;
     this.serveOptions = serveOptions;
     this.shutdownTimeout = options.shutdownTimeout ?? 10_000;
-    this.#server = Bun.serve(serveOptions as unknown as Serve.Options<WsData, string>);
+    this.#server = server;
     this.onListening(options);
     this.logger.info(`Listening on ${this.#server.url}`);
     return this.#server;

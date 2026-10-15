@@ -106,7 +106,6 @@ export function compileApplication(input: CompileInput): CompiledApp {
   const shapes = new Map<string, string>();
   const allowed = new Map<string, { matcher: RegExp; methods: Set<HttpMethod> }>();
 
-  input.ws.seal();
   const wsHandlers = new Map<string, Handler>();
   for (const [path, endpoint] of input.ws.entries()) {
     wsHandlers.set(path, upgradeChain(path, endpoint, input.globalMiddleware, globalOnError));

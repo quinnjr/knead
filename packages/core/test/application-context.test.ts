@@ -152,6 +152,21 @@ describe('get and collect', () => {
     expect(ctx.collect(PLUGINS)).toEqual(['inner', 'root']);
   });
 
+  test('collectEntries pairs each contribution with its owning injector, in collect order', async () => {
+    const PLUGINS = new InjectionToken<string[]>('PLUGINS');
+    @Module({ providers: [{ provide: PLUGINS, useValue: 'inner', multi: true }] })
+    class Inner {}
+    @Module({ imports: [Inner], providers: [{ provide: PLUGINS, useValue: 'root', multi: true }] })
+    class AppModule {}
+    const ctx = await ApplicationContext.create(AppModule);
+    const entries = ctx.collectEntries(PLUGINS);
+    expect(entries.map((e) => e.value)).toEqual(ctx.collect(PLUGINS));
+    const inner = ctx.modules.find((m) => m.metatype === Inner);
+    expect(inner).toBeDefined();
+    expect(entries[0]?.injector === inner?.injector).toBe(true);
+    expect(entries[1]?.injector === ctx.root.injector).toBe(true);
+  });
+
   test('root is the root module and modules are in post-order', async () => {
     @Module({})
     class Inner {}
