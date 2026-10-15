@@ -32,7 +32,7 @@ export class WsRegistry {
 
   register<D>(path: string, endpoint: WsEndpoint<D>): void {
     const normalized = joinPaths(path);
-    if (normalized.split('/').some((seg) => seg.startsWith(':') || seg === '*')) {
+    if (normalized.split('/').some((seg) => seg.startsWith(':') || seg.startsWith('*'))) {
       throw new HttpConfigError(`WebSocket endpoint paths must be exact; got ${normalized}`);
     }
     if (this.#sealed) {

@@ -36,6 +36,7 @@ describe('WsRegistry', () => {
       'WebSocket endpoint paths must be exact; got /rooms/:id',
     );
     expect(() => ws.register('/files/*', { upgrade: () => ({}) })).toThrow(HttpConfigError);
+    expect(() => ws.register('/files/*rest', { upgrade: () => ({}) })).toThrow(HttpConfigError);
   });
 
   test('registering after seal() is rejected', async () => {
