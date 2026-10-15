@@ -1,3 +1,18 @@
+export {
+  type KeyFn,
+  RATE_LIMIT_META,
+  RateLimit,
+  type RateLimitRouteOptions,
+  SKIP_RATE_LIMIT_META,
+  SkipRateLimit,
+} from './decorators.js';
 export { type Duration, parseDuration } from './duration.js';
 export { MemoryStore, type MemoryStoreOptions } from './memory-store.js';
+export {
+  RATE_LIMIT_OPTIONS,
+  RATE_LIMIT_STORE,
+  RateLimitMiddleware,
+  type RateLimitModuleOptions,
+} from './middleware.js';
+export { RateLimitModule } from './module.js';
 export type { Algorithm, ConsumeResult, RateLimitRule, RateLimitStore } from './store.js';
