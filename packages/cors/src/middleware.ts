@@ -1,5 +1,5 @@
 import { inject } from '@hpmws/core';
-import { type Ctx, type Middleware, type Next, withHeaders } from '@hpmws/http';
+import { type Ctx, ForbiddenException, type Middleware, type Next, withHeaders } from '@hpmws/http';
 import { CORS_OPTIONS } from './options.js';
 
 const DEFAULT_METHODS = ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE'];
@@ -24,6 +24,15 @@ export class CorsMiddleware implements Middleware {
     const wildcard = o.origin === '*';
     const vary = wildcard ? [] : ['Origin'];
     const allowed = origin !== null && (await this.#matches(origin, ctx));
+    // Browsers do not enforce CORS on WebSockets, so a cross-site page could otherwise open an
+    // authenticated socket (cross-site WebSocket hijacking). Clients without Origin are not browsers.
+    if (
+      origin !== null &&
+      !allowed &&
+      ctx.req.headers.get('upgrade')?.toLowerCase() === 'websocket'
+    ) {
+      throw new ForbiddenException('Origin not allowed for WebSocket upgrade');
+    }
     const preflight =
       ctx.req.method === 'OPTIONS' && ctx.req.headers.has('access-control-request-method');
 

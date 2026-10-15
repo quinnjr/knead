@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { Controller, type Ctx, Get, UseGuards } from '@hpmws/http';
+import { inject, type OnModuleInit } from '@hpmws/core';
+import { Controller, type Ctx, Get, UseGuards, WsRegistry } from '@hpmws/http';
 import { Test, type TestApp } from '@hpmws/testing';
 import { CorsConfigError, CorsModule, type CorsOptions } from '../src/index.js';
 
@@ -214,5 +215,87 @@ describe('configuration validation', () => {
     expect(() => CorsModule.forRoot({ origin: 'https://a.example', maxAge: -1 })).toThrow(
       CorsConfigError,
     );
+  });
+});
+
+describe('WebSocket upgrades', () => {
+  class Gateway implements OnModuleInit {
+    readonly ws = inject(WsRegistry);
+    onModuleInit() {
+      this.ws.register('/live', { upgrade: () => ({}) });
+    }
+  }
+
+  async function serveWs(options: CorsOptions): Promise<TestApp> {
+    const mod = await Test.createModule({
+      imports: [CorsModule.forRoot(options)],
+      providers: [Gateway],
+    }).compile();
+    app = await mod.createApp();
+    return app;
+  }
+
+  /** Sends a raw HTTP upgrade request and resolves with the response status line. */
+  async function rawUpgrade(a: TestApp, origin?: string): Promise<string> {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    let buffer = '';
+    const socket = await Bun.connect({
+      hostname: a.url.hostname,
+      port: Number(a.url.port),
+      socket: {
+        data(s, chunk) {
+          buffer += chunk.toString();
+          const end = buffer.indexOf('\r\n');
+          if (end !== -1) {
+            resolve(buffer.slice(0, end));
+            s.end();
+          }
+        },
+        error(_s, error) {
+          reject(error);
+        },
+        close() {
+          resolve(buffer.split('\r\n')[0] ?? '');
+        },
+      },
+    });
+    const lines = [
+      'GET /live HTTP/1.1',
+      `Host: ${a.url.host}`,
+      'Upgrade: websocket',
+      'Connection: Upgrade',
+      'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
+      'Sec-WebSocket-Version: 13',
+      ...(origin ? [`Origin: ${origin}`] : []),
+    ];
+    socket.write(`${lines.join('\r\n')}\r\n\r\n`);
+    return promise;
+  }
+
+  test('a disallowed Origin is rejected with 403', async () => {
+    const a = await serveWs({ origin: 'https://app.example' });
+    expect(await rawUpgrade(a, 'https://evil.example')).toMatch(/^HTTP\/1\.1 403/);
+  });
+
+  test('an allowed Origin and a missing Origin are upgraded', async () => {
+    const a = await serveWs({ origin: 'https://app.example' });
+    expect(await rawUpgrade(a, 'https://app.example')).toMatch(/^HTTP\/1\.1 101/);
+    expect(await rawUpgrade(a)).toMatch(/^HTTP\/1\.1 101/);
+  });
+
+  test('a browser-style client from an allowed origin connects; a disallowed one does not', async () => {
+    const a = await serveWs({ origin: 'https://app.example' });
+    const url = new URL('/live', a.url).toString().replace('http', 'ws');
+    const outcome = (origin: string) =>
+      new Promise<string>((resolve) => {
+        const socket = new WebSocket(url, { headers: { origin } } as unknown as string[]);
+        socket.onopen = () => {
+          socket.close();
+          resolve('open');
+        };
+        socket.onerror = () => resolve('error');
+      });
+    expect(await outcome('https://app.example')).toBe('open');
+    expect(await outcome('https://evil.example')).toBe('error');
   });
 });
