@@ -24,3 +24,13 @@ test('compileMatcher matches one segment per param and escapes literals', () => 
   expect(compileMatcher('/a.b').test('/aXb')).toBe(false);
   expect(compileMatcher('/static/*').test('/static/a/b.css')).toBe(true);
 });
+
+test('compileMatcher: a mid-path wildcard spans multiple segments', () => {
+  expect(compileMatcher('/a/*/b').test('/a/x/y/b')).toBe(true);
+});
+
+test('compileMatcher: regex characters in literal segments are escaped', () => {
+  const m = compileMatcher('/v1.0/(x)');
+  expect(m.test('/v1.0/(x)')).toBe(true);
+  expect(m.test('/v1x0/x')).toBe(false);
+});

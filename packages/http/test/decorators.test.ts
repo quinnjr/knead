@@ -128,3 +128,16 @@ describe('createRouteDecorator', () => {
     expect(getMetadata(D, ROUTE_META)).toEqual({ roles: ['other'] });
   });
 });
+
+describe('private route methods', () => {
+  test('a route decorator on a #private method throws TypeError at class definition', () => {
+    expect(() => {
+      class C {
+        @Get('/')
+        // biome-ignore lint/correctness/noUnusedPrivateClassMembers: intentionally private to assert the error
+        #hidden() {}
+      }
+      return C;
+    }).toThrow(TypeError);
+  });
+});
