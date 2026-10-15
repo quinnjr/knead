@@ -1,0 +1,43 @@
+{
+  "name": "@hpmws/http",
+  "version": "0.0.0",
+  "description": "HTTP(S) server, REST controllers and request pipeline for the hpmws framework",
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "bun": ">=1.4.0"
+  },
+  "scripts": {
+    "test": "bun test",
+    "prepack": "bun ../../scripts/copy-licenses.ts"
+  },
+  "dependencies": {
+    "@standard-schema/spec": "^1.1.0"
+  },
+  "peerDependencies": {
+    "@hpmws/core": "workspace:^"
+  },
+  "devDependencies": {
+    "@hpmws/core": "workspace:^"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true,
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
+  }
+}

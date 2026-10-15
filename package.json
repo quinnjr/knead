@@ -1,0 +1,27 @@
+{
+  "name": "hpmws-js",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.11.2",
+  "engines": {
+    "bun": ">=1.4.0"
+  },
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "typecheck": "tsc -p tsconfig.check.json",
+    "test": "pnpm -r test",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "clean": "rm -rf packages/*/dist packages/*/.tsbuildinfo",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "check:pack": "bun scripts/check-pack.ts",
+    "release": "pnpm build && changeset publish --no-git-tag"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.15",
+    "@changesets/cli": "^3.0.3",
+    "@types/bun": "^1.4.3",
+    "typescript": "^7.0.2"
+  }
+}

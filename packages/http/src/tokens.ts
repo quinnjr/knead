@@ -1,0 +1,9 @@
+import { InjectionToken } from '@hpmws/core';
+import type { FilterRef, GlobalMiddleware, GuardRef } from './types.js';
+
+/** Multi-provider: global middleware contributed by modules (e.g. CORS). */
+export const APP_MIDDLEWARE = new InjectionToken<GlobalMiddleware[]>('APP_MIDDLEWARE');
+/** Multi-provider: guards applied to every route. */
+export const APP_GUARD = new InjectionToken<GuardRef[]>('APP_GUARD');
+/** Multi-provider: exception filters applied after route and controller filters. */
+export const APP_FILTER = new InjectionToken<FilterRef[]>('APP_FILTER');

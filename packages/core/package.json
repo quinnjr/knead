@@ -1,0 +1,39 @@
+{
+  "name": "@hpmws/core",
+  "version": "0.0.0",
+  "description": "Dependency injection and module system for the hpmws framework",
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
+  ],
+  "sideEffects": [
+    "./src/polyfill.ts",
+    "./src/copy-guard.ts",
+    "./dist/polyfill.js",
+    "./dist/copy-guard.js"
+  ],
+  "engines": {
+    "bun": ">=1.4.0"
+  },
+  "scripts": {
+    "test": "bun test",
+    "prepack": "bun ../../scripts/copy-licenses.ts"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true,
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
+  }
+}
