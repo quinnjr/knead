@@ -112,6 +112,12 @@ describe('validateSecurityHeadersOptions', () => {
     }
   });
 
+  test('rejects non-string array elements with HttpConfigError', () => {
+    expect(() =>
+      validateSecurityHeadersOptions(csp({ 'img-src': ['self', 42] as unknown as string[] })),
+    ).toThrow(HttpConfigError);
+  });
+
   test('accepts normal configs', () => {
     expect(() => validateSecurityHeadersOptions({})).not.toThrow();
     expect(() => validateSecurityHeadersOptions({ contentSecurityPolicy: false })).not.toThrow();
