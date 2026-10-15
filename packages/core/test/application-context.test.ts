@@ -177,3 +177,61 @@ describe('get and collect', () => {
     expect(ctx.modules.map((m) => m.name)).toEqual(['Inner', 'AppModule']);
   });
 });
+
+describe('ApplicationContext.initializeLate', () => {
+  test('runs init hooks on instances constructed after create, then includes them in close', async () => {
+    const log: string[] = [];
+    class Eager {
+      onModuleInit() {
+        log.push('eager:init');
+      }
+      onModuleDestroy() {
+        log.push('eager:destroy');
+      }
+    }
+    class Late {
+      onModuleInit() {
+        log.push('late:init');
+      }
+      onApplicationBootstrap() {
+        log.push('late:bootstrap');
+      }
+      onModuleDestroy() {
+        log.push('late:destroy');
+      }
+    }
+    @Module({ providers: [Eager] })
+    class M {}
+    const ctx = await ApplicationContext.create(M);
+    ctx.root.injector.resolveOrConstruct(Late);
+    expect(log).toEqual(['eager:init']);
+    await ctx.initializeLate();
+    await ctx.initializeLate();
+    expect(log).toEqual(['eager:init', 'late:init', 'late:bootstrap']);
+    await ctx.close();
+    expect(log.slice(3)).toEqual(['late:destroy', 'eager:destroy']);
+  });
+
+  test('a failing late init hook closes the context and rejects', async () => {
+    const log: string[] = [];
+    class Eager {
+      onModuleDestroy() {
+        log.push('eager:destroy');
+      }
+    }
+    class Broken {
+      onModuleInit() {
+        throw new Error('late boom');
+      }
+      onModuleDestroy() {
+        log.push('broken:destroy');
+      }
+    }
+    @Module({ providers: [Eager] })
+    class M {}
+    const ctx = await ApplicationContext.create(M);
+    ctx.root.injector.resolveOrConstruct(Broken);
+    await expect(ctx.initializeLate()).rejects.toThrow('late boom');
+    expect(log).toEqual(['eager:destroy']);
+  });
+});

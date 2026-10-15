@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { inject, Module, type OnModuleInit } from '@hpmws/core';
+import { inject, Module, type OnModuleDestroy, type OnModuleInit } from '@hpmws/core';
 import type { StandardSchemaV1 } from '@standard-schema/spec';
 import {
   APP_GUARD,
@@ -16,10 +16,13 @@ import {
   type HttpApplication,
   HttpConfigError,
   MemoryLogger,
+  type Middleware,
   ModuleMiddleware,
+  type Next,
   NotFoundException,
   Post,
   UseFilters,
+  UseMiddleware,
   WsRegistry,
 } from '../src/index.js';
 import { start } from './helpers.js';
@@ -492,5 +495,60 @@ describe('bootstrap errors', () => {
     const a = await start(M);
     await expect(a.listen({ port: 0 })).rejects.toThrow(HttpConfigError);
     await a.close();
+  });
+});
+
+describe('lifecycle of lazily constructed classes', () => {
+  test('a @UseMiddleware class gets onModuleInit at listen and onModuleDestroy at close', async () => {
+    const log: string[] = [];
+    class Tracked implements Middleware, OnModuleInit, OnModuleDestroy {
+      onModuleInit() {
+        log.push('init');
+      }
+      onModuleDestroy() {
+        log.push('destroy');
+      }
+      use(_ctx: Ctx, next: Next) {
+        return next();
+      }
+    }
+    @Controller('/t')
+    @UseMiddleware(Tracked)
+    class C {
+      @Get('/') get() {
+        return 'ok';
+      }
+    }
+    @Module({ controllers: [C] })
+    class M {}
+    const a = await HpmwsFactory.create(M, { logger: new MemoryLogger() });
+    expect(log).toEqual([]);
+    await a.listen({ port: 0, hostname: '127.0.0.1' });
+    expect(log).toEqual(['init']);
+    expect(await (await fetch(new URL('/t', a.url))).text()).toBe('ok');
+    await a.close();
+    expect(log).toEqual(['init', 'destroy']);
+  });
+
+  test('a failing late onModuleInit rejects listen without binding a server', async () => {
+    class Broken implements Guard<Ctx>, OnModuleInit {
+      onModuleInit() {
+        throw new Error('guard init failed');
+      }
+      canActivate() {
+        return true;
+      }
+    }
+    @Controller('/b')
+    class C {
+      @Get('/', { guards: [Broken] }) get() {
+        return 'ok';
+      }
+    }
+    @Module({ controllers: [C] })
+    class M {}
+    const a = await HpmwsFactory.create(M, { logger: new MemoryLogger() });
+    await expect(a.listen({ port: 0, hostname: '127.0.0.1' })).rejects.toThrow('guard init failed');
+    expect(() => a.server).toThrow(HttpConfigError);
   });
 });

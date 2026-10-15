@@ -15,6 +15,8 @@ export class ApplicationContext {
   #closing: Promise<void> | undefined;
   /** Instances whose init hooks ran; only these receive shutdown hooks. */
   #initialized: object[] = [];
+  /** Instances whose init hooks were attempted (create or initializeLate). */
+  readonly #seen = new WeakSet<object>();
 
   private constructor(
     readonly modules: readonly ModuleRef[],
@@ -44,19 +46,36 @@ export class ApplicationContext {
       }
     }
     const context = new ApplicationContext(graph.modules, graph.root, state);
+    await context.#initializePending();
+    return context;
+  }
+
+  /**
+   * @internal Runs onModuleInit then onApplicationBootstrap on instances constructed since
+   * create() (e.g. middleware, guards and filters built lazily at listen()), so they also receive
+   * shutdown hooks. Like create(), a failing hook closes the context and rethrows.
+   */
+  initializeLate(): Promise<void> {
+    return this.#initializePending();
+  }
+
+  async #initializePending(): Promise<void> {
+    const pending = (this.state.instances as object[]).filter((i) => !this.#seen.has(i));
+    for (const instance of pending) this.#seen.add(instance);
+    const initialized: object[] = [];
     try {
-      for (const instance of [...state.instances] as object[]) {
+      for (const instance of pending) {
         await ApplicationContext.#call(instance, 'onModuleInit');
-        context.#initialized.push(instance);
+        this.#initialized.push(instance);
+        initialized.push(instance);
       }
-      for (const instance of context.#initialized) {
+      for (const instance of initialized) {
         await ApplicationContext.#call(instance, 'onApplicationBootstrap');
       }
     } catch (error) {
-      await context.close().catch(() => {});
+      await this.close().catch(() => {});
       throw error;
     }
-    return context;
   }
 
   get<T>(token: Token<T>): T {

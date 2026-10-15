@@ -72,6 +72,7 @@ export class HttpApplication {
   #retired: Server<WsData>[] = [];
   #redirect: Server<undefined> | undefined;
   #closing: Promise<void> | undefined;
+  #listening = false;
   readonly #signalHandlers: [NodeJS.Signals, () => void][] = [];
   #compiled: CompiledApp | undefined;
   readonly #extraMiddleware: GlobalMiddleware[] = [];
@@ -220,7 +221,16 @@ export class HttpApplication {
   }
 
   async listen(options: ListenOptions = {}): Promise<Server<WsData>> {
-    if (this.#server) throw new HttpConfigError('listen() was already called.');
+    if (this.#server || this.#listening) throw new HttpConfigError('listen() was already called.');
+    this.#listening = true;
+    try {
+      return await this.#listen(options);
+    } finally {
+      this.#listening = false;
+    }
+  }
+
+  async #listen(options: ListenOptions): Promise<Server<WsData>> {
     if (options.redirectHttp && options.tls === undefined) {
       throw new HttpConfigError('redirectHttp requires tls.');
     }
@@ -256,6 +266,9 @@ export class HttpApplication {
       net: { trust: compileTrust(options.trustProxy ?? false), tls: options.tls !== undefined },
       ws,
     });
+    // Middleware, guards and filters constructed by the compiler get their init hooks now (and
+    // shutdown hooks at close()); a failing hook rejects listen() before anything is bound.
+    await this.context.initializeLate();
 
     const serveOptions: Record<string, unknown> = {
       port: options.port ?? 3000,
