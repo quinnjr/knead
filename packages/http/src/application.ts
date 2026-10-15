@@ -220,6 +220,12 @@ export class HttpApplication {
     if (failure) throw failure.error;
   }
 
+  /**
+   * Compiles the routes and binds the listener(s). A failed listen() (e.g. the port is in use)
+   * leaves no partial state and may be retried, but the bootstrapped context stays open: callers
+   * that give up after a failure must `await app.close()` to run shutdown hooks and release
+   * resources such as database connections.
+   */
   async listen(options: ListenOptions = {}): Promise<Server<WsData>> {
     if (this.#server || this.#listening) throw new HttpConfigError('listen() was already called.');
     this.#listening = true;

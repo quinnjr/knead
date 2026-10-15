@@ -427,6 +427,24 @@ describe('listen atomicity and global provider scope', () => {
     blocker.stop(true);
   });
 
+  test('close() after a failed listen runs shutdown hooks and resolves', async () => {
+    const blocker = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response('x') });
+    const log: string[] = [];
+    class Resource implements OnModuleDestroy {
+      onModuleDestroy() {
+        log.push('destroy');
+      }
+    }
+    @Module({ providers: [Resource] })
+    class M {}
+    const a = await HpmwsFactory.create(M, { logger: new MemoryLogger() });
+    await expect(a.listen({ port: blocker.port, hostname: '127.0.0.1' })).rejects.toThrow();
+    expect(log).toEqual([]);
+    await expect(a.close()).resolves.toBeUndefined();
+    expect(log).toEqual(['destroy']);
+    blocker.stop(true);
+  });
+
   test('class refs from APP_GUARD in a feature module resolve with that module injector', async () => {
     class Secret {
       readonly value = 's3';
