@@ -1,0 +1,164 @@
+import { describe, expect, test } from 'bun:test';
+import {
+  ApplicationContext,
+  CircularDependencyError,
+  InjectionContextError,
+  InjectionToken,
+  inject,
+  Module,
+  NoProviderError,
+  ProviderConfigError,
+} from '../src/index.js';
+
+const CONFIG = new InjectionToken<{ url: string }>('CONFIG');
+const CONN = new InjectionToken<{ url: string; open: boolean }>('CONN');
+const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+describe('ApplicationContext.create', () => {
+  test('async factories are awaited before classes that inject them', async () => {
+    class Repo {
+      readonly conn = inject(CONN);
+    }
+    @Module({
+      providers: [
+        Repo,
+        { provide: CONFIG, useValue: { url: 'db://x' } },
+        {
+          provide: CONN,
+          useFactory: async () => {
+            const config = inject(CONFIG);
+            await delay(5);
+            return { url: config.url, open: true };
+          },
+        },
+      ],
+    })
+    class AppModule {}
+    const ctx = await ApplicationContext.create(AppModule);
+    expect(ctx.get(Repo).conn).toEqual({ url: 'db://x', open: true });
+  });
+
+  test('an async factory may depend on another async factory registered later', async () => {
+    const A = new InjectionToken<string>('A');
+    const B = new InjectionToken<string>('B');
+    let bCalls = 0;
+    @Module({
+      providers: [
+        {
+          provide: A,
+          useFactory: async () => {
+            const b = inject(B);
+            await delay(1);
+            return `a(${b})`;
+          },
+        },
+        {
+          provide: B,
+          useFactory: async () => {
+            bCalls++;
+            await delay(1);
+            return 'b';
+          },
+        },
+      ],
+    })
+    class AppModule {}
+    const ctx = await ApplicationContext.create(AppModule);
+    expect(ctx.get(A)).toBe('a(b)');
+    expect(bCalls).toBe(1);
+  });
+
+  test('inject() after await throws InjectionContextError (Review Focus 4)', async () => {
+    @Module({
+      providers: [
+        { provide: CONFIG, useValue: { url: 'x' } },
+        {
+          provide: CONN,
+          useFactory: async () => {
+            await delay(1);
+            return { url: inject(CONFIG).url, open: true };
+          },
+        },
+      ],
+    })
+    class AppModule {}
+    await expect(ApplicationContext.create(AppModule)).rejects.toThrow(InjectionContextError);
+  });
+
+  test('cycles through async factories are detected', async () => {
+    const A = new InjectionToken<string>('A');
+    const B = new InjectionToken<string>('B');
+    @Module({
+      providers: [
+        { provide: A, useFactory: async () => `${inject(B)}` },
+        { provide: B, useFactory: async () => `${inject(A)}` },
+      ],
+    })
+    class AppModule {}
+    await expect(ApplicationContext.create(AppModule)).rejects.toThrow(CircularDependencyError);
+  });
+
+  test('transient async factories are rejected', async () => {
+    class UsesIt {
+      readonly c = inject(CONN);
+    }
+    @Module({
+      providers: [
+        UsesIt,
+        { provide: CONN, scope: 'transient', useFactory: async () => ({ url: '', open: true }) },
+      ],
+    })
+    class AppModule {}
+    await expect(ApplicationContext.create(AppModule)).rejects.toThrow(ProviderConfigError);
+  });
+
+  test('a rejecting async factory rejects create()', async () => {
+    @Module({
+      providers: [{ provide: CONN, useFactory: async () => Promise.reject(new Error('db down')) }],
+    })
+    class AppModule {}
+    await expect(ApplicationContext.create(AppModule)).rejects.toThrow('db down');
+  });
+
+  test('missing dependencies fail at bootstrap, not at first use', async () => {
+    class NeedsConfig {
+      readonly c = inject(CONFIG);
+    }
+    @Module({ providers: [NeedsConfig] })
+    class AppModule {}
+    await expect(ApplicationContext.create(AppModule)).rejects.toThrow(NoProviderError);
+  });
+});
+
+describe('get and collect', () => {
+  test('get is non-strict: finds providers in any module', async () => {
+    class Hidden {}
+    @Module({ providers: [Hidden] })
+    class Inner {}
+    @Module({ imports: [Inner] })
+    class AppModule {}
+    const ctx = await ApplicationContext.create(AppModule);
+    expect(ctx.get(Hidden)).toBeInstanceOf(Hidden);
+    expect(() => ctx.get(CONFIG)).toThrow(NoProviderError);
+  });
+
+  test('collect gathers multi contributions across modules regardless of exports', async () => {
+    const PLUGINS = new InjectionToken<string[]>('PLUGINS');
+    @Module({ providers: [{ provide: PLUGINS, useValue: 'inner', multi: true }] })
+    class Inner {}
+    @Module({ imports: [Inner], providers: [{ provide: PLUGINS, useValue: 'root', multi: true }] })
+    class AppModule {}
+    const ctx = await ApplicationContext.create(AppModule);
+    expect(ctx.collect(PLUGINS)).toEqual(['inner', 'root']);
+  });
+
+  test('root is the root module and modules are in post-order', async () => {
+    @Module({})
+    class Inner {}
+    @Module({ imports: [Inner] })
+    class AppModule {}
+    const ctx = await ApplicationContext.create(AppModule);
+    expect(ctx.root.metatype).toBe(AppModule);
+    expect(ctx.modules.map((m) => m.name)).toEqual(['Inner', 'AppModule']);
+  });
+});
