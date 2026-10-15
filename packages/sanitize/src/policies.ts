@@ -2,7 +2,8 @@ export interface SanitizePolicy {
   allowedTags: readonly string[];
   allowedAttributes: Readonly<Record<string, readonly string[]>>;
   /** URL schemes allowed in href/src. Default: http, https, mailto (img: http, https only).
-   * When set, it applies to every tag, including img (minus mailto). */
+   * When set, it applies to every tag, including img (minus mailto). `javascript`, `vbscript`
+   * and `data` are rejected. */
   allowedSchemes?: readonly string[];
 }
 

@@ -56,9 +56,9 @@ describe('img schemes', () => {
     const policy = {
       allowedTags: ['img'],
       allowedAttributes: { img: ['src'] },
-      allowedSchemes: ['https', 'data', 'mailto'],
+      allowedSchemes: ['https', 'ftp', 'mailto'],
     };
-    expect(sanitize('<img src="data:image/png;base64,AAAA">', policy)).toContain('src="data:');
+    expect(sanitize('<img src="ftp://x.example/a.png">', policy)).toContain('src="ftp:');
     expect(sanitize('<img src="mailto:a@b.example">', policy)).toBe('');
     expect(sanitize('<img src="http://x.example/a.png">', policy)).toBe('');
   });
@@ -84,6 +84,35 @@ describe('custom policy guard', () => {
   test('rejects uppercase names', () => {
     expect(() => sanitize('x', bad({ allowedTags: ['SCRIPT'] }))).toThrow(TypeError);
     expect(() => sanitize('x', bad({ allowedAttributes: { p: ['ONCLICK'] } }))).toThrow(TypeError);
+  });
+  test('rejects attribute globs that sanitize-html would expand to on* handlers', () => {
+    for (const attrs of [{ b: ['*'] }, { '*': ['o*'] }, { p: ['data-*'] }, { '*': ['*'] }]) {
+      expect(() => sanitize('x', bad({ allowedAttributes: attrs }))).toThrow(
+        /attribute pattern .* cannot contain "\*"/,
+      );
+    }
+  });
+  test('glob bypasses no longer re-enable onclick', () => {
+    expect(() =>
+      sanitize(
+        '<b onclick="alert(1)">x</b>',
+        bad({ allowedTags: ['b'], allowedAttributes: { b: ['*'] } }),
+      ),
+    ).toThrow(TypeError);
+  });
+  test('rejects script-capable URL schemes, case-insensitively', () => {
+    for (const scheme of ['javascript', 'vbscript', 'data', 'JavaScript', 'VBSCRIPT', 'Data']) {
+      expect(() =>
+        sanitize(
+          'x',
+          bad({
+            allowedTags: ['a'],
+            allowedAttributes: { a: ['href'] },
+            allowedSchemes: ['https', scheme],
+          }),
+        ),
+      ).toThrow(/scheme "\w+" cannot be allowed/);
+    }
   });
   test('catches a policy mutated after first use', () => {
     const tags = ['p'];

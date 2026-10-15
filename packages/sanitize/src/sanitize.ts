@@ -21,6 +21,7 @@ const FORBIDDEN_TAGS = new Set([
   'template',
 ]);
 const FORBIDDEN_ATTRS = new Set(['style', 'srcdoc', 'formaction']);
+const FORBIDDEN_SCHEMES = new Set(['javascript', 'vbscript', 'data']);
 
 /** Throws TypeError if a policy would re-enable a known XSS vector. */
 export function assertSafePolicy(policy: SanitizePolicy): void {
@@ -30,10 +31,19 @@ export function assertSafePolicy(policy: SanitizePolicy): void {
   }
   for (const attrs of Object.values(policy.allowedAttributes)) {
     for (const attr of attrs) {
+      // sanitize-html expands '*' globs, so 'o*' or '*' would match on* event handlers.
+      if (attr.includes('*'))
+        throw new TypeError(
+          `Unsafe sanitize policy: attribute pattern "${attr}" cannot contain "*"; list attributes explicitly`,
+        );
       const a = attr.toLowerCase();
       if (a.startsWith('on') || FORBIDDEN_ATTRS.has(a))
         throw new TypeError(`Unsafe sanitize policy: attribute "${attr}" cannot be allowed`);
     }
+  }
+  for (const scheme of policy.allowedSchemes ?? []) {
+    if (FORBIDDEN_SCHEMES.has(scheme.toLowerCase()))
+      throw new TypeError(`Unsafe sanitize policy: URL scheme "${scheme}" cannot be allowed`);
   }
 }
 
