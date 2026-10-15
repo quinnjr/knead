@@ -248,6 +248,26 @@ describe('dynamic variant export selection', () => {
   });
 });
 
+describe('dynamic export fallback', () => {
+  test('a re-called dynamic module in exports falls back to a metatype match', () => {
+    const T = new InjectionToken<number>('T');
+    @Module({})
+    class ConfigModule {
+      static forRoot(value: number) {
+        return { module: ConfigModule, providers: [{ provide: T, useValue: value }], exports: [T] };
+      }
+    }
+    class Consumer {
+      readonly t = inject(T);
+    }
+    @Module({ imports: [ConfigModule.forRoot(1)], exports: [ConfigModule.forRoot(1)] })
+    class MiddleModule {}
+    @Module({ imports: [MiddleModule], providers: [Consumer] })
+    class AppModule {}
+    expect(build(AppModule).root.injector.get(Consumer)!.t).toBe(1);
+  });
+});
+
 describe('definition errors', () => {
   test('an undefined root module is reported clearly', () => {
     expect(() => buildModuleGraph(undefined as never, [], new ContainerState())).toThrow(

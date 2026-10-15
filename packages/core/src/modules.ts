@@ -91,9 +91,10 @@ function unresolvedExport(node: Node, entry: ModuleExport): ModuleDefinitionErro
 function computeExports(node: Node): void {
   const { injector, def } = node;
   for (const entry of def.options.exports ?? []) {
-    const matched = isDynamicModule(entry)
-      ? node.children.filter((c) => c.key === entry)
-      : node.children.filter((c) => matchesImport(c, entry));
+    let matched = node.children.filter((c) => c.key === entry);
+    if (matched.length === 0 || !isDynamicModule(entry)) {
+      matched = node.children.filter((c) => matchesImport(c, entry));
+    }
     if (matched.length > 0) {
       for (const child of matched) {
         for (const [token, owner] of child.injector.exported) injector.exported.set(token, owner);
