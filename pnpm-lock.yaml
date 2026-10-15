@@ -210,39 +210,38 @@ importers:
   packages/core: {}
 
   packages/cors:
-    dependencies:
+    devDependencies:
       '@hpmws/core':
         specifier: workspace:^
         version: link:../core
       '@hpmws/http':
         specifier: workspace:^
         version: link:../http
-    devDependencies:
       '@hpmws/testing':
         specifier: workspace:^
         version: link:../testing
 
   packages/http:
     dependencies:
-      '@hpmws/core':
-        specifier: workspace:^
-        version: link:../core
       '@standard-schema/spec':
         specifier: ^1.1.0
         version: 1.1.0
-
-  packages/rate-limit:
-    dependencies:
+    devDependencies:
       '@hpmws/core':
         specifier: workspace:^
         version: link:../core
-      '@hpmws/http':
-        specifier: workspace:^
-        version: link:../http
+
+  packages/rate-limit:
     devDependencies:
+      '@hpmws/core':
+        specifier: workspace:^
+        version: link:../core
       '@hpmws/cors':
         specifier: workspace:^
         version: link:../cors
+      '@hpmws/http':
+        specifier: workspace:^
+        version: link:../http
       '@hpmws/testing':
         specifier: workspace:^
         version: link:../testing
@@ -261,20 +260,19 @@ importers:
         version: 2.16.2
 
   packages/security-headers:
-    dependencies:
+    devDependencies:
       '@hpmws/core':
         specifier: workspace:^
         version: link:../core
       '@hpmws/http':
         specifier: workspace:^
         version: link:../http
-    devDependencies:
       '@hpmws/testing':
         specifier: workspace:^
         version: link:../testing
 
   packages/testing:
-    dependencies:
+    devDependencies:
       '@hpmws/core':
         specifier: workspace:^
         version: link:../core

@@ -21,12 +21,14 @@
     "test": "bun test",
     "prepack": "bun ../../scripts/copy-licenses.ts"
   },
-  "dependencies": {
+  "peerDependencies": {
     "@hpmws/core": "workspace:^",
     "@hpmws/http": "workspace:^"
   },
   "devDependencies": {
+    "@hpmws/core": "workspace:^",
     "@hpmws/cors": "workspace:^",
+    "@hpmws/http": "workspace:^",
     "@hpmws/testing": "workspace:^"
   },
   "publishConfig": {

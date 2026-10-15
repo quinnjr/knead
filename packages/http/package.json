@@ -22,8 +22,13 @@
     "prepack": "bun ../../scripts/copy-licenses.ts"
   },
   "dependencies": {
-    "@hpmws/core": "workspace:^",
     "@standard-schema/spec": "^1.1.0"
+  },
+  "peerDependencies": {
+    "@hpmws/core": "workspace:^"
+  },
+  "devDependencies": {
+    "@hpmws/core": "workspace:^"
   },
   "publishConfig": {
     "access": "public",
