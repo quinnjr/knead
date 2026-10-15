@@ -226,4 +226,25 @@ describe('lifecycle robustness', () => {
     await expect(ApplicationContext.create(AppModule)).rejects.toBe(boom);
     expect(log).toEqual(['a:init', 'a:destroy']);
   });
+
+  test('failed bootstrap rethrows the original error even if cleanup throws', async () => {
+    const log: string[] = [];
+    const boom = new Error('boom');
+    class A {
+      onModuleDestroy() {
+        log.push('a:destroy');
+        throw new Error('cleanup failed');
+      }
+    }
+    class B {
+      readonly a = inject(A);
+      onModuleInit() {
+        throw boom;
+      }
+    }
+    @Module({ providers: [A, B] })
+    class AppModule {}
+    await expect(ApplicationContext.create(AppModule)).rejects.toBe(boom);
+    expect(log).toEqual(['a:destroy']);
+  });
 });
