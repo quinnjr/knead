@@ -119,6 +119,11 @@ describe('validateSecurityHeadersOptions', () => {
     expect(() =>
       validateSecurityHeadersOptions(csp({ 'img-src': [10n] as unknown as string[] })),
     ).toThrow(HttpConfigError);
+    for (const bad of [null, Object.create(null), {}, Symbol('x')]) {
+      expect(() =>
+        validateSecurityHeadersOptions(csp({ 'img-src': [bad] as unknown as string[] })),
+      ).toThrow(HttpConfigError);
+    }
   });
 
   test('accepts normal configs', () => {
