@@ -1,0 +1,39 @@
+{
+  "name": "@hpmws/sanitize",
+  "version": "0.0.0",
+  "description": "Opt-in allowlist HTML sanitization as a Standard Schema wrapper",
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "dist",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "bun": ">=1.4.0"
+  },
+  "scripts": {
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@standard-schema/spec": "^1.1.0",
+    "sanitize-html": "^2.18.1"
+  },
+  "devDependencies": {
+    "@types/sanitize-html": "^2.16.2"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true,
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
+  }
+}

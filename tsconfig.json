@@ -6,6 +6,7 @@
     { "path": "packages/testing" },
     { "path": "packages/cors" },
     { "path": "packages/rate-limit" },
-    { "path": "packages/security-headers" }
+    { "path": "packages/security-headers" },
+    { "path": "packages/sanitize" }
   ]
 }
