@@ -101,6 +101,11 @@ export class ApplicationContext {
     return out;
   }
 
+  /** True once close() has started (including a close triggered by a failed init hook). */
+  get closed(): boolean {
+    return this.#closing !== undefined;
+  }
+
   /** Runs shutdown hooks once, in reverse initialization order; hook errors are collected. */
   close(signal?: string): Promise<void> {
     this.#closing ??= (async () => {

@@ -212,6 +212,16 @@ describe('ApplicationContext.initializeLate', () => {
     expect(log.slice(3)).toEqual(['late:destroy', 'eager:destroy']);
   });
 
+  test('closed is false until close() starts', async () => {
+    @Module({})
+    class M {}
+    const ctx = await ApplicationContext.create(M);
+    expect(ctx.closed).toBe(false);
+    const closing = ctx.close();
+    expect(ctx.closed).toBe(true);
+    await closing;
+  });
+
   test('a failing late init hook closes the context and rejects', async () => {
     const log: string[] = [];
     class Eager {
@@ -233,5 +243,6 @@ describe('ApplicationContext.initializeLate', () => {
     ctx.root.injector.resolveOrConstruct(Broken);
     await expect(ctx.initializeLate()).rejects.toThrow('late boom');
     expect(log).toEqual(['eager:destroy']);
+    expect(ctx.closed).toBe(true);
   });
 });

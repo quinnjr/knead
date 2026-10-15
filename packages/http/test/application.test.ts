@@ -570,3 +570,74 @@ describe('lifecycle of lazily constructed classes', () => {
     expect(() => a.server).toThrow(HttpConfigError);
   });
 });
+
+describe('listen after or during close', () => {
+  test('a retried listen after a failed late onModuleInit rejects: the application is closed', async () => {
+    class Broken implements Guard<Ctx>, OnModuleInit {
+      onModuleInit() {
+        throw new Error('guard init failed');
+      }
+      canActivate() {
+        return true;
+      }
+    }
+    @Controller('/r')
+    class C {
+      @Get('/', { guards: [Broken] }) get() {
+        return 'ok';
+      }
+    }
+    @Module({ controllers: [C] })
+    class M {}
+    const a = await HpmwsFactory.create(M, { logger: new MemoryLogger() });
+    await expect(a.listen({ port: 0, hostname: '127.0.0.1' })).rejects.toThrow('guard init failed');
+    await expect(a.listen({ port: 0, hostname: '127.0.0.1' })).rejects.toThrow(
+      new HttpConfigError('The application is closed.'),
+    );
+    expect(() => a.server).toThrow(HttpConfigError);
+    await a.close();
+  });
+
+  test('listen after a completed close rejects', async () => {
+    @Module({})
+    class M {}
+    const a = await HpmwsFactory.create(M, { logger: new MemoryLogger() });
+    await a.close();
+    await expect(a.listen({ port: 0, hostname: '127.0.0.1' })).rejects.toThrow(
+      new HttpConfigError('The application is closed.'),
+    );
+    expect(() => a.server).toThrow(HttpConfigError);
+  });
+
+  test('close() during the late init await aborts listen without binding', async () => {
+    class SlowGuard implements Guard<Ctx>, OnModuleInit {
+      async onModuleInit() {
+        await Bun.sleep(50);
+      }
+      canActivate() {
+        return true;
+      }
+    }
+    @Controller('/s')
+    class C {
+      @Get('/', { guards: [SlowGuard] }) get() {
+        return 'ok';
+      }
+    }
+    @Module({ controllers: [C] })
+    class M {}
+    const probe = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response('x') });
+    const port = probe.port as number;
+    probe.stop(true);
+    const a = await HpmwsFactory.create(M, { logger: new MemoryLogger() });
+    const listening = a.listen({ port, hostname: '127.0.0.1' });
+    await Bun.sleep(5);
+    const closing = a.close();
+    await expect(listening).rejects.toThrow(
+      new HttpConfigError('The application was closed during listen().'),
+    );
+    await expect(closing).resolves.toBeUndefined();
+    expect(() => a.server).toThrow(HttpConfigError);
+    await expect(fetch(`http://127.0.0.1:${port}/s`)).rejects.toThrow();
+  });
+});

@@ -72,7 +72,8 @@ export class HttpApplication {
   #retired: Server<WsData>[] = [];
   #redirect: Server<undefined> | undefined;
   #closing: Promise<void> | undefined;
-  #listening = false;
+  /** The in-flight listen(), so close() can wait for it to settle. */
+  #pendingListen: Promise<unknown> | undefined;
   readonly #signalHandlers: [NodeJS.Signals, () => void][] = [];
   #compiled: CompiledApp | undefined;
   readonly #extraMiddleware: GlobalMiddleware[] = [];
@@ -198,6 +199,9 @@ export class HttpApplication {
   }
 
   async #shutdown(signal?: string): Promise<void> {
+    // A listen() still initializing sees #closing after its await and rejects without binding;
+    // waiting for it keeps its late-initialized instances inside the shutdown below.
+    await this.#pendingListen?.catch(() => {});
     let failure: { error: unknown } | undefined;
     try {
       const servers = [...this.#retired, ...(this.#server ? [this.#server] : [])];
@@ -221,18 +225,26 @@ export class HttpApplication {
   }
 
   /**
-   * Compiles the routes and binds the listener(s). A failed listen() (e.g. the port is in use)
-   * leaves no partial state and may be retried, but the bootstrapped context stays open: callers
-   * that give up after a failure must `await app.close()` to run shutdown hooks and release
-   * resources such as database connections.
+   * Compiles the routes and binds the listener(s). A listen() that failed to bind (e.g. the port
+   * is in use) leaves no partial state and may be retried, but the bootstrapped context stays
+   * open: callers that give up must `await app.close()` to run shutdown hooks and release
+   * resources such as database connections. If a lifecycle hook of a lazily constructed class
+   * fails, the application is closed and cannot be retried. listen() rejects once close() has
+   * started, including a close() that arrives while listen() is still initializing.
    */
   async listen(options: ListenOptions = {}): Promise<Server<WsData>> {
-    if (this.#server || this.#listening) throw new HttpConfigError('listen() was already called.');
-    this.#listening = true;
+    if (this.#closing || this.context.closed) {
+      throw new HttpConfigError('The application is closed.');
+    }
+    if (this.#server || this.#pendingListen) {
+      throw new HttpConfigError('listen() was already called.');
+    }
+    const pending = this.#listen(options);
+    this.#pendingListen = pending;
     try {
-      return await this.#listen(options);
+      return await pending;
     } finally {
-      this.#listening = false;
+      this.#pendingListen = undefined;
     }
   }
 
@@ -275,6 +287,9 @@ export class HttpApplication {
     // Middleware, guards and filters constructed by the compiler get their init hooks now (and
     // shutdown hooks at close()); a failing hook rejects listen() before anything is bound.
     await this.context.initializeLate();
+    if (this.#closing || this.context.closed) {
+      throw new HttpConfigError('The application was closed during listen().');
+    }
 
     const serveOptions: Record<string, unknown> = {
       port: options.port ?? 3000,
