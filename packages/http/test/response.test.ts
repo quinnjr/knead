@@ -99,6 +99,34 @@ describe('withHeaders', () => {
     expect(res.headers.get('x-a')).toBe('1');
   });
 
+  test('re-wraps into a new Response when headers reject mutation', async () => {
+    const real = new Headers({ 'x-keep': 'k' });
+    const frozen = {
+      get: (k: string) => real.get(k),
+      has: (k: string) => real.has(k),
+      getSetCookie: () => real.getSetCookie(),
+      set(): never {
+        throw new TypeError('immutable');
+      },
+      append(): never {
+        throw new TypeError('immutable');
+      },
+      [Symbol.iterator]: () => real[Symbol.iterator](),
+      entries: () => real.entries(),
+      keys: () => real.keys(),
+      values: () => real.values(),
+      forEach: (cb: Parameters<Headers['forEach']>[0]) => real.forEach(cb),
+    };
+    const base = new Response('payload', { status: 201, headers: real });
+    Object.defineProperty(base, 'headers', { value: frozen });
+    const res = withHeaders(base, { 'x-a': '1' });
+    expect(res).not.toBe(base);
+    expect(res.status).toBe(201);
+    expect(await res.text()).toBe('payload');
+    expect(res.headers.get('x-keep')).toBe('k');
+    expect(res.headers.get('x-a')).toBe('1');
+  });
+
   test('appends set-cookie instead of replacing it', () => {
     const base = new Response(null, { headers: [['set-cookie', 'a=1']] });
     const res = withHeaders(base, [['set-cookie', 'b=2']]);
