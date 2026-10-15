@@ -39,7 +39,10 @@ export class ApplicationContext {
         if (record.provider.scope === 'singleton') state.resolve(record);
       }
     }
-    return new ApplicationContext(graph.modules, graph.root, state);
+    const context = new ApplicationContext(graph.modules, graph.root, state);
+    await context.#hook('onModuleInit');
+    await context.#hook('onApplicationBootstrap');
+    return context;
   }
 
   get<T>(token: Token<T>): T {
@@ -58,5 +61,24 @@ export class ApplicationContext {
         out.push(this.state.resolve(record) as T);
     }
     return out;
+  }
+
+  #closing: Promise<void> | undefined;
+
+  /** Runs shutdown hooks once, in reverse construction order. */
+  close(signal?: string): Promise<void> {
+    this.#closing ??= (async () => {
+      await this.#hook('beforeApplicationShutdown', true, signal);
+      await this.#hook('onModuleDestroy', true);
+    })();
+    return this.#closing;
+  }
+
+  async #hook(name: string, reverse = false, arg?: unknown): Promise<void> {
+    const list = reverse ? [...this.state.instances].reverse() : [...this.state.instances];
+    for (const instance of list) {
+      const fn = (instance as Record<string, unknown>)[name];
+      if (typeof fn === 'function') await fn.call(instance, arg);
+    }
   }
 }

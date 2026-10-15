@@ -231,8 +231,24 @@ export class ModuleInjector implements InjectorLike {
     for (const g of this.state.globals) if (g !== this && !this.imports.includes(g)) yield g;
   }
 
-  /** @internal Used by resolveOrConstruct (Task 7). */
-  get constructedRecords(): Map<Type, ProviderRecord> {
-    return this.#constructed;
+  /**
+   * Resolves `cls` if it is visible as a provider; otherwise constructs it once per module in
+   * this module's injection context (honouring overrides). Used for guards, middleware, filters.
+   */
+  resolveOrConstruct<T>(cls: Type<T>): T {
+    let record = this.#constructed.get(cls);
+    if (!record) {
+      if (this.lookup(cls)) return this.get(cls) as T;
+      const provider = this.state.overrides.get(cls) ?? {
+        kind: 'class' as const,
+        token: cls,
+        useClass: cls,
+        scope: 'singleton' as const,
+        multi: false,
+      };
+      record = { provider, owner: this, state: 'idle' };
+      this.#constructed.set(cls, record);
+    }
+    return this.state.resolve(record) as T;
   }
 }
