@@ -15,6 +15,7 @@
     "clean": "rm -rf packages/*/dist",
     "changeset": "changeset",
     "version-packages": "changeset version",
+    "check:pack": "bun scripts/check-pack.ts",
     "release": "pnpm build && changeset publish --no-git-tag"
   },
   "devDependencies": {

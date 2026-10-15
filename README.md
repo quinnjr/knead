@@ -52,10 +52,11 @@ REDIS_URL=redis://localhost:6379 pnpm test   # include RedisStore tests
 ```
 
 Work follows git-flow: feature branches from `develop`, squash-merged by pull request. To release:
-1. Run `git flow release start <version>`.
-2. Run `pnpm version-packages` and commit.
-3. Run `git flow release finish <version>` (this tags `v<version>`).
-4. Push `main`, `develop` and the tag. CI publishes to npm.
+1. `git flow release start <version>`
+2. `pnpm version-packages`
+3. `git commit -am "chore: release v<version>"`
+4. `git flow release finish <version>` (this tags `v<version>`)
+5. `git push origin main develop --follow-tags`. CI publishes to npm from the tag.
 
 ## License
 

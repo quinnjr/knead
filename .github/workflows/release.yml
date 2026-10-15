@@ -23,6 +23,8 @@ jobs:
           bun-version: 1.4.2
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
+      - run: pnpm build
+      - run: pnpm check:pack
       - run: pnpm release
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
