@@ -53,6 +53,15 @@ describe('class metadata', () => {
     expect(getMetadata(Parent, TAG)).toBe('parent');
   });
 
+  test('getOwnMetadata ignores inherited values on a decorated subclass', () => {
+    @tag('parent')
+    class Parent {}
+    @push('c')
+    class Child extends Parent {}
+    expect(getOwnMetadata(Child, TAG)).toBeUndefined();
+    expect(getMetadata(Child, TAG)).toBe('parent');
+  });
+
   test('appending in a subclass never mutates the parent array (Review Focus 3)', () => {
     @push('p1')
     class Parent {}

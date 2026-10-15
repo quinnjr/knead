@@ -39,10 +39,12 @@ export function appendMetadata<T>(
   copyOnWriteArray<T>(meta, key.symbol).push(...items);
 }
 
+/** Returned values may be shared with parent classes and must be treated as read-only; use appendMetadata/appendMethodMetadata or setMetadata to change them. */
 export function readMetadata<T>(meta: DecoratorMetadataObject, key: MetadataKey<T>): T | undefined {
   return meta[key.symbol] as T | undefined;
 }
 
+/** Returned values may be shared with parent classes and must be treated as read-only; use appendMetadata/appendMethodMetadata or setMetadata to change them. */
 export function getMetadata<T>(target: object, key: MetadataKey<T>): T | undefined {
   return bagOf(target)?.[key.symbol] as T | undefined;
 }
@@ -84,6 +86,7 @@ export function appendMethodMetadata<T>(
   copyOnWriteArray<T>(ownMethodBag(meta, method), key.symbol).push(...items);
 }
 
+/** Returned values may be shared with parent classes and must be treated as read-only; use appendMetadata/appendMethodMetadata or setMetadata to change them. */
 export function readMethodMetadata<T>(
   meta: DecoratorMetadataObject,
   method: PropertyKey,
@@ -93,6 +96,7 @@ export function readMethodMetadata<T>(
   return methods?.[method]?.[key.symbol] as T | undefined;
 }
 
+/** Returned values may be shared with parent classes and must be treated as read-only; use appendMetadata/appendMethodMetadata or setMetadata to change them. */
 export function getMethodMetadata<T>(
   target: object,
   method: PropertyKey,
