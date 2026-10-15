@@ -122,6 +122,13 @@ export class HttpApplication {
     return this.#compiled?.table ?? [];
   }
 
+  /** The TCP port of the main listener. */
+  get port(): number {
+    const port = this.server.port;
+    if (port === undefined) throw new HttpConfigError('The application has no TCP port.');
+    return port;
+  }
+
   get redirectUrl(): URL | undefined {
     return this.#redirect?.url;
   }
@@ -131,6 +138,9 @@ export class HttpApplication {
    * to the same port (SO_REUSEPORT) and the old one drains its in-flight requests.
    */
   async reloadTls(tls: TLSOptions | TLSOptions[]): Promise<void> {
+    if (this.#closing) {
+      throw new HttpConfigError('reloadTls() cannot be called while the application is closing.');
+    }
     if (!this.serveOptions?.tls) {
       throw new HttpConfigError('reloadTls() requires an application that listens with tls.');
     }
@@ -138,12 +148,20 @@ export class HttpApplication {
       throw new HttpConfigError('reloadTls() requires Linux (SO_REUSEPORT load balancing).');
     }
     const previous = this.server;
-    const next = { ...this.serveOptions, tls, port: previous.port };
+    const next = { ...this.serveOptions, tls, port: this.port };
     this.#server = Bun.serve(next as unknown as Serve.Options<WsData, string>);
     this.serveOptions = next;
     this.#retired.push(previous);
-    await previous.stop(false);
-    this.#retired = this.#retired.filter((s) => s !== previous);
+    // stop(false) stays pending while WebSockets remain open on the old listener, so it is
+    // not awaited: wait only for in-flight requests (bounded); close() reaps the rest.
+    void previous.stop(false).then(
+      () => {
+        this.#retired = this.#retired.filter((s) => s !== previous);
+      },
+      () => {},
+    );
+    const deadline = Date.now() + this.shutdownTimeout;
+    while (previous.pendingRequests > 0 && Date.now() < deadline) await Bun.sleep(10);
   }
 
   /** Graceful, idempotent shutdown. */
@@ -156,11 +174,21 @@ export class HttpApplication {
     signals: NodeJS.Signals[] = ['SIGTERM', 'SIGINT'],
     options: { exit?: boolean } = {},
   ): this {
+    if (this.#closing) {
+      throw new HttpConfigError('enableShutdownHooks() cannot be called after close().');
+    }
+    const exit = options.exit ?? true;
     for (const signal of signals) {
       const handler = () => {
-        void this.close(signal).finally(() => {
-          if (options.exit ?? true) process.exit(0);
-        });
+        this.close(signal).then(
+          () => {
+            if (exit) process.exit(0);
+          },
+          (error) => {
+            this.logger.error(`Graceful shutdown on ${signal} failed`, error);
+            if (exit) process.exit(1);
+          },
+        );
       };
       process.once(signal, handler);
       this.#signalHandlers.push([signal, handler]);
@@ -169,23 +197,33 @@ export class HttpApplication {
   }
 
   async #shutdown(signal?: string): Promise<void> {
-    const servers = [...this.#retired, ...(this.#server ? [this.#server] : [])];
-    if (servers.length > 0) {
-      for (const server of servers) void server.stop(false);
-      this.#redirect?.stop(true);
-      const deadline = Date.now() + this.shutdownTimeout;
-      const pending = () => servers.reduce((n, server) => n + server.pendingRequests, 0);
-      while (pending() > 0 && Date.now() < deadline) await Bun.sleep(10);
-      this.context.get(WsRegistry).closeAll(1001, 'Server shutting down');
-      await Promise.all(servers.map((server) => server.stop(true)));
+    let failure: { error: unknown } | undefined;
+    try {
+      const servers = [...this.#retired, ...(this.#server ? [this.#server] : [])];
+      if (servers.length > 0) {
+        for (const server of servers) void server.stop(false);
+        this.#redirect?.stop(true);
+        const deadline = Date.now() + this.shutdownTimeout;
+        const pending = () => servers.reduce((n, server) => n + server.pendingRequests, 0);
+        while (pending() > 0 && Date.now() < deadline) await Bun.sleep(10);
+        this.context.get(WsRegistry).closeAll(1001, 'Server shutting down');
+        await Promise.all(servers.map((server) => server.stop(true)));
+      }
+    } catch (error) {
+      failure = { error };
+    } finally {
+      for (const [sig, handler] of this.#signalHandlers) process.off(sig, handler);
+      this.#signalHandlers.length = 0;
     }
-    for (const [sig, handler] of this.#signalHandlers) process.off(sig, handler);
-    this.#signalHandlers.length = 0;
     await this.context.close(signal);
+    if (failure) throw failure.error;
   }
 
   async listen(options: ListenOptions = {}): Promise<Server<WsData>> {
     if (this.#server) throw new HttpConfigError('listen() was already called.');
+    if (options.redirectHttp && options.tls === undefined) {
+      throw new HttpConfigError('redirectHttp requires tls.');
+    }
     const root = this.context.root.injector;
     const entries = [
       ...this.context
@@ -235,23 +273,30 @@ export class HttpApplication {
       serveOptions.maxRequestBodySize = options.maxRequestBodySize;
     if (options.idleTimeout !== undefined) serveOptions.idleTimeout = options.idleTimeout;
     const server = Bun.serve(serveOptions as unknown as Serve.Options<WsData, string>);
+    let redirect: Server<undefined> | undefined;
+    try {
+      redirect = this.#startRedirect(options, server);
+    } catch (error) {
+      await server.stop(true);
+      throw error;
+    }
     ws.seal();
     this.#compiled = compiled;
     this.serveOptions = serveOptions;
     this.shutdownTimeout = options.shutdownTimeout ?? 10_000;
+    this.#redirect = redirect;
     this.#server = server;
-    this.onListening(options);
-    this.logger.info(`Listening on ${this.#server.url}`);
-    return this.#server;
+    this.logger.info(`Listening on ${server.url}`);
+    return server;
   }
 
-  protected onListening(options: ListenOptions): void {
-    if (!options.redirectHttp) return;
-    const httpsPort = this.server.port;
+  #startRedirect(options: ListenOptions, server: Server<WsData>): Server<undefined> | undefined {
+    if (!options.redirectHttp) return undefined;
+    const httpsPort = server.port;
     if (httpsPort === undefined) {
       throw new HttpConfigError('redirectHttp requires a TCP listener.');
     }
-    this.#redirect = Bun.serve({
+    return Bun.serve({
       port: options.redirectHttp.port,
       hostname: options.redirectHttp.hostname ?? options.hostname ?? '0.0.0.0',
       fetch: (req) => redirectToHttps(req, httpsPort),

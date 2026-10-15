@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { type BeforeApplicationShutdown, inject, Module, type OnModuleInit } from '@hpmws/core';
 import { redirectToHttps } from '../src/application.js';
 import { Controller, type Ctx, Get, HttpConfigError, WsRegistry } from '../src/index.js';
+import { MemoryLogger } from '../src/logger.js';
 import { start } from './helpers.js';
 
 const hasOpenssl = Bun.which('openssl') !== null;
@@ -85,7 +86,7 @@ describe.skipIf(!hasOpenssl)('TLS', () => {
       @Module({ controllers: [InfoController] })
       class M {}
       const app = await start(M, { tls: makeCert('first') });
-      const port = app.server.port as number;
+      const port = app.port;
       expect(await presentedSubject(port)).toBe('subject=CN=first');
       await app.reloadTls(makeCert('second'));
       expect(app.server.port).toBe(port);
@@ -95,6 +96,90 @@ describe.skipIf(!hasOpenssl)('TLS', () => {
       await app.close();
     },
   );
+
+  test.skipIf(process.platform !== 'linux')(
+    'reloadTls resolves while a websocket keeps the old listener open',
+    async () => {
+      class Gateway implements OnModuleInit {
+        readonly ws = inject(WsRegistry);
+        onModuleInit() {
+          this.ws.register('/live', { upgrade: () => ({}) });
+        }
+      }
+      @Module({ providers: [Gateway] })
+      class M {}
+      const app = await start(M, { tls: makeCert('first') });
+      const socket = new WebSocket(new URL('/live', app.url).toString().replace('https', 'wss'), {
+        tls: { rejectUnauthorized: false },
+      } as never);
+      await new Promise((resolve, reject) => {
+        socket.onopen = resolve;
+        socket.onerror = reject;
+      });
+      const closed = new Promise<number>((resolve) => {
+        socket.onclose = (e) => resolve(e.code);
+      });
+      const started = Date.now();
+      await app.reloadTls(makeCert('second'));
+      expect(Date.now() - started).toBeLessThan(1_000);
+      expect(socket.readyState).toBe(WebSocket.OPEN);
+      await app.close();
+      expect(await closed).toBe(1001);
+    },
+  );
+
+  test.skipIf(process.platform !== 'linux')(
+    'close() drains a listener retired by reloadTls',
+    async () => {
+      @Module({ controllers: [InfoController] })
+      class M {}
+      const app = await start(M, { tls: makeCert('first') });
+      const inflight = fetch(new URL('/slow', app.url), {
+        tls: { rejectUnauthorized: false },
+      }).then((r) => r.text());
+      await Bun.sleep(30);
+      const reload = app.reloadTls(makeCert('second'));
+      await app.close();
+      await reload;
+      expect(await inflight).toBe('done');
+      await expect(
+        fetch(new URL('/slow', app.url), { tls: { rejectUnauthorized: false } }),
+      ).rejects.toThrow();
+    },
+  );
+
+  test('reloadTls during close is rejected', async () => {
+    @Module({})
+    class M {}
+    const app = await start(M, { tls: makeCert('first') });
+    const closing = app.close();
+    await expect(app.reloadTls(makeCert('second'))).rejects.toThrow(
+      'reloadTls() cannot be called while the application is closing.',
+    );
+    await closing;
+  });
+
+  test('redirectHttp bind failure rolls back the HTTPS listener', async () => {
+    @Module({})
+    class M {}
+    const blocker = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response('x') });
+    const app = await start(M);
+    await app.close();
+    const { HpmwsFactory } = await import('../src/application.js');
+    const app2 = await HpmwsFactory.create(M, { logger: new MemoryLogger(), development: false });
+    await expect(
+      app2.listen({
+        port: 0,
+        hostname: '127.0.0.1',
+        tls: makeCert('first'),
+        redirectHttp: { port: blocker.port as number, hostname: '127.0.0.1' },
+      }),
+    ).rejects.toThrow();
+    const server = await app2.listen({ port: 0, hostname: '127.0.0.1', tls: makeCert('first') });
+    expect(server.port).toBeGreaterThan(0);
+    await app2.close();
+    blocker.stop(true);
+  });
 
   test('redirectHttp starts a 308 redirect listener', async () => {
     @Module({ controllers: [InfoController] })
@@ -112,6 +197,26 @@ test('reloadTls without TLS is a configuration error', async () => {
   class M {}
   const app = await start(M);
   await expect(app.reloadTls({})).rejects.toThrow(HttpConfigError);
+  await app.close();
+});
+
+test('redirectHttp without tls is a configuration error', async () => {
+  @Module({})
+  class M {}
+  const { HpmwsFactory } = await import('../src/application.js');
+  const app = await HpmwsFactory.create(M, { logger: new MemoryLogger(), development: false });
+  await expect(
+    app.listen({ port: 0, hostname: '127.0.0.1', redirectHttp: { port: 0 } }),
+  ).rejects.toThrow('redirectHttp requires tls.');
+  await app.close();
+});
+
+test('port throws before listen', async () => {
+  @Module({})
+  class M {}
+  const { HpmwsFactory } = await import('../src/application.js');
+  const app = await HpmwsFactory.create(M, { logger: new MemoryLogger(), development: false });
+  expect(() => app.port).toThrow(HttpConfigError);
   await app.close();
 });
 
@@ -191,6 +296,34 @@ describe('graceful shutdown', () => {
     process.emit('SIGUSR2', 'SIGUSR2');
     await app.close();
     expect(log).toEqual(['SIGUSR2']);
+    expect(process.listenerCount('SIGUSR2')).toBe(before);
+  });
+  test('enableShutdownHooks after close is rejected', async () => {
+    @Module({})
+    class M {}
+    const app = await start(M);
+    await app.close();
+    expect(() => app.enableShutdownHooks(['SIGUSR2'], { exit: false })).toThrow(HttpConfigError);
+  });
+
+  test('a failing close is logged, not unhandled, and still removes listeners', async () => {
+    class Hooks implements BeforeApplicationShutdown {
+      beforeApplicationShutdown() {
+        throw new Error('hook boom');
+      }
+    }
+    @Module({ providers: [Hooks] })
+    class M {}
+    const logger = new MemoryLogger();
+    const app = await start(M, {}, { logger });
+    const before = process.listenerCount('SIGUSR2');
+    app.enableShutdownHooks(['SIGUSR2'], { exit: false });
+    process.emit('SIGUSR2', 'SIGUSR2');
+    await app.close().catch(() => {});
+    await Bun.sleep(10);
+    expect(logger.entries.some((e) => e.level === 'error' && /shutdown/i.test(e.message))).toBe(
+      true,
+    );
     expect(process.listenerCount('SIGUSR2')).toBe(before);
   });
 });
