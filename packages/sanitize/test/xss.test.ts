@@ -26,3 +26,20 @@ describe.each(['strict', 'basic', 'rich'] as PresetName[])(
     });
   },
 );
+
+describe('assertion helpers are not vacuous', () => {
+  test('flag at least 80% of raw, unsanitized payloads', () => {
+    const flagged = XSS_PAYLOADS.filter((raw) => {
+      if (/<(?![a-z/])/i.test(raw)) return true;
+      return (raw.match(/<[^>]*>/g) ?? []).some(
+        (tag) =>
+          DANGEROUS_TAG.test(tag) ||
+          EVENT_HANDLER.test(tag) ||
+          DANGEROUS_URL.test(tag) ||
+          PROTOCOL_RELATIVE.test(tag) ||
+          STYLE_ATTR.test(tag),
+      );
+    });
+    expect(flagged.length / XSS_PAYLOADS.length).toBeGreaterThanOrEqual(0.8);
+  });
+});

@@ -1,7 +1,8 @@
 export interface SanitizePolicy {
   allowedTags: readonly string[];
   allowedAttributes: Readonly<Record<string, readonly string[]>>;
-  /** URL schemes allowed in href/src. Default: http, https, mailto (img: http, https). */
+  /** URL schemes allowed in href/src. Default: http, https, mailto (img: http, https only).
+   * When set, it applies to every tag, including img (minus mailto). */
   allowedSchemes?: readonly string[];
 }
 
@@ -9,11 +10,22 @@ export type PresetName = 'strict' | 'basic' | 'rich';
 
 const BASIC_TAGS = ['b', 'i', 'em', 'strong', 'a', 'p', 'br', 'code'] as const;
 
+const freeze = (
+  tags: readonly string[],
+  attrs: Record<string, readonly string[]>,
+): SanitizePolicy =>
+  Object.freeze({
+    allowedTags: Object.freeze([...tags]),
+    allowedAttributes: Object.freeze(
+      Object.fromEntries(Object.entries(attrs).map(([k, v]) => [k, Object.freeze([...v])])),
+    ),
+  });
+
 export const POLICIES: Readonly<Record<PresetName, SanitizePolicy>> = Object.freeze({
-  strict: Object.freeze({ allowedTags: [], allowedAttributes: {} }),
-  basic: Object.freeze({ allowedTags: [...BASIC_TAGS], allowedAttributes: { a: ['href'] } }),
-  rich: Object.freeze({
-    allowedTags: [
+  strict: freeze([], {}),
+  basic: freeze(BASIC_TAGS, { a: ['href'] }),
+  rich: freeze(
+    [
       ...BASIC_TAGS,
       'ul',
       'ol',
@@ -28,6 +40,6 @@ export const POLICIES: Readonly<Record<PresetName, SanitizePolicy>> = Object.fre
       'pre',
       'img',
     ],
-    allowedAttributes: { a: ['href'], img: ['src', 'alt'] },
-  }),
+    { a: ['href'], img: ['src', 'alt'] },
+  ),
 });

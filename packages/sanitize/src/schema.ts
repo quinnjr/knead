@@ -1,12 +1,13 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
 import type { PresetName, SanitizePolicy } from './policies.js';
-import { sanitize } from './sanitize.js';
+import { assertSafePolicy, sanitize } from './sanitize.js';
 
 /** Validates with `inner`, then sanitizes its (string) output against an allowlist policy. */
 export function sanitizedHtml<S extends StandardSchemaV1>(
   inner: S,
   policy: SanitizePolicy | PresetName = 'basic',
 ): StandardSchemaV1<StandardSchemaV1.InferInput<S>, string> {
+  if (typeof policy !== 'string') assertSafePolicy(policy);
   return {
     '~standard': {
       version: 1,
