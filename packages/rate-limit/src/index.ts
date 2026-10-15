@@ -16,4 +16,5 @@ export {
   type RateLimitModuleOptions,
 } from './middleware.js';
 export { RateLimitModule } from './module.js';
+export { RedisStore, type RedisStoreOptions } from './redis-store.js';
 export type { Algorithm, ConsumeResult, RateLimitRule, RateLimitStore } from './store.js';
