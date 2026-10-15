@@ -9,6 +9,8 @@ export {
   NoProviderError,
   ProviderConfigError,
 } from './errors.js';
+export * from './injection-context.js';
+export { ModuleInjector } from './injector.js';
 export * from './metadata.js';
 export * from './providers.js';
 export * from './tokens.js';
