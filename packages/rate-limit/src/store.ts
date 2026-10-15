@@ -9,7 +9,10 @@ export interface RateLimitRule {
 export interface ConsumeResult {
   allowed: boolean;
   remaining: number;
-  /** Epoch milliseconds when the limit resets (sliding) or the next token arrives (bucket). */
+  /**
+   * Epoch milliseconds. On denial, the earliest time a request would be admitted. On success, when
+   * the quota is fully restored (sliding window: window end; token bucket: bucket full).
+   */
   resetAt: number;
 }
 
