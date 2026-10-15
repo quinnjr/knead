@@ -1,8 +1,5 @@
 import { HpmwsError } from '@hpmws/core';
 
-/** Anything accepted by the `Headers` constructor (the global `HeadersInit` is absent without the DOM lib). */
-type HeadersInit = ConstructorParameters<typeof Headers>[0];
-
 export const STATUS_TITLES: Readonly<Record<number, string>> = {
   400: 'Bad Request',
   401: 'Unauthorized',
@@ -33,7 +30,7 @@ export interface HttpExceptionOptions {
   title?: string;
   extensions?: Record<string, unknown>;
   cause?: unknown;
-  headers?: HeadersInit;
+  headers?: Bun.HeadersInit;
 }
 
 export class HttpException extends Error {
@@ -45,6 +42,11 @@ export class HttpException extends Error {
   readonly headers: Headers;
 
   constructor(status: number, detail?: string, options: HttpExceptionOptions = {}) {
+    if (!Number.isInteger(status) || status < 400 || status > 599) {
+      throw new RangeError(
+        `HttpException status must be an integer between 400 and 599, got ${status}`,
+      );
+    }
     const title = options.title ?? STATUS_TITLES[status] ?? 'Error';
     super(detail ?? title, options.cause === undefined ? undefined : { cause: options.cause });
     this.name = new.target.name;
@@ -128,7 +130,7 @@ export class ServiceUnavailableException extends HttpException {
 /** Configuration errors detected while compiling or starting the application. */
 export class HttpConfigError extends HpmwsError {}
 
-export function problemResponse(problem: ProblemDetails, headers?: HeadersInit): Response {
+export function problemResponse(problem: ProblemDetails, headers?: Bun.HeadersInit): Response {
   const h = new Headers(headers);
   h.set('content-type', 'application/problem+json; charset=utf-8');
   h.set('x-content-type-options', 'nosniff');

@@ -85,3 +85,16 @@ describe('problemResponse', () => {
     });
   });
 });
+
+describe('HttpException status validation', () => {
+  test.each([400, 599])('accepts boundary status %p', (status) => {
+    expect(new HttpException(status).status).toBe(status);
+  });
+
+  test.each([200, 399, 600, 404.5, Number.NaN])('rejects status %p', (status) => {
+    expect(() => new HttpException(status)).toThrow(RangeError);
+    expect(() => new HttpException(status)).toThrow(
+      `HttpException status must be an integer between 400 and 599, got ${status}`,
+    );
+  });
+});
