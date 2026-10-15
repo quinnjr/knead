@@ -35,7 +35,12 @@ export interface ListenOptions {
   trustProxy?: TrustProxy;
   maxRequestBodySize?: number;
   idleTimeout?: number;
-  /** Max time close() waits for in-flight requests before forcing connections closed. Default 10s. */
+  /**
+   * Max time close() waits for in-flight requests before forcing connections closed, and for a
+   * listen() that is still initializing. Default 10s. If that wait times out, the listen is
+   * abandoned (it rejects without binding) and classes whose onModuleInit was still running do
+   * not receive onModuleDestroy.
+   */
   shutdownTimeout?: number;
 }
 
@@ -166,7 +171,12 @@ export class HttpApplication {
     while (previous.pendingRequests > 0 && Date.now() < deadline) await Bun.sleep(10);
   }
 
-  /** Graceful, idempotent shutdown. */
+  /**
+   * Graceful, idempotent shutdown. If listen() is still initializing (running onModuleInit of
+   * middleware, guards or filters), close() waits up to shutdownTimeout for it; past that the
+   * listen is abandoned and rejects without binding, and classes whose onModuleInit was still
+   * running do not receive onModuleDestroy.
+   */
   close(signal?: string): Promise<void> {
     this.#closing ??= this.#shutdown(signal);
     return this.#closing;
