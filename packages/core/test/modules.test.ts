@@ -165,7 +165,43 @@ describe('graph shape', () => {
   });
 });
 
+describe('dynamic variants', () => {
+  test('re-exporting a class re-exports every dynamic variant', () => {
+    const A = new InjectionToken<string>('A');
+    const B = new InjectionToken<string>('B');
+    @Module({})
+    class FeatureModule {
+      static forFeature(token: InjectionToken<string>, value: string) {
+        return {
+          module: FeatureModule,
+          providers: [{ provide: token, useValue: value }],
+          exports: [token],
+        };
+      }
+    }
+    @Module({
+      imports: [FeatureModule.forFeature(A, 'a'), FeatureModule.forFeature(B, 'b')],
+      exports: [FeatureModule],
+    })
+    class MiddleModule {}
+    class Consumer {
+      readonly a = inject(A);
+      readonly b = inject(B);
+    }
+    @Module({ imports: [MiddleModule], providers: [Consumer] })
+    class AppModule {}
+    const c = build(AppModule).root.injector.get(Consumer)!;
+    expect([c.a, c.b]).toEqual(['a', 'b']);
+  });
+});
+
 describe('definition errors', () => {
+  test('an undefined root module is reported clearly', () => {
+    expect(() => buildModuleGraph(undefined as never, [], new ContainerState())).toThrow(
+      'The root module is undefined. This usually means a circular file import; check the import order of your module files.',
+    );
+  });
+
   test('undefined imports point at circular file imports', () => {
     @Module({ imports: [undefined as never] })
     class AppModule {}

@@ -82,19 +82,24 @@ function describeExport(entry: ModuleExport): string {
   return isDynamicModule(entry) ? `${entry.module.name} (dynamic module)` : tokenName(entry);
 }
 
+function unresolvedExport(node: Node, entry: ModuleExport): ModuleDefinitionError {
+  return new ModuleDefinitionError(
+    `${node.def.metatype.name} exports ${describeExport(entry)}, which it neither provides nor imports.`,
+  );
+}
+
 function computeExports(node: Node): void {
   const { injector, def } = node;
   for (const entry of def.options.exports ?? []) {
-    const child = node.children.find((c) => matchesImport(c, entry));
-    if (child) {
-      for (const [token, owner] of child.injector.exported) injector.exported.set(token, owner);
+    const exact = node.children.filter((c) => c.key === entry);
+    const matched = exact.length > 0 ? exact : node.children.filter((c) => matchesImport(c, entry));
+    if (matched.length > 0) {
+      for (const child of matched) {
+        for (const [token, owner] of child.injector.exported) injector.exported.set(token, owner);
+      }
       continue;
     }
-    if (isDynamicModule(entry)) {
-      throw new ModuleDefinitionError(
-        `${def.metatype.name} exports ${describeExport(entry)}, which it neither provides nor imports.`,
-      );
-    }
+    if (isDynamicModule(entry)) throw unresolvedExport(node, entry);
     const token = entry as Token;
     if (injector.records.has(token)) {
       injector.exported.set(token, injector);
@@ -105,9 +110,7 @@ function computeExports(node: Node): void {
       injector.exported.set(token, via.injector.exported.get(token)!);
       continue;
     }
-    throw new ModuleDefinitionError(
-      `${def.metatype.name} exports ${describeExport(entry)}, which it neither provides nor imports.`,
-    );
+    throw unresolvedExport(node, entry);
   }
 }
 
@@ -151,6 +154,11 @@ export function buildModuleGraph(
   globals.forEach((g, i) => {
     visit(g, '<global modules>', i);
   });
+  if (root === undefined || root === null) {
+    throw new ModuleDefinitionError(
+      `The root module is ${String(root)}. This usually means a circular file import; check the import order of your module files.`,
+    );
+  }
   const rootNode = visit(root, '<root>', 0);
 
   for (const node of order) {
