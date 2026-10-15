@@ -132,7 +132,7 @@ describe('validation', () => {
     },
   );
 
-  test.each([0, -5, Number.NaN, Number.POSITIVE_INFINITY])(
+  test.each([0, -5, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
     'rejects windowMs %p',
     async (windowMs) => {
       const { store } = clockStore();

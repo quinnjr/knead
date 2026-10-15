@@ -8,6 +8,8 @@ test.each([
   ['1m', 60_000],
   ['1.5h', 5_400_000],
   ['1d', 86_400_000],
+  ['1.5ms', 2],
+  [0.2, 1],
 ] as const)('parseDuration(%p) = %p', (input, ms) => {
   expect(parseDuration(input)).toBe(ms);
 });

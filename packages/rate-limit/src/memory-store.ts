@@ -55,9 +55,9 @@ export class MemoryStore implements RateLimitStore {
     if (!Number.isInteger(rule.limit) || rule.limit < 1) {
       throw new RangeError(`Rate limit must be a positive integer, got ${String(rule.limit)}.`);
     }
-    if (!Number.isFinite(rule.windowMs) || rule.windowMs <= 0) {
+    if (!Number.isInteger(rule.windowMs) || rule.windowMs <= 0) {
       throw new RangeError(
-        `Rate limit window must be a positive finite number, got ${String(rule.windowMs)}.`,
+        `Rate limit window must be a positive integer (ms), got ${String(rule.windowMs)}.`,
       );
     }
     return rule.algorithm === 'token-bucket' ? this.#bucket(key, rule) : this.#sliding(key, rule);

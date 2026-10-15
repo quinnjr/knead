@@ -89,7 +89,7 @@ export interface RedisStoreOptions {
  * TIME as its clock.
  *
  * Known limitation: sliding-window keys are derived inside the script, so this store does not
- * support Redis Cluster.
+ * support Redis Cluster. Keys include the window, so changing a rule's window starts fresh state.
  */
 export class RedisStore implements RateLimitStore {
   readonly #client: RedisClient;
@@ -106,14 +106,19 @@ export class RedisStore implements RateLimitStore {
     if (!Number.isInteger(rule.limit) || rule.limit < 1) {
       throw new RangeError(`Rate limit must be a positive integer, got ${String(rule.limit)}.`);
     }
-    if (!Number.isFinite(rule.windowMs) || rule.windowMs <= 0) {
+    if (!Number.isInteger(rule.windowMs) || rule.windowMs <= 0) {
       throw new RangeError(
-        `Rate limit window must be a positive finite number, got ${String(rule.windowMs)}.`,
+        `Rate limit window must be a positive integer (ms), got ${String(rule.windowMs)}.`,
       );
     }
     const algorithm: Algorithm =
       rule.algorithm === 'token-bucket' ? 'token-bucket' : 'sliding-window';
-    const args = ['1', this.#prefix + key, String(rule.limit), String(rule.windowMs)];
+    const args = [
+      '1',
+      `${this.#prefix}${key}:${rule.windowMs}`,
+      String(rule.limit),
+      String(rule.windowMs),
+    ];
     let reply: unknown;
     try {
       reply = await this.#client.send('EVALSHA', [SHAS[algorithm], ...args]);

@@ -20,11 +20,14 @@ describe.skipIf(!url)('RedisStore', () => {
 
   test('sliding window allows up to the limit', async () => {
     const store = new RedisStore({ client: shared, prefix });
+    const before = await redisNow();
     const results = [];
     for (let i = 0; i < 4; i++) results.push(await store.consume('s', sliding));
     expect(results.map((r) => r.allowed)).toEqual([true, true, true, false]);
     expect(results[0]!.remaining).toBe(2);
-    expect(results[3]!.resetAt).toBeGreaterThan(Date.now() - 5_000);
+    const untilReset = results[3]!.resetAt - before;
+    expect(untilReset).toBeGreaterThan(0);
+    expect(untilReset).toBeLessThanOrEqual(sliding.windowMs * 2);
   });
 
   test('token bucket allows the burst then refuses', async () => {
@@ -39,7 +42,7 @@ describe.skipIf(!url)('RedisStore', () => {
     for (const limit of [0, -1, 1.5, Number.NaN]) {
       await expect(store.consume('v', { ...sliding, limit })).rejects.toBeInstanceOf(RangeError);
     }
-    for (const windowMs of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+    for (const windowMs of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
       await expect(store.consume('v', { ...bucket, windowMs })).rejects.toBeInstanceOf(RangeError);
     }
   });
@@ -67,22 +70,53 @@ describe.skipIf(!url)('RedisStore', () => {
   });
 
   test('sliding denial resetAt uses the in-window solve when the previous window is populated', async () => {
-    const w = 60_000;
+    expect.assertions(5);
+    const w = 2_000;
     const rule: RateLimitRule = { limit: 10, windowMs: w, algorithm: 'sliding-window' };
     const store = new RedisStore({ client: shared, prefix });
-    const t0 = await redisNow();
-    const ws = Math.floor(t0 / w) * w;
-    // 1000 requests in the previous window: denied until the weight drops below 9/1000.
-    await shared!.send('SET', [`${prefix}ip:${ws - w}`, '1000', 'PX', '120000']);
-    const result = await store.consume('ip', rule);
-    const t1 = await redisNow();
-    if (Math.floor(t1 / w) * w !== ws) return; // window rolled mid-test
-    const solve = Math.ceil(ws + w - (9 * w) / 1000);
-    expect(result.allowed).toBe(false);
-    expect(result.remaining).toBe(0);
-    expect(result.resetAt).toBeGreaterThanOrEqual(Math.max(t0, solve));
-    expect(result.resetAt).toBeLessThanOrEqual(Math.max(t1, solve));
-    expect(result.resetAt).toBeLessThan(ws + w);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const t0 = await redisNow();
+      const ws = Math.floor(t0 / w) * w;
+      // 13 requests in the previous window: denied until the weight drops to 9/13, so the
+      // admission point is ws + w * (1 - 9/13), about 31% into the window.
+      const solve = Math.ceil(ws + w - (9 * w) / 13);
+      if (t0 > solve - 150) {
+        await Bun.sleep(ws + w - t0 + 5); // too late in this window: wait for the next one
+        continue;
+      }
+      const key = `ip-${attempt}`;
+      await shared!.send('SET', [`${prefix}${key}:${w}:${ws - w}`, '13', 'PX', '10000']);
+      const result = await store.consume(key, rule);
+      const t1 = await redisNow();
+      if (t1 >= solve) {
+        await Bun.sleep(ws + w - t1 + 5);
+        continue;
+      }
+      expect(result.allowed).toBe(false);
+      expect(result.remaining).toBe(0);
+      expect(result.resetAt).toBe(solve);
+      expect(result.resetAt).toBeLessThan(ws + w);
+      expect(result.resetAt).toBeGreaterThan(t1);
+      return;
+    }
+    throw new Error('every attempt landed too late in its window');
+  });
+
+  test('a changed window resets the key like MemoryStore', async () => {
+    const store = new RedisStore({ client: shared, prefix });
+    const rule = (windowMs: number): RateLimitRule => ({
+      limit: 1,
+      windowMs,
+      algorithm: 'sliding-window',
+    });
+    expect((await store.consume('rw', rule(60_000))).allowed).toBe(true);
+    expect((await store.consume('rw', rule(60_000))).allowed).toBe(false);
+    expect((await store.consume('rw', rule(70_000))).allowed).toBe(true);
+    const bucketRule = (windowMs: number): RateLimitRule => ({ ...bucket, windowMs });
+    await store.consume('rwb', bucketRule(2_000));
+    await store.consume('rwb', bucketRule(2_000));
+    expect((await store.consume('rwb', bucketRule(2_000))).allowed).toBe(false);
+    expect((await store.consume('rwb', bucketRule(3_000))).allowed).toBe(true);
   });
 
   test('token bucket resetAt follows MemoryStore semantics relative to Redis time', async () => {
