@@ -162,10 +162,10 @@ describe.skipIf(!hasOpenssl)('TLS', () => {
   test('redirectHttp bind failure rolls back the HTTPS listener', async () => {
     @Module({})
     class M {}
+    const blocker = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response('x') });
     const probe = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response('x') });
     const freePort = probe.port as number;
     probe.stop(true);
-    const blocker = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response('x') });
     const app = await HpmwsFactory.create(M, { logger: new MemoryLogger(), development: false });
     await expect(
       app.listen({
