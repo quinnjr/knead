@@ -12,6 +12,10 @@ export interface CreateContextOptions {
 }
 
 export class ApplicationContext {
+  #closing: Promise<void> | undefined;
+  /** Instances whose init hooks ran; only these receive shutdown hooks. */
+  #initialized: object[] = [];
+
   private constructor(
     readonly modules: readonly ModuleRef[],
     readonly root: ModuleRef,
@@ -40,8 +44,18 @@ export class ApplicationContext {
       }
     }
     const context = new ApplicationContext(graph.modules, graph.root, state);
-    await context.#hook('onModuleInit');
-    await context.#hook('onApplicationBootstrap');
+    try {
+      for (const instance of [...state.instances] as object[]) {
+        await ApplicationContext.#call(instance, 'onModuleInit');
+        context.#initialized.push(instance);
+      }
+      for (const instance of context.#initialized) {
+        await ApplicationContext.#call(instance, 'onApplicationBootstrap');
+      }
+    } catch (error) {
+      await context.close().catch(() => {});
+      throw error;
+    }
     return context;
   }
 
@@ -63,22 +77,31 @@ export class ApplicationContext {
     return out;
   }
 
-  #closing: Promise<void> | undefined;
-
-  /** Runs shutdown hooks once, in reverse construction order. */
+  /** Runs shutdown hooks once, in reverse initialization order; hook errors are collected. */
   close(signal?: string): Promise<void> {
     this.#closing ??= (async () => {
-      await this.#hook('beforeApplicationShutdown', true, signal);
-      await this.#hook('onModuleDestroy', true);
+      const errors: unknown[] = [];
+      const reversed = [...this.#initialized].reverse();
+      for (const [name, arg] of [
+        ['beforeApplicationShutdown', signal],
+        ['onModuleDestroy', undefined],
+      ] as const) {
+        for (const instance of reversed) {
+          try {
+            await ApplicationContext.#call(instance, name, arg);
+          } catch (error) {
+            errors.push(error);
+          }
+        }
+      }
+      if (errors.length === 1) throw errors[0];
+      if (errors.length > 1) throw new AggregateError(errors, 'Application shutdown failed');
     })();
     return this.#closing;
   }
 
-  async #hook(name: string, reverse = false, arg?: unknown): Promise<void> {
-    const list = reverse ? [...this.state.instances].reverse() : [...this.state.instances];
-    for (const instance of list) {
-      const fn = (instance as Record<string, unknown>)[name];
-      if (typeof fn === 'function') await fn.call(instance, arg);
-    }
+  static async #call(instance: object, name: string, arg?: unknown): Promise<void> {
+    const fn = (instance as Record<string, unknown>)[name];
+    if (typeof fn === 'function') await fn.call(instance, arg);
   }
 }

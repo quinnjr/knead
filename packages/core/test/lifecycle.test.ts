@@ -132,3 +132,98 @@ describe('resolveOrConstruct', () => {
     expect(ctx.root.injector.resolveOrConstruct(Guard)).toBe(fake as never);
   });
 });
+
+describe('lifecycle robustness', () => {
+  test('instances constructed after create() are not shut down', async () => {
+    const log: string[] = [];
+    class Late {
+      onModuleDestroy() {
+        log.push('late:destroy');
+      }
+    }
+    class Svc {
+      onModuleDestroy() {
+        log.push('svc:destroy');
+      }
+    }
+    @Module({ providers: [Svc] })
+    class AppModule {}
+    const ctx = await ApplicationContext.create(AppModule);
+    ctx.root.injector.resolveOrConstruct(Late);
+    await ctx.close();
+    expect(log).toEqual(['svc:destroy']);
+  });
+
+  test('a throwing shutdown hook does not skip the rest; close rejects with the error', async () => {
+    const log: string[] = [];
+    const boom = new Error('boom');
+    class A {
+      beforeApplicationShutdown() {
+        throw boom;
+      }
+      onModuleDestroy() {
+        log.push('a:destroy');
+      }
+    }
+    class B {
+      beforeApplicationShutdown() {
+        log.push('b:before');
+      }
+      onModuleDestroy() {
+        log.push('b:destroy');
+      }
+    }
+    @Module({ providers: [A, B] })
+    class AppModule {}
+    const ctx = await ApplicationContext.create(AppModule);
+    const first = ctx.close();
+    expect(ctx.close()).toBe(first);
+    await expect(first).rejects.toBe(boom);
+    expect(log).toEqual(['b:before', 'b:destroy', 'a:destroy']);
+  });
+
+  test('several shutdown errors are aggregated', async () => {
+    class A {
+      onModuleDestroy() {
+        throw new Error('a');
+      }
+    }
+    class B {
+      onModuleDestroy() {
+        throw new Error('b');
+      }
+    }
+    @Module({ providers: [A, B] })
+    class AppModule {}
+    const ctx = await ApplicationContext.create(AppModule);
+    const err = await ctx.close().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AggregateError);
+    expect((err as AggregateError).errors).toHaveLength(2);
+  });
+
+  test('failed bootstrap shuts down already-initialized instances', async () => {
+    const log: string[] = [];
+    const boom = new Error('init failed');
+    class A {
+      onModuleInit() {
+        log.push('a:init');
+      }
+      onModuleDestroy() {
+        log.push('a:destroy');
+      }
+    }
+    class B {
+      readonly a = inject(A);
+      onModuleInit() {
+        throw boom;
+      }
+      onModuleDestroy() {
+        log.push('b:destroy');
+      }
+    }
+    @Module({ providers: [A, B] })
+    class AppModule {}
+    await expect(ApplicationContext.create(AppModule)).rejects.toBe(boom);
+    expect(log).toEqual(['a:init', 'a:destroy']);
+  });
+});
