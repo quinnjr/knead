@@ -116,6 +116,9 @@ describe('validateSecurityHeadersOptions', () => {
     expect(() =>
       validateSecurityHeadersOptions(csp({ 'img-src': ['self', 42] as unknown as string[] })),
     ).toThrow(HttpConfigError);
+    expect(() =>
+      validateSecurityHeadersOptions(csp({ 'img-src': [10n] as unknown as string[] })),
+    ).toThrow(HttpConfigError);
   });
 
   test('accepts normal configs', () => {

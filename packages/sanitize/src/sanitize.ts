@@ -21,11 +21,9 @@ const FORBIDDEN_TAGS = new Set([
   'template',
 ]);
 const FORBIDDEN_ATTRS = new Set(['style', 'srcdoc', 'formaction']);
-const checked = new WeakSet<SanitizePolicy>();
 
-/** Throws TypeError if a policy would re-enable a known XSS vector. Cached per policy object. */
+/** Throws TypeError if a policy would re-enable a known XSS vector. */
 export function assertSafePolicy(policy: SanitizePolicy): void {
-  if (checked.has(policy)) return;
   for (const tag of policy.allowedTags) {
     if (FORBIDDEN_TAGS.has(tag.toLowerCase()))
       throw new TypeError(`Unsafe sanitize policy: tag <${tag}> cannot be allowed`);
@@ -37,7 +35,6 @@ export function assertSafePolicy(policy: SanitizePolicy): void {
         throw new TypeError(`Unsafe sanitize policy: attribute "${attr}" cannot be allowed`);
     }
   }
-  checked.add(policy);
 }
 
 /** Allowlist sanitization. Links always get rel="noopener noreferrer". */

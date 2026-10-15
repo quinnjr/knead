@@ -81,6 +81,17 @@ describe('custom policy guard', () => {
       expect(() => sanitize('x', bad({ allowedAttributes: { p: [attr] } }))).toThrow(TypeError);
     }
   });
+  test('rejects uppercase names', () => {
+    expect(() => sanitize('x', bad({ allowedTags: ['SCRIPT'] }))).toThrow(TypeError);
+    expect(() => sanitize('x', bad({ allowedAttributes: { p: ['ONCLICK'] } }))).toThrow(TypeError);
+  });
+  test('catches a policy mutated after first use', () => {
+    const tags = ['p'];
+    const policy = { allowedTags: tags, allowedAttributes: {} };
+    sanitize('<p>x</p>', policy);
+    tags.push('script');
+    expect(() => sanitize('<script>1</script>', policy)).toThrow(TypeError);
+  });
   test('accepts safe policies', () => {
     expect(() =>
       sanitize('x', bad({ allowedTags: ['p'], allowedAttributes: { p: ['id'] } })),

@@ -104,7 +104,7 @@ export function validateSecurityHeadersOptions(options: SecurityHeadersOptions):
     const tokens: readonly string[] = typeof value === 'string' ? [value] : value;
     for (const token of tokens) {
       if (typeof token !== 'string')
-        throw new HttpConfigError(`Invalid CSP value for ${name}: ${JSON.stringify(token)}`);
+        throw new HttpConfigError(`Invalid CSP value for ${name}: ${String(token)}`);
       if (FORBIDDEN_TOKEN.test(token) || (typeof value !== 'string' && /\s/.test(token))) {
         throw new HttpConfigError(`Invalid CSP value for ${name}: ${JSON.stringify(token)}`);
       }
