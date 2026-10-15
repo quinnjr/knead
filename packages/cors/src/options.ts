@@ -25,9 +25,10 @@ export const CORS_OPTIONS = new InjectionToken<CorsOptions>('CORS_OPTIONS');
 export class CorsConfigError extends HpmwsError {}
 
 export function validateCorsOptions(options: CorsOptions): void {
-  const wildcard =
-    options.origin === '*' || (Array.isArray(options.origin) && options.origin.includes('*'));
-  if (wildcard && options.credentials) {
+  if (Array.isArray(options.origin) && options.origin.includes('*')) {
+    throw new CorsConfigError("Use origin: '*' instead of listing '*' among origins.");
+  }
+  if (options.origin === '*' && options.credentials) {
     throw new CorsConfigError(
       'CORS origin "*" cannot be combined with credentials: true; list the allowed origins explicitly.',
     );

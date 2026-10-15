@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { Controller, type Ctx, Get } from '@hpmws/http';
+import { Controller, type Ctx, Get, UseGuards } from '@hpmws/http';
 import { Test, type TestApp } from '@hpmws/testing';
 import { CorsConfigError, CorsModule, type CorsOptions } from '../src/index.js';
 
@@ -11,6 +11,9 @@ class ApiController {
   @Get('/vary') vary(ctx: Ctx) {
     ctx.res.headers.set('vary', 'Accept-Encoding');
     return 'v';
+  }
+  @Get('/guarded') @UseGuards(() => false) guarded() {
+    return 'g';
   }
   @Get('/boom') boom() {
     throw new Error('boom');
@@ -147,6 +150,35 @@ describe('preflight', () => {
   });
 });
 
+describe('guards and credentials', () => {
+  test('CORS runs before guards: preflight and rejected requests carry CORS headers', async () => {
+    const a = await serve({ origin: 'https://app.example' });
+    const pre = await a.request('OPTIONS', '/api/guarded', preflight('https://app.example'));
+    expect(pre.status).toBe(204);
+    expect(pre.headers.get('access-control-allow-origin')).toBe('https://app.example');
+    const res = await a.request('GET', '/api/guarded', {
+      headers: { origin: 'https://app.example' },
+    });
+    expect(res.status).toBe(403);
+    expect(res.headers.get('access-control-allow-origin')).toBe('https://app.example');
+  });
+
+  test('credentials preflight for allowed origins; none for disallowed', async () => {
+    const a = await serve({ origin: 'https://app.example', credentials: true });
+    const ok = await a.request('OPTIONS', '/api/data', preflight('https://app.example'));
+    expect(ok.status).toBe(204);
+    expect(ok.headers.get('access-control-allow-credentials')).toBe('true');
+    const bad = await a.request('OPTIONS', '/api/data', preflight('https://evil.example'));
+    const simple = await a.request('GET', '/api/data', {
+      headers: { origin: 'https://evil.example' },
+    });
+    for (const r of [bad, simple]) {
+      expect(r.headers.get('access-control-allow-origin')).toBeNull();
+      expect(r.headers.get('access-control-allow-credentials')).toBeNull();
+    }
+  });
+});
+
 describe('origin matchers', () => {
   test.each([
     [['https://a.example', 'https://b.example'], 'https://b.example', true],
@@ -173,7 +205,12 @@ describe('origin matchers', () => {
 describe('configuration validation', () => {
   test('wildcard with credentials is rejected at forRoot', () => {
     expect(() => CorsModule.forRoot({ origin: '*', credentials: true })).toThrow(CorsConfigError);
-    expect(() => CorsModule.forRoot({ origin: ['*'], credentials: true })).toThrow(CorsConfigError);
+    expect(() => CorsModule.forRoot({ origin: ['*'], credentials: true })).toThrow(
+      "Use origin: '*' instead of listing '*' among origins.",
+    );
+    expect(() => CorsModule.forRoot({ origin: ['*', 'https://a.example'] })).toThrow(
+      "Use origin: '*' instead of listing '*' among origins.",
+    );
     expect(() => CorsModule.forRoot({ origin: 'https://a.example', maxAge: -1 })).toThrow(
       CorsConfigError,
     );

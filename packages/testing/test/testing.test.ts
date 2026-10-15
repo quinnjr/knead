@@ -115,6 +115,7 @@ describe('Test.createModule', () => {
     expect(((await res.json()) as { detail: string }).detail).toBe('exploded');
     expect(mod.logs.some((e) => e.level === 'error')).toBe(true);
   });
+
   test('request() sends json bodies and keeps a caller-provided content-type', async () => {
     @Controller('/echo')
     class Echo {

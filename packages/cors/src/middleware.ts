@@ -62,7 +62,7 @@ export class CorsMiddleware implements Middleware {
       rule.lastIndex = 0;
       return rule.test(origin);
     }
-    if (Array.isArray(rule)) return rule.includes(origin);
-    return (rule as (o: string, c: Ctx) => boolean | Promise<boolean>)(origin, ctx);
+    if (typeof rule === 'function') return rule(origin, ctx);
+    return rule.includes(origin);
   }
 }
