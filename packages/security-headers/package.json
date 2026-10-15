@@ -27,7 +27,9 @@
   },
   "devDependencies": {
     "@hpmws/core": "workspace:^",
+    "@hpmws/cors": "workspace:^",
     "@hpmws/http": "workspace:^",
+    "@hpmws/rate-limit": "workspace:^",
     "@hpmws/testing": "workspace:^"
   },
   "publishConfig": {

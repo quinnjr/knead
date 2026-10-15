@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { CorsModule } from '@hpmws/cors';
 import { Controller, type Ctx, Get } from '@hpmws/http';
+import { RateLimitModule } from '@hpmws/rate-limit';
 import { Test, type TestingModule } from '@hpmws/testing';
 import {
   SecurityHeaders,
@@ -136,5 +138,52 @@ describe('SecurityHeadersModule', () => {
     const csp = res.headers.get('content-security-policy')!;
     expect(csp).toContain(`script-src 'self' 'nonce-${nonce}'`);
     expect(csp).toContain(`style-src 'self' 'nonce-${nonce}'`);
+  });
+});
+
+describe('ordering with CORS and rate limiting', () => {
+  async function serveStack() {
+    mod = await Test.createModule({
+      imports: [
+        CorsModule.forRoot({
+          origin: (origin) => {
+            if (origin === 'https://broken.example') throw new Error('predicate failed');
+            return origin === 'https://app.example';
+          },
+        }),
+        RateLimitModule.forRoot({ limit: 1, window: '1m' }),
+        SecurityHeadersModule.forRoot(),
+      ],
+      controllers: [PageController],
+    }).compile();
+    return mod.createApp();
+  }
+
+  test('a CORS preflight 204 carries security headers', async () => {
+    const app = await serveStack();
+    const res = await app.request('OPTIONS', '/json', {
+      headers: { origin: 'https://app.example', 'access-control-request-method': 'POST' },
+    });
+    expect(res.status).toBe(204);
+    expect(res.headers.get('access-control-allow-origin')).toBe('https://app.example');
+    expect(res.headers.get('x-frame-options')).toBe('DENY');
+  });
+
+  test('a rate-limit 429 carries security headers', async () => {
+    const app = await serveStack();
+    expect((await app.request('GET', '/json')).status).toBe(200);
+    const limited = await app.request('GET', '/json');
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get('x-frame-options')).toBe('DENY');
+    expect(limited.headers.get('x-content-type-options')).toBe('nosniff');
+  });
+
+  test('an error thrown by the CORS origin predicate carries security headers', async () => {
+    const app = await serveStack();
+    const res = await app.request('GET', '/json', {
+      headers: { origin: 'https://broken.example' },
+    });
+    expect(res.status).toBe(500);
+    expect(res.headers.get('x-frame-options')).toBe('DENY');
   });
 });

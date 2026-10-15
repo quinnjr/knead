@@ -41,6 +41,8 @@ const app = await HpmwsFactory.create(AppModule);
 await app.listen({ port: 3000 });
 ```
 
+Global middleware runs highest priority first: security headers (1100) wrap CORS (1000), which wraps rate limiting (900), so every response, including preflights and 429s, gets security headers.
+
 See `examples/rest-api` for CORS, rate limiting, security headers, guards and validation working together.
 
 ## Development

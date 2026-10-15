@@ -264,9 +264,15 @@ importers:
       '@hpmws/core':
         specifier: workspace:^
         version: link:../core
+      '@hpmws/cors':
+        specifier: workspace:^
+        version: link:../cors
       '@hpmws/http':
         specifier: workspace:^
         version: link:../http
+      '@hpmws/rate-limit':
+        specifier: workspace:^
+        version: link:../rate-limit
       '@hpmws/testing':
         specifier: workspace:^
         version: link:../testing

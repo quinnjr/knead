@@ -16,7 +16,7 @@ export class SecurityHeadersModule {
         {
           provide: APP_MIDDLEWARE,
           multi: true,
-          useFactory: () => ({ middleware: inject(SecurityHeadersMiddleware), priority: 800 }),
+          useFactory: () => ({ middleware: inject(SecurityHeadersMiddleware), priority: 1100 }),
         },
       ],
     };
