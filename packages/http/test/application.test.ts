@@ -610,9 +610,13 @@ describe('listen after or during close', () => {
   });
 
   test('close() during the late init await aborts listen without binding', async () => {
-    class SlowGuard implements Guard<Ctx>, OnModuleInit {
+    const log: string[] = [];
+    class SlowGuard implements Guard<Ctx>, OnModuleInit, OnModuleDestroy {
       async onModuleInit() {
         await Bun.sleep(50);
+      }
+      onModuleDestroy() {
+        log.push('slow:destroy');
       }
       canActivate() {
         return true;
@@ -637,7 +641,43 @@ describe('listen after or during close', () => {
       new HttpConfigError('The application was closed during listen().'),
     );
     await expect(closing).resolves.toBeUndefined();
+    expect(log).toEqual(['slow:destroy']);
     expect(() => a.server).toThrow(HttpConfigError);
     await expect(fetch(`http://127.0.0.1:${port}/s`)).rejects.toThrow();
+  });
+
+  test('a late onModuleInit that awaits close() does not deadlock: the wait is bounded', async () => {
+    let app: HttpApplication | undefined;
+    let closed: Promise<void> | undefined;
+    class SelfClosing implements Guard<Ctx>, OnModuleInit {
+      async onModuleInit() {
+        await Bun.sleep(1);
+        closed = app?.close();
+        await closed;
+      }
+      canActivate() {
+        return true;
+      }
+    }
+    @Controller('/d')
+    class C {
+      @Get('/', { guards: [SelfClosing] }) get() {
+        return 'ok';
+      }
+    }
+    @Module({ controllers: [C] })
+    class M {}
+    const probe = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response('x') });
+    const port = probe.port as number;
+    probe.stop(true);
+    app = await HpmwsFactory.create(M, { logger: new MemoryLogger() });
+    const started = Date.now();
+    await expect(app.listen({ port, hostname: '127.0.0.1', shutdownTimeout: 100 })).rejects.toThrow(
+      new HttpConfigError('The application was closed during listen().'),
+    );
+    await expect(closed).resolves.toBeUndefined();
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(() => app?.server).toThrow(HttpConfigError);
+    await expect(fetch(`http://127.0.0.1:${port}/d`)).rejects.toThrow();
   });
 });

@@ -200,8 +200,19 @@ export class HttpApplication {
 
   async #shutdown(signal?: string): Promise<void> {
     // A listen() still initializing sees #closing after its await and rejects without binding;
-    // waiting for it keeps its late-initialized instances inside the shutdown below.
-    await this.#pendingListen?.catch(() => {});
+    // waiting for it keeps its late-initialized instances inside the shutdown below. The wait is
+    // bounded by shutdownTimeout so a stalled hook (or one that awaits close()) cannot deadlock
+    // shutdown; an abandoned listen still rejects without binding.
+    if (this.#pendingListen) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        this.#pendingListen.catch(() => {}),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, this.shutdownTimeout);
+        }),
+      ]);
+      clearTimeout(timer);
+    }
     let failure: { error: unknown } | undefined;
     try {
       const servers = [...this.#retired, ...(this.#server ? [this.#server] : [])];
@@ -249,6 +260,8 @@ export class HttpApplication {
   }
 
   async #listen(options: ListenOptions): Promise<Server<WsData>> {
+    // Set first: a close() during the late-init await bounds its wait with this timeout.
+    this.shutdownTimeout = options.shutdownTimeout ?? 10_000;
     if (options.redirectHttp && options.tls === undefined) {
       throw new HttpConfigError('redirectHttp requires tls.');
     }
@@ -321,7 +334,6 @@ export class HttpApplication {
     ws.seal();
     this.#compiled = compiled;
     this.serveOptions = serveOptions;
-    this.shutdownTimeout = options.shutdownTimeout ?? 10_000;
     this.#redirect = redirect;
     this.#server = server;
     this.logger.info(`Listening on ${server.url}`);
