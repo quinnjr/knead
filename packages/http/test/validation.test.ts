@@ -81,4 +81,30 @@ describe('validateRequest', () => {
     expect(ctx.body).toBeUndefined();
     expect(await ctx.json()).toEqual({ a: 1 });
   });
+
+  test('params and headers are replaced on success', async () => {
+    const ctx = makeCtx(jsonPost('/', '{}'));
+    ctx.params = { id: 'abc' };
+    ctx.headers = { 'x-key': 'k' };
+    await validateRequest(ctx, {
+      params: requireStrings(['id']),
+      headers: requireStrings(['x-key']),
+    });
+    expect(ctx.params).toEqual({ id: 'abc' });
+    expect(ctx.headers).toEqual({ 'x-key': 'k' });
+  });
+
+  test('params and headers issues carry their source', async () => {
+    const ctx = makeCtx(jsonPost('/', '{}'));
+    ctx.params = {};
+    ctx.headers = {};
+    const error = await validateRequest(ctx, {
+      params: requireStrings(['id']),
+      headers: requireStrings(['x-key']),
+    }).catch((e) => e);
+    expect(error.issues).toEqual([
+      { source: 'params', message: 'id is required', path: ['id'] },
+      { source: 'headers', message: 'x-key is required', path: ['x-key'] },
+    ]);
+  });
 });

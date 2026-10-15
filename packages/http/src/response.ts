@@ -44,7 +44,10 @@ export function toResponse(value: unknown, status: number | undefined, headers: 
   ) {
     return binary(value as Bun.BodyInit, code, headers);
   }
-  headers.set('content-type', 'application/json; charset=utf-8');
+  const json = JSON.stringify(value);
+  if (json === undefined)
+    throw new TypeError('Handler returned a value that cannot be serialized as JSON');
+  if (!headers.has('content-type')) headers.set('content-type', 'application/json; charset=utf-8');
   headers.set('x-content-type-options', 'nosniff');
-  return new Response(JSON.stringify(value), { status: code, headers });
+  return new Response(json, { status: code, headers });
 }

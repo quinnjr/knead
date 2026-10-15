@@ -54,6 +54,43 @@ describe('toResponse', () => {
   });
 });
 
+describe('toResponse extras', () => {
+  test('unserializable values throw TypeError', () => {
+    expect(() => toResponse(() => 1, undefined, draft())).toThrow(
+      new TypeError('Handler returned a value that cannot be serialized as JSON'),
+    );
+    expect(() => toResponse(Symbol('x'), undefined, draft())).toThrow(TypeError);
+  });
+
+  test('explicit draft content-type is kept for JSON, nosniff always set', async () => {
+    const res = toResponse(
+      { a: 1 },
+      undefined,
+      draft({ 'content-type': 'application/vnd.api+json' }),
+    );
+    expect(res.headers.get('content-type')).toBe('application/vnd.api+json');
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(await res.json()).toEqual({ a: 1 });
+  });
+
+  test('immutable-header Response gets draft headers, keeps status and location', () => {
+    const res = toResponse(
+      Response.redirect('http://localhost/next', 302),
+      200,
+      draft({ 'x-draft': '1' }),
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('http://localhost/next');
+    expect(res.headers.get('x-draft')).toBe('1');
+  });
+
+  test('ArrayBuffer is octet-stream with the same bytes', async () => {
+    const res = toResponse(new Uint8Array([3, 4]).buffer, undefined, draft());
+    expect(res.headers.get('content-type')).toBe('application/octet-stream');
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(new Uint8Array([3, 4]));
+  });
+});
+
 describe('withHeaders', () => {
   test('works on responses with immutable headers', () => {
     const res = withHeaders(Response.redirect('http://localhost/next', 302), { 'x-a': '1' });
