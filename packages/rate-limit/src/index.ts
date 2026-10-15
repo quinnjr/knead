@@ -2,6 +2,7 @@ export {
   type KeyFn,
   RATE_LIMIT_META,
   RateLimit,
+  type RateLimitRouteMeta,
   type RateLimitRouteOptions,
   SKIP_RATE_LIMIT_META,
   SkipRateLimit,

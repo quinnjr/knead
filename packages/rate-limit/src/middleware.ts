@@ -11,7 +11,7 @@ import {
 import {
   type KeyFn,
   RATE_LIMIT_META,
-  type RateLimitRouteOptions,
+  type RateLimitRouteMeta,
   SKIP_RATE_LIMIT_META,
 } from './decorators.js';
 import { type Duration, parseDuration } from './duration.js';
@@ -42,10 +42,9 @@ export class RateLimitMiddleware implements Middleware, OnModuleDestroy {
   async use(ctx: Ctx, next: Next): Promise<Response> {
     const meta = ctx.route?.meta;
     if (meta?.[SKIP_RATE_LIMIT_META]) return next();
-    const override = meta?.[RATE_LIMIT_META] as RateLimitRouteOptions | undefined;
+    const override = meta?.[RATE_LIMIT_META] as RateLimitRouteMeta | undefined;
     const limit = override?.limit ?? this.#options.limit;
-    const windowMs =
-      override?.window !== undefined ? parseDuration(override.window) : this.#windowMs;
+    const windowMs = override?.windowMs ?? this.#windowMs;
     const keyFn: KeyFn = override?.key ?? this.#options.key ?? ((c) => c.ip);
     const key = await keyFn(ctx);
     if (!key) {

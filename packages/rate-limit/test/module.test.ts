@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
+import type { ModuleImport } from '@hpmws/core';
 import { CorsModule } from '@hpmws/cors';
 import { Controller, type Ctx, Get } from '@hpmws/http';
 import { Test, type TestApp, type TestingModule } from '@hpmws/testing';
@@ -37,13 +38,10 @@ afterEach(async () => {
 
 async function serve(
   options: Partial<RateLimitModuleOptions> = {},
-  extraImports: unknown[] = [],
+  extraImports: ModuleImport[] = [],
 ): Promise<TestApp> {
   mod = await Test.createModule({
-    imports: [
-      ...(extraImports as never[]),
-      RateLimitModule.forRoot({ limit: 2, window: '1m', ...options }),
-    ],
+    imports: [...extraImports, RateLimitModule.forRoot({ limit: 2, window: '1m', ...options })],
     controllers: [LimitedController],
   }).compile();
   return mod.createApp();
@@ -135,5 +133,13 @@ describe('RateLimitModule', () => {
     expect(() => RateLimitModule.forRoot({ limit: 1, window: 'soon' as never })).toThrow(
       RangeError,
     );
+  });
+
+  test('@RateLimit rejects invalid options at decoration time', () => {
+    expect(() => RateLimit({ limit: 0 })).toThrow(RangeError);
+    expect(() => RateLimit({ limit: 1.5 })).toThrow(RangeError);
+    expect(() => RateLimit({ window: 'soon' as never })).toThrow(RangeError);
+    expect(() => RateLimit({ window: -5 })).toThrow(RangeError);
+    expect(() => RateLimit({ key: () => 'k' })).not.toThrow();
   });
 });
