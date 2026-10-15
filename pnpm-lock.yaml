@@ -216,6 +216,19 @@ importers:
         specifier: workspace:^
         version: link:../testing
 
+  packages/security-headers:
+    dependencies:
+      '@hpmws/core':
+        specifier: workspace:^
+        version: link:../core
+      '@hpmws/http':
+        specifier: workspace:^
+        version: link:../http
+    devDependencies:
+      '@hpmws/testing':
+        specifier: workspace:^
+        version: link:../testing
+
   packages/testing:
     dependencies:
       '@hpmws/core':
