@@ -178,6 +178,19 @@ importers:
 
   packages/core: {}
 
+  packages/cors:
+    dependencies:
+      '@hpmws/core':
+        specifier: workspace:^
+        version: link:../core
+      '@hpmws/http':
+        specifier: workspace:^
+        version: link:../http
+    devDependencies:
+      '@hpmws/testing':
+        specifier: workspace:^
+        version: link:../testing
+
   packages/http:
     dependencies:
       '@hpmws/core':

@@ -3,6 +3,7 @@
   "references": [
     { "path": "packages/core" },
     { "path": "packages/http" },
-    { "path": "packages/testing" }
+    { "path": "packages/testing" },
+    { "path": "packages/cors" }
   ]
 }
