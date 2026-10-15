@@ -13,7 +13,13 @@ declare module '@hpmws/http' {
   }
 }
 
-/** Demo-only token store. */
+/**
+ * Demo-only token store. The bearer tokens below are hard-coded and public:
+ * anyone who reads this file can authenticate as an admin. Never ship this to
+ * production; use real authentication instead (for example signed and expiring
+ * JWTs or opaque session tokens issued by an identity provider, with tokens
+ * stored hashed and revocable).
+ */
 export class AuthService {
   readonly #tokens = new Map<string, User>([
     ['admin-token', { id: 'u1', name: 'Admin', roles: ['admin'] }],
@@ -21,6 +27,7 @@ export class AuthService {
   ]);
 
   verify(token: string): User | undefined {
+    // The token is looked up via Map rather than compared with ===.
     return this.#tokens.get(token);
   }
 }
