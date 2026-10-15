@@ -26,6 +26,9 @@ class PageController {
   embed() {
     return 'embed';
   }
+  @Get('/state') @SecurityHeaders({ contentSecurityPolicy: false }) state(ctx: Ctx) {
+    return { nonce: ctx.state.cspNonce ?? null };
+  }
   @Get('/boom') boom() {
     throw new Error('x');
   }
@@ -110,5 +113,28 @@ describe('SecurityHeadersModule', () => {
     const res = await app.request('GET', '/json');
     expect(res.headers.get('referrer-policy')).toBe('strict-origin-when-cross-origin');
     expect(res.headers.get('x-frame-options')).toBeNull();
+  });
+
+  test('reportOnly sends only the report-only header', async () => {
+    const app = await serve({ contentSecurityPolicy: { reportOnly: true } });
+    const res = await app.request('GET', '/json');
+    expect(res.headers.get('content-security-policy-report-only')).toContain("default-src 'self'");
+    expect(res.headers.get('content-security-policy')).toBeNull();
+  });
+
+  test('route with CSP disabled under a nonce module has no CSP and no nonce', async () => {
+    const app = await serve({ contentSecurityPolicy: { nonce: true } });
+    const res = await app.request('GET', '/state');
+    expect(res.headers.get('content-security-policy')).toBeNull();
+    expect(await res.json()).toEqual({ nonce: null });
+  });
+
+  test('nonce styles:true extends style-src end to end', async () => {
+    const app = await serve({ contentSecurityPolicy: { nonce: { styles: true } } });
+    const res = await app.request('GET', '/page');
+    const nonce = /nonce="([^"]+)"/.exec(await res.text())![1]!;
+    const csp = res.headers.get('content-security-policy')!;
+    expect(csp).toContain(`script-src 'self' 'nonce-${nonce}'`);
+    expect(csp).toContain(`style-src 'self' 'nonce-${nonce}'`);
   });
 });

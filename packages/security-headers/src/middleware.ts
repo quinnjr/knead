@@ -7,7 +7,12 @@ import {
   withHeaders,
 } from '@hpmws/http';
 import { buildHeaders, generateNonce, nonceTargets } from './csp.js';
-import { DEFAULT_OPTIONS, mergeOptions, type SecurityHeadersOptions } from './options.js';
+import {
+  DEFAULT_OPTIONS,
+  mergeOptions,
+  type SecurityHeadersOptions,
+  validateSecurityHeadersOptions,
+} from './options.js';
 
 export const SECURITY_HEADERS_OPTIONS = new InjectionToken<SecurityHeadersOptions>(
   'SECURITY_HEADERS_OPTIONS',
@@ -18,6 +23,7 @@ const override = createRouteDecorator<SecurityHeadersOptions>(SECURITY_HEADERS_M
 
 /** Per-controller or per-route overrides merged over the module options. */
 export function SecurityHeaders(options: SecurityHeadersOptions) {
+  validateSecurityHeadersOptions(options);
   return override(options);
 }
 

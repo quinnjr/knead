@@ -1,10 +1,12 @@
 import { describe, expect, test } from 'bun:test';
+import { HttpConfigError } from '@hpmws/http';
 import {
   buildHeaders,
   DEFAULT_CSP_DIRECTIVES,
   DEFAULT_OPTIONS,
   mergeOptions,
   serializeCsp,
+  validateSecurityHeadersOptions,
 } from '../src/index.js';
 
 describe('serializeCsp', () => {
@@ -73,5 +75,51 @@ describe('mergeOptions and buildHeaders', () => {
       ),
     );
     expect(h['strict-transport-security']).toBe('max-age=63072000; includeSubDomains; preload');
+  });
+});
+
+describe('validateSecurityHeadersOptions', () => {
+  const csp = (directives: Record<string, readonly string[] | string | boolean>) => ({
+    contentSecurityPolicy: { directives },
+  });
+
+  test('rejects injection through array elements and directive names', () => {
+    expect(() =>
+      validateSecurityHeadersOptions(csp({ 'default-src': ["'self'; script-src *"] })),
+    ).toThrow(HttpConfigError);
+    expect(() => validateSecurityHeadersOptions(csp({ 'script src': ["'self'"] }))).toThrow(
+      HttpConfigError,
+    );
+    expect(() => validateSecurityHeadersOptions(csp({ 'img-src': ['a b'] }))).toThrow(
+      HttpConfigError,
+    );
+    expect(() => validateSecurityHeadersOptions(csp({ 'img-src': 'a;b' }))).toThrow(
+      HttpConfigError,
+    );
+    expect(() => validateSecurityHeadersOptions(csp({ 'img-src': ['a,b'] }))).toThrow(
+      HttpConfigError,
+    );
+    expect(() => validateSecurityHeadersOptions(csp({ 'img-src': ['a\r\nX: y'] }))).toThrow(
+      HttpConfigError,
+    );
+  });
+
+  test('accepts normal configs', () => {
+    expect(() => validateSecurityHeadersOptions({})).not.toThrow();
+    expect(() => validateSecurityHeadersOptions({ contentSecurityPolicy: false })).not.toThrow();
+    expect(() =>
+      validateSecurityHeadersOptions(
+        csp({ 'img-src': ["'self'", 'data:'], 'style-src': "'self' https:", sandbox: true }),
+      ),
+    ).not.toThrow();
+  });
+
+  test('nonce without script-src or default-src sources yields a nonce-only script-src', () => {
+    expect(serializeCsp({ 'img-src': ["'self'"] }, 'abc')).toBe(
+      "img-src 'self'; script-src 'nonce-abc'",
+    );
+    expect(serializeCsp({ 'default-src': true }, 'abc')).toBe(
+      "default-src; script-src 'nonce-abc'",
+    );
   });
 });

@@ -20,6 +20,7 @@ export {
   type HstsOptions,
   mergeOptions,
   type SecurityHeadersOptions,
+  validateSecurityHeadersOptions,
 } from './options.js';
 
 declare module '@hpmws/http' {

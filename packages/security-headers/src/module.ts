@@ -1,11 +1,12 @@
 import { type DynamicModule, inject, Module } from '@hpmws/core';
 import { APP_MIDDLEWARE } from '@hpmws/http';
 import { SECURITY_HEADERS_OPTIONS, SecurityHeadersMiddleware } from './middleware.js';
-import type { SecurityHeadersOptions } from './options.js';
+import { type SecurityHeadersOptions, validateSecurityHeadersOptions } from './options.js';
 
 @Module({})
 export class SecurityHeadersModule {
   static forRoot(options: SecurityHeadersOptions = {}): DynamicModule {
+    validateSecurityHeadersOptions(options);
     return {
       module: SecurityHeadersModule,
       global: true,

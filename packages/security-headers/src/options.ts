@@ -1,10 +1,16 @@
+import { HttpConfigError } from '@hpmws/http';
+
 export type CspDirectives = Record<string, readonly string[] | string | boolean>;
 
 export interface CspOptions {
   /** Merged over the defaults. `false` removes a directive, `true` emits a value-less directive. */
   directives?: CspDirectives;
   reportOnly?: boolean;
-  /** Per-request nonce in ctx.state.cspNonce, appended to script-src (and style-src if enabled). */
+  /**
+   * Per-request nonce in ctx.state.cspNonce, appended to script-src (and style-src if enabled).
+   * When the target directive and default-src are both absent, the directive becomes the
+   * nonce alone (strict: nothing else is allowed). Set the directive explicitly to allow more.
+   */
   nonce?: boolean | { scripts?: boolean; styles?: boolean };
 }
 
@@ -76,4 +82,24 @@ export function mergeOptions(
   out.contentSecurityPolicy = mergeCsp(a.contentSecurityPolicy, b.contentSecurityPolicy);
   out.strictTransportSecurity = mergeHsts(a.strictTransportSecurity, b.strictTransportSecurity);
   return out;
+}
+
+const DIRECTIVE_NAME = /^[a-z][a-z0-9-]*$/;
+const FORBIDDEN_TOKEN = /[;,\r\n]/;
+
+/** Rejects CSP config that could inject extra directives or header lines. */
+export function validateSecurityHeadersOptions(options: SecurityHeadersOptions): void {
+  const csp = options.contentSecurityPolicy;
+  if (csp === false || csp === undefined || !csp.directives) return;
+  for (const [name, value] of Object.entries(csp.directives)) {
+    if (!DIRECTIVE_NAME.test(name))
+      throw new HttpConfigError(`Invalid CSP directive name: ${JSON.stringify(name)}`);
+    if (typeof value === 'boolean') continue;
+    const tokens: readonly string[] = typeof value === 'string' ? [value] : value;
+    for (const token of tokens) {
+      if (FORBIDDEN_TOKEN.test(token) || (typeof value !== 'string' && /\s/.test(token))) {
+        throw new HttpConfigError(`Invalid CSP value for ${name}: ${JSON.stringify(token)}`);
+      }
+    }
+  }
 }
