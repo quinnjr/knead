@@ -195,6 +195,59 @@ describe('dynamic variants', () => {
   });
 });
 
+describe('dynamic variant export selection', () => {
+  const A = new InjectionToken<string>('A');
+  const B = new InjectionToken<string>('B');
+  @Module({ providers: [{ provide: A, useValue: 'a' }], exports: [A] })
+  class ConfigModule {
+    static forFeature(value: string) {
+      return { module: ConfigModule, providers: [{ provide: B, useValue: value }], exports: [B] };
+    }
+  }
+  class Consumer {
+    readonly a = inject(A);
+    readonly b = inject(B);
+  }
+
+  test('class export covers a plain import and dynamic variants of the same class', () => {
+    @Module({ imports: [ConfigModule, ConfigModule.forFeature('b')], exports: [ConfigModule] })
+    class MiddleModule {}
+    @Module({ imports: [MiddleModule], providers: [Consumer] })
+    class AppModule {}
+    const c = build(AppModule).root.injector.get(Consumer)!;
+    expect([c.a, c.b]).toEqual(['a', 'b']);
+  });
+
+  test('exporting a dynamic module object selects only that variant', () => {
+    class OnlyB {
+      readonly b = inject(B);
+    }
+    class NeedsOther {
+      readonly b = inject(C);
+    }
+    const C = new InjectionToken<string>('C');
+    @Module({})
+    class Feature {
+      static of(token: InjectionToken<string>, value: string) {
+        return {
+          module: Feature,
+          providers: [{ provide: token, useValue: value }],
+          exports: [token],
+        };
+      }
+    }
+    const vb = Feature.of(B, 'b');
+    const vc = Feature.of(C, 'c');
+    @Module({ imports: [vb, vc], exports: [vb] })
+    class MiddleModule {}
+    @Module({ imports: [MiddleModule], providers: [OnlyB, NeedsOther] })
+    class AppModule {}
+    const { root } = build(AppModule);
+    expect(root.injector.get(OnlyB)!.b).toBe('b');
+    expect(() => root.injector.get(NeedsOther)).toThrow(NoProviderError);
+  });
+});
+
 describe('definition errors', () => {
   test('an undefined root module is reported clearly', () => {
     expect(() => buildModuleGraph(undefined as never, [], new ContainerState())).toThrow(
