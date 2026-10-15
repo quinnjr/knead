@@ -9,9 +9,7 @@ export interface CoreCopyMarker {
 /** @internal */
 export const CORE_COPY_KEY: unique symbol = Symbol.for('hpmws.core');
 /** @internal */
-export const CORE_COPY_WARNED_KEY: unique symbol = Symbol.for(
-  'hpmws.core.duplicateWarned',
-) as never;
+export const CORE_COPY_WARNED_KEY: unique symbol = Symbol.for('hpmws.core.duplicateWarned');
 
 /** @internal Records this copy, or warns once if a different copy was loaded first. */
 export function registerCoreCopy(marker: CoreCopyMarker): void {
