@@ -104,6 +104,14 @@ describe('validateSecurityHeadersOptions', () => {
     );
   });
 
+  test('rejects undefined, null and other non-string directive values with HttpConfigError', () => {
+    for (const bad of [undefined, null, 42, {}]) {
+      expect(() =>
+        validateSecurityHeadersOptions(csp({ 'img-src': bad as unknown as string })),
+      ).toThrow(HttpConfigError);
+    }
+  });
+
   test('accepts normal configs', () => {
     expect(() => validateSecurityHeadersOptions({})).not.toThrow();
     expect(() => validateSecurityHeadersOptions({ contentSecurityPolicy: false })).not.toThrow();

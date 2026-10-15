@@ -1,5 +1,6 @@
 import { HttpConfigError } from '@hpmws/http';
 
+/** Directive names must be lowercase (e.g. `script-src`); anything else is rejected at validation. */
 export type CspDirectives = Record<string, readonly string[] | string | boolean>;
 
 export interface CspOptions {
@@ -8,8 +9,9 @@ export interface CspOptions {
   reportOnly?: boolean;
   /**
    * Per-request nonce in ctx.state.cspNonce, appended to script-src (and style-src if enabled).
-   * When the target directive and default-src are both absent, the directive becomes the
-   * nonce alone (strict: nothing else is allowed). Set the directive explicitly to allow more.
+   * When the target directive is absent and default-src is absent or `true`, the directive
+   * becomes the nonce alone (strict: nothing else is allowed). Set the directive explicitly
+   * to allow more.
    */
   nonce?: boolean | { scripts?: boolean; styles?: boolean };
 }
@@ -95,6 +97,10 @@ export function validateSecurityHeadersOptions(options: SecurityHeadersOptions):
     if (!DIRECTIVE_NAME.test(name))
       throw new HttpConfigError(`Invalid CSP directive name: ${JSON.stringify(name)}`);
     if (typeof value === 'boolean') continue;
+    if (typeof value !== 'string' && !Array.isArray(value))
+      throw new HttpConfigError(
+        `Invalid CSP value for ${name}: expected a string, string array or boolean, got ${value === null ? 'null' : typeof value}`,
+      );
     const tokens: readonly string[] = typeof value === 'string' ? [value] : value;
     for (const token of tokens) {
       if (FORBIDDEN_TOKEN.test(token) || (typeof value !== 'string' && /\s/.test(token))) {
