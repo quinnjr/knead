@@ -5,7 +5,10 @@ import {
   type Ctx,
   Get,
   type Guard,
+  MemoryLogger,
   type Middleware,
+  Post,
+  UseFilters,
   UseGuards,
   UseMiddleware,
 } from '@hpmws/http';
@@ -111,5 +114,71 @@ describe('Test.createModule', () => {
     expect(res.status).toBe(500);
     expect(((await res.json()) as { detail: string }).detail).toBe('exploded');
     expect(mod.logs.some((e) => e.level === 'error')).toBe(true);
+  });
+  test('request() sends json bodies and keeps a caller-provided content-type', async () => {
+    @Controller('/echo')
+    class Echo {
+      @Post('/') async echo(ctx: Ctx) {
+        return { type: ctx.req.headers.get('content-type'), body: await ctx.json() };
+      }
+    }
+    mod = await Test.createModule({ controllers: [Echo] }).compile();
+    const app = await mod.createApp();
+    const res = await app.request('POST', '/echo', { json: { a: 1 } });
+    expect(await res.json()).toEqual({ type: 'application/json', body: { a: 1 } });
+    const custom = await app.request('POST', '/echo', {
+      json: { a: 2 },
+      headers: { 'content-type': 'application/vnd.test+json' },
+    });
+    expect(await custom.json()).toEqual({ type: 'application/vnd.test+json', body: { a: 2 } });
+  });
+
+  test('overrideProvider supports useClass and useFactory', async () => {
+    class FakeGreeter extends Greeter {
+      override greet() {
+        return 'class';
+      }
+    }
+    mod = await Test.createModule({ imports: [GreetModule] })
+      .overrideProvider(Greeter)
+      .useClass(FakeGreeter)
+      .compile();
+    expect(mod.get(Greeter).greet('x')).toBe('class');
+    await mod.close();
+    mod = await Test.createModule({ imports: [GreetModule] })
+      .overrideProvider(Greeter)
+      .useFactory(() => ({ greet: () => 'factory' }))
+      .compile();
+    expect(mod.get(Greeter).greet('x')).toBe('factory');
+  });
+
+  test('overrideFilter replaces a filter referenced via @UseFilters', async () => {
+    class RealFilter {
+      catch() {
+        return new Response('real', { status: 500 });
+      }
+    }
+    @Controller('/f')
+    @UseFilters(RealFilter)
+    class FilterController {
+      @Get('/') f() {
+        throw new Error('x');
+      }
+    }
+    mod = await Test.createModule({ controllers: [FilterController] })
+      .overrideFilter(RealFilter)
+      .useValue({ catch: () => new Response('filtered', { status: 418 }) })
+      .compile();
+    const res = await (await mod.createApp()).request('GET', '/f');
+    expect(res.status).toBe(418);
+    expect(await res.text()).toBe('filtered');
+  });
+
+  test('compile({ logger }) uses the custom logger', async () => {
+    const custom = new MemoryLogger();
+    mod = await Test.createModule({ imports: [GreetModule] }).compile({ logger: custom });
+    expect(mod.logger).toBe(custom);
+    await (await mod.createApp()).request('GET', '/greet/boom');
+    expect(custom.entries.some((e) => e.level === 'error')).toBe(true);
   });
 });
