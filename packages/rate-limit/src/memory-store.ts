@@ -157,7 +157,7 @@ export class MemoryStore implements RateLimitStore {
     return {
       allowed,
       remaining: Math.floor(tokens),
-      resetAt: now + Math.ceil((missing * windowMs) / limit),
+      resetAt: updatedAt + Math.ceil((missing * windowMs) / limit),
     };
   }
 }

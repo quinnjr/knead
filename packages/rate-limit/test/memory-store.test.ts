@@ -169,6 +169,32 @@ describe('clock skew', () => {
   });
 });
 
+describe('resetAt under clock skew and in-window admission', () => {
+  test('token bucket resetAt is based on the latest observed time', async () => {
+    const { store, at } = clockStore();
+    at(1000);
+    await run(store, 'k', bucket, 2);
+    at(0);
+    const denied = await store.consume('k', bucket);
+    expect(denied.allowed).toBe(false);
+    // Next token is due 500ms after the latest observed time (1000), never before it.
+    expect(denied.resetAt).toBe(1500);
+  });
+
+  test('sliding window denial after an in-window admission with current > 0', async () => {
+    const { store, at } = clockStore();
+    const rule: RateLimitRule = { limit: 5, windowMs: 1000, algorithm: 'sliding-window' };
+    at(0);
+    await run(store, 'k', rule, 4);
+    at(1000);
+    expect((await store.consume('k', rule)).allowed).toBe(true); // 4 * 1 + 0 + 1 = 5
+    const denied = await store.consume('k', rule); // 4 * 1 + 1 + 1 = 6 > 5
+    expect(denied.allowed).toBe(false);
+    // 4 * (1000 - (t - 1000)) / 1000 + 2 <= 5  =>  t >= 1250
+    expect(denied.resetAt).toBe(1250);
+  });
+});
+
 describe('rule changes', () => {
   test('changing the window size mid-flight resets the key', async () => {
     const { store } = clockStore();
