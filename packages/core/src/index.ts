@@ -1,4 +1,5 @@
 import './polyfill.js';
+import './copy-guard.js';
 
 export { ApplicationContext, type CreateContextOptions } from './application-context.js';
 export * from './decorators.js';

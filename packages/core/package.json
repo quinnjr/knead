@@ -15,7 +15,9 @@
   ],
   "sideEffects": [
     "./src/polyfill.ts",
-    "./dist/polyfill.js"
+    "./src/copy-guard.ts",
+    "./dist/polyfill.js",
+    "./dist/copy-guard.js"
   ],
   "engines": {
     "bun": ">=1.4.0"
