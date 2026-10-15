@@ -200,6 +200,22 @@ importers:
         specifier: ^1.1.0
         version: 1.1.0
 
+  packages/rate-limit:
+    dependencies:
+      '@hpmws/core':
+        specifier: workspace:^
+        version: link:../core
+      '@hpmws/http':
+        specifier: workspace:^
+        version: link:../http
+    devDependencies:
+      '@hpmws/cors':
+        specifier: workspace:^
+        version: link:../cors
+      '@hpmws/testing':
+        specifier: workspace:^
+        version: link:../testing
+
   packages/testing:
     dependencies:
       '@hpmws/core':
