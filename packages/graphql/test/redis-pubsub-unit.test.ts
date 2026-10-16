@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { createHmac } from 'node:crypto';
 import { MemoryLogger } from '@hpmws/http';
 import type { RedisClient } from 'bun';
 import { RedisPubSub } from '../src/index.js';
@@ -180,7 +181,7 @@ describe('RedisPubSub hardening', () => {
     await sender.publish('t', { n: 1 });
     expect(received).toEqual([{ n: 1 }]);
     fake.inject('hpmws:gql:t', JSON.stringify({ n: 2 }));
-    fake.inject('hpmws:gql:t', `${'0'.repeat(64)}.${JSON.stringify({ n: 3 })}`);
+    fake.inject('hpmws:gql:t', `${'0'.repeat(64)}.${Date.now()}.${JSON.stringify({ n: 3 })}`);
     const other = new RedisPubSub({ client: fake.client, signingKey: 'x'.repeat(32), logger });
     await other.publish('t', { n: 4 });
     expect(received).toEqual([{ n: 1 }]);
@@ -212,6 +213,67 @@ describe('RedisPubSub hardening', () => {
     fake.inject('hpmws:gql:b', captured);
     expect(received).toEqual([]);
     await receiver.close();
+  });
+
+  test('a message replayed under another prefix is dropped (the MAC covers the prefix)', async () => {
+    const fake = loopback();
+    const signingKey = 'k'.repeat(32);
+    const logger = new MemoryLogger();
+    const receiver = new RedisPubSub({ client: fake.client, signingKey, logger, prefix: 'app-b:' });
+    const received: unknown[] = [];
+    receiver.subscribe('t', (payload) => received.push(payload));
+    await until(() => fake.subscribed() === 1);
+    let captured = '';
+    const spy = {
+      publish: async (_channel: string, message: string) => {
+        captured = message;
+        return 1;
+      },
+      close: () => {},
+    } as unknown as RedisClient;
+    await new RedisPubSub({ client: spy, signingKey, prefix: 'app-a:' }).publish('t', { n: 1 });
+    fake.inject('app-b:t', captured);
+    expect(received).toEqual([]);
+    await receiver.close();
+  });
+
+  test('stale or future-dated messages are dropped; maxSignatureAge is configurable', async () => {
+    const fake = loopback();
+    const signingKey = 'k'.repeat(32);
+    const logger = new MemoryLogger();
+    const receiver = new RedisPubSub({
+      client: fake.client,
+      signingKey,
+      logger,
+      maxSignatureAge: 5000,
+    });
+    const received: unknown[] = [];
+    receiver.subscribe('t', (payload) => received.push(payload));
+    await until(() => fake.subscribed() === 1);
+    const signed = (ts: number, payload: unknown) => {
+      const json = JSON.stringify(payload);
+      const mac = createHmac('sha256', signingKey)
+        .update(`hpmws:gql:t\0${ts}\0${json}`)
+        .digest('hex');
+      return `${mac}.${ts}.${json}`;
+    };
+    fake.inject('hpmws:gql:t', signed(Date.now(), { fresh: true }));
+    fake.inject('hpmws:gql:t', signed(Date.now() - 6000, { stale: true }));
+    fake.inject('hpmws:gql:t', signed(Date.now() + 61_000, { future: true }));
+    expect(received).toEqual([{ fresh: true }]);
+    expect(logger.entries.filter((e) => e.message.includes('signature')).length).toBe(2);
+    await receiver.close();
+  });
+
+  test('maxSignatureAge must be a positive integer', () => {
+    expect(
+      () =>
+        new RedisPubSub({
+          client: loopback().client,
+          signingKey: 'k'.repeat(32),
+          maxSignatureAge: 0,
+        }),
+    ).toThrow('maxSignatureAge');
   });
 
   test('a signingKey shorter than 32 bytes is a configuration error', () => {

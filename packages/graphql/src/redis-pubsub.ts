@@ -13,15 +13,24 @@ export interface RedisPubSubOptions {
   /** Where failures are reported. Default: the application's LOGGER once GraphQLModule starts. */
   logger?: Logger;
   /**
-   * Shared secret (at least 32 bytes) for HMAC-SHA256 message signatures over topic + "\0" +
-   * payload. Every instance must use the same key; messages without a valid signature are
-   * dropped and logged. Use it when other clients can publish to the Redis server.
+   * Shared secret (at least 32 bytes) for HMAC-SHA256 message signatures over the channel
+   * (prefix + topic), a millisecond timestamp and the payload. Every instance must use the same
+   * key; messages without a valid signature, older than `maxSignatureAge` or dated more than 60s
+   * ahead are dropped and logged. Use it when other clients can publish to the Redis server.
+   * A captured message can still be replayed on the same channel inside that window.
    */
   signingKey?: string | Uint8Array;
+  /** Oldest signed message accepted, in milliseconds. Default 60000. */
+  maxSignatureAge?: number;
 }
 
-/** Hex-encoded HMAC-SHA256 length; a signed message is `<signature>.<payload JSON>`. */
+/**
+ * Hex-encoded HMAC-SHA256 length; a signed message is `<signature>.<ts>.<payload JSON>`, the
+ * MAC covering `<prefix><topic>\0<ts>\0<payload JSON>`.
+ */
 const SIGNATURE_LENGTH = 64;
+/** Clock skew tolerated for messages dated in the future. */
+const MAX_FUTURE_SKEW = 60_000;
 
 function isLoopbackHost(hostname: string): boolean {
   const host = hostname.replace(/^\[(.*)\]$/, '$1').toLowerCase();
@@ -79,6 +88,7 @@ export class RedisPubSub implements PubSubEngine {
   #subscriber: Promise<RedisClient> | undefined;
   #closed = false;
   readonly #signingKey: Uint8Array | undefined;
+  readonly #maxSignatureAge: number;
 
   constructor(options: RedisPubSubOptions = {}) {
     if (options.signingKey !== undefined) {
@@ -91,6 +101,13 @@ export class RedisPubSub implements PubSubEngine {
       }
       this.#signingKey = key;
     }
+    const maxAge = options.maxSignatureAge ?? 60_000;
+    if (!Number.isInteger(maxAge) || maxAge < 1) {
+      throw new HttpConfigError(
+        `RedisPubSub maxSignatureAge must be a positive integer (ms); got ${String(maxAge)}.`,
+      );
+    }
+    this.#maxSignatureAge = maxAge;
     this.#owned = options.client === undefined;
     this.#publisher = options.client ?? new RedisClient(options.url);
     this.#prefix = options.prefix ?? 'hpmws:gql:';
@@ -153,20 +170,32 @@ export class RedisPubSub implements PubSubEngine {
   /** Like publish(), but rejects when Redis did not accept the message. */
   async publishOrThrow(topic: string, payload: unknown): Promise<void> {
     const json = JSON.stringify(payload);
-    const message = this.#signingKey ? `${this.#sign(topic, json)}.${json}` : json;
+    let message = json;
+    if (this.#signingKey) {
+      const ts = String(Date.now());
+      message = `${this.#sign(topic, ts, json)}.${ts}.${json}`;
+    }
     await this.#publisher.publish(this.#prefix + topic, message);
   }
 
-  #sign(topic: string, json: string): string {
-    return createHmac('sha256', this.#signingKey!).update(`${topic}\0${json}`).digest('hex');
+  #sign(topic: string, ts: string, json: string): string {
+    return createHmac('sha256', this.#signingKey!)
+      .update(`${this.#prefix}${topic}\0${ts}\0${json}`)
+      .digest('hex');
   }
 
-  /** The payload JSON of a correctly signed message, or undefined. */
+  /** The payload JSON of a correctly signed, fresh message, or undefined. */
   #verified(topic: string, message: string): string | undefined {
-    if (message.length <= SIGNATURE_LENGTH || message[SIGNATURE_LENGTH] !== '.') return undefined;
-    const json = message.slice(SIGNATURE_LENGTH + 1);
+    if (message[SIGNATURE_LENGTH] !== '.') return undefined;
+    const dot = message.indexOf('.', SIGNATURE_LENGTH + 1);
+    if (dot < 0) return undefined;
+    const ts = message.slice(SIGNATURE_LENGTH + 1, dot);
+    if (!/^\d{1,16}$/.test(ts)) return undefined;
+    const age = Date.now() - Number(ts);
+    if (age > this.#maxSignatureAge || age < -MAX_FUTURE_SKEW) return undefined;
+    const json = message.slice(dot + 1);
     const given = Buffer.from(message.slice(0, SIGNATURE_LENGTH), 'utf8');
-    const expected = Buffer.from(this.#sign(topic, json), 'utf8');
+    const expected = Buffer.from(this.#sign(topic, ts, json), 'utf8');
     return given.length === expected.length && timingSafeEqual(given, expected) ? json : undefined;
   }
 
