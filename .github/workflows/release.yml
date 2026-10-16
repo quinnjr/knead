@@ -206,7 +206,17 @@ jobs:
           want="${GITHUB_REF_NAME#v}"
           errlog="$RUNNER_TEMP/npm-stderr.log"
           fail() { echo "::error::$*"; exit 1; }
-          npm_registry() { npm "$@" "--registry=$registry" --loglevel=notice; }
+          artifact="$PWD"
+          # npm runs from an empty directory (with absolute tarball paths), so no project .npmrc
+          # can reach it, and both the default and the package's scoped registry are passed
+          # explicitly. The scope comes from the package name.
+          npm_cwd="$(mktemp -d "$RUNNER_TEMP/npm-cwd.XXXXXX")"
+          npm_for() {
+            local name="$1" scope_args=()
+            shift
+            if [[ "$name" == @*/* ]]; then scope_args=("--${name%%/*}:registry=$registry"); fi
+            (cd "$npm_cwd" && npm "$@" "--registry=$registry" "${scope_args[@]}" --loglevel=notice)
+          }
           read -r -d '' -a allowed <<<"$ALLOWED_PACKAGES" || true
           is_allowed() {
             local n
@@ -230,6 +240,15 @@ jobs:
           #    tarballs present, and every checksum matches.
           [ -n "${SUMS_SHA256:-}" ] || fail "the build job reported no SHA256SUMS digest"
           [ -f SHA256SUMS ] || fail "SHA256SUMS is missing"
+          # The artifact directory holds exactly SHA256SUMS and the tarballs: nothing else (such as
+          # a planted .npmrc) and no hidden files.
+          while IFS= read -r -d '' entry; do
+            entry="${entry#./}"
+            if [ "$entry" = SHA256SUMS ]; then continue; fi
+            if [[ "$entry" == .* || "$entry" != *.tgz || -L "$entry" || ! -f "$entry" ]]; then
+              fail "unexpected file in the artifact: $entry"
+            fi
+          done < <(find . -mindepth 1 -maxdepth 1 -print0)
           [ "$(sha256sum SHA256SUMS | cut -d' ' -f1)" = "$SUMS_SHA256" ] \
             || fail "SHA256SUMS does not match the digest reported by the build job"
           if grep -Evq '^[0-9a-f]{64}  [A-Za-z0-9][A-Za-z0-9._-]*\.tgz$' SHA256SUMS; then
@@ -251,7 +270,7 @@ jobs:
           # than path (which must equal the header name) and timestamps/owners, GNU sparse
           # records, entry types other than file and directory, and data after the end marker.
           # The manifest every later check reads is pacote's, and it must equal GNU tar's.
-          npm_root="$(npm root -g)"
+          npm_root="$(cd "$npm_cwd" && npm root -g)"
           for m in tar pacote; do
             [ -f "$npm_root/npm/node_modules/$m/package.json" ] || fail "npm's bundled $m was not found under $npm_root"
           done
@@ -456,7 +475,7 @@ jobs:
           # Preflight: every package must already exist on npm. A brand-new package has no trusted
           # publisher yet, so its OIDC publish would fail after the others went out.
           for n in "${allowed[@]}"; do
-            if ! npm_registry view "$n" name >/dev/null 2>"$errlog"; then
+            if ! npm_for "$n" view "$n" name >/dev/null 2>"$errlog"; then
               if grep -q E404 "$errlog"; then
                 fail "$n is not on npm yet. Publish it once by hand and register the trusted publisher with pnpm trust:npm (see Releasing in README.md), then re-run this workflow"
               fi
@@ -469,7 +488,7 @@ jobs:
             manifest="$(cat "$work/$tgz.json")"
             name="$(jq -r .name <<<"$manifest")"
             version="$(jq -r .version <<<"$manifest")"
-            if published="$(npm_registry view "$name@$version" version 2>"$errlog")"; then
+            if published="$(npm_for "$name" view "$name@$version" version 2>"$errlog")"; then
               if [ -n "$published" ]; then echo "skip $name@$version (already on npm)"; continue; fi
             elif ! grep -q E404 "$errlog"; then
               cat "$errlog"; fail "could not query npm for $name@$version"
@@ -485,7 +504,7 @@ jobs:
               # A stable version takes latest only when it is newer than the current latest;
               # an older line (a backport) gets v<major>.<minor>-latest instead.
               *)
-                if current="$(npm_registry view "$name" dist-tags.latest 2>"$errlog")"; then
+                if current="$(npm_for "$name" view "$name" dist-tags.latest 2>"$errlog")"; then
                   :
                 elif grep -q E404 "$errlog"; then
                   current=
@@ -505,7 +524,7 @@ jobs:
                 ;;
             esac
             echo "publish $name@$version (dist-tag $dist_tag)"
-            if ! npm_registry publish "./$tgz" --access public --tag "$dist_tag" --ignore-scripts 2>"$errlog"; then
+            if ! npm_for "$name" publish "$artifact/$tgz" --access public --tag "$dist_tag" --ignore-scripts 2>"$errlog"; then
               cat "$errlog"
               if grep -q 'previously published version' "$errlog"; then
                 echo "skip $name@$version (published concurrently)"; continue

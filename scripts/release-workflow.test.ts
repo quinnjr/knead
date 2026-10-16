@@ -6,6 +6,7 @@ import {
   chmodSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -34,7 +35,8 @@ const stepEnv = Object.fromEntries(
   Object.entries(step?.env ?? {}).filter(([, v]) => !String(v).includes('${{')),
 );
 
-const REGISTRY_FLAGS = '--registry=https://registry.npmjs.org/ --loglevel=notice';
+const REGISTRY_FLAGS =
+  '--registry=https://registry.npmjs.org/ --@hpmws:registry=https://registry.npmjs.org/ --loglevel=notice';
 
 // view <name> name: prints the name unless it is in FAKE_MISSING (E404) or FAKE_PREFLIGHT_ERROR is set.
 // view <name>@<version> version: prints the version for specs in FAKE_EXISTING.
@@ -42,6 +44,7 @@ const REGISTRY_FLAGS = '--registry=https://registry.npmjs.org/ --loglevel=notice
 // Otherwise fails with FAKE_VIEW_ERROR (default E404).
 const fakeNpm = `#!/usr/bin/env bash
 echo "npm $*" >> "$FAKE_LOG"
+pwd >> "$FAKE_CWD_LOG"
 case "$1" in
   view)
     if [ "$3" = name ]; then
@@ -154,8 +157,13 @@ function rawTar(entries: RawEntry[], trailer: Buffer = Buffer.alloc(0)): Buffer 
  * postinstall script.
  */
 function sparseNameSwap(name: string, version: string): Buffer {
-  const benign = JSON.stringify({ name, version });
-  const evil = JSON.stringify({ name, version, scripts: { postinstall: 'node -e "1"' } });
+  const benign = JSON.stringify({ name, version, description: 'test' });
+  const evil = JSON.stringify({
+    name,
+    version,
+    description: 'test',
+    scripts: { postinstall: 'node -e "1"' },
+  });
   const sparse = (path: string, sparseName: string, data: string): RawEntry => ({
     name: path,
     data,
@@ -192,6 +200,8 @@ interface PublishOptions {
    * version, since the step refuses a partial set.
    */
   partial?: boolean;
+  /** Extra files planted in the artifact directory after SHA256SUMS is written: [name, contents]. */
+  stray?: [string, string][];
 }
 
 const ALLOWED = String(stepEnv.ALLOWED_PACKAGES ?? '')
@@ -214,7 +224,7 @@ function makeTarball(tmp: string, out: string, pkg: FakePackage): string {
   };
   write(
     'package/package.json',
-    JSON.stringify({ name: pkg.name, version: pkg.version, ...pkg.manifest }),
+    JSON.stringify({ name: pkg.name, version: pkg.version, description: 'test', ...pkg.manifest }),
   );
   write('package/README.md', '# readme');
   write('package/dist/index.js', 'export {};');
@@ -286,8 +296,11 @@ function publish(
     }
   }
   for (const p of opts.unlisted ?? []) makeTarball(tmp, tarballs, p);
+  for (const [name, contents] of opts.stray ?? []) writeFileSync(join(tarballs, name), contents);
   const log = join(tmp, 'npm.log');
+  const cwdLog = join(tmp, 'npm-cwd.log');
   writeFileSync(log, '');
+  writeFileSync(cwdLog, '');
   const r = Bun.spawnSync(['bash', '-e', '-c', publishStep as string], {
     cwd: tarballs,
     env: {
@@ -297,6 +310,7 @@ function publish(
       ...opts.env,
       PATH: `${bin}:${process.env.PATH}`,
       FAKE_LOG: log,
+      FAKE_CWD_LOG: cwdLog,
       REAL_NPM: REAL_NPM ?? 'npm-not-found',
       RUNNER_TEMP: tmp,
       GITHUB_REF_NAME: tag,
@@ -304,9 +318,14 @@ function publish(
     stdout: 'pipe',
     stderr: 'pipe',
   });
-  const calls = readFileSync(log, 'utf8').split('\n').filter(Boolean);
+  const rawCalls = readFileSync(log, 'utf8').split('\n').filter(Boolean);
+  // Tarballs are published by absolute path; show them relative to keep expectations short.
+  const calls = rawCalls.map((c) => c.replaceAll(`${tarballs}/`, './'));
   return {
     exitCode: r.exitCode,
+    tarballs,
+    rawCalls,
+    cwds: readFileSync(cwdLog, 'utf8').split('\n').filter(Boolean),
     output: r.stdout.toString() + r.stderr.toString(),
     calls,
     /** Publishes of the packages the test passed in. */
@@ -427,6 +446,30 @@ describe('release.yml publish step', () => {
       env: { FAKE_VIEW_ERROR: 'ETIMEDOUT' },
     });
     expectRejected(r, 'could not query npm');
+  });
+
+  describe('artifact directory and npm working directory', () => {
+    test.each([
+      ['.npmrc', '@hpmws:registry=https://evil.example/\n'],
+      ['notes.txt', 'x'],
+      ['.hidden.tgz', 'x'],
+    ])('rejects a planted %p', (name, contents) => {
+      const r = publish('v1.2.3', [], { stray: [[name, contents]] });
+      expectRejected(r, `unexpected file in the artifact: ${name}`);
+    });
+
+    test('runs npm from an empty directory with absolute tarball paths and the scoped registry', () => {
+      const r = publish('v1.2.3', []);
+      expect(r.exitCode).toBe(0);
+      expect(new Set(r.cwds).size).toBe(1);
+      expect(r.cwds[0]).not.toBe(r.tarballs);
+      expect(readdirSync(r.cwds[0])).toEqual([]);
+      const published = r.rawCalls.filter((c) => c.startsWith('npm publish'));
+      expect(published).toHaveLength(8);
+      for (const c of published) expect(c.split(' ')[2].startsWith(`${r.tarballs}/`)).toBe(true);
+      for (const c of r.rawCalls.filter((c) => c !== 'npm root -g'))
+        expect(c).toContain('--@hpmws:registry=https://registry.npmjs.org/');
+    });
   });
 
   describe('registry preflight', () => {
@@ -636,7 +679,7 @@ describe('release.yml publish step', () => {
       const raw = rawTar([
         {
           name: 'package/dist/x.js',
-          data: '{"name":"@hpmws/core","version":"1.2.3"}',
+          data: '{"name":"@hpmws/core","version":"1.2.3","description":"test"}',
           pax: { path: 'package/package.json' },
         },
         { name: 'package/README.md', data: '# readme' },
@@ -654,14 +697,21 @@ describe('release.yml publish step', () => {
       [{ 'GNU.sparse.major': '1' }, '::error::'],
     ])('rejects PAX records %j', (pax, message) => {
       const raw = rawTar([
-        { name: 'package/package.json', data: '{"name":"@hpmws/core","version":"1.2.3"}', pax },
+        {
+          name: 'package/package.json',
+          data: '{"name":"@hpmws/core","version":"1.2.3","description":"test"}',
+          pax,
+        },
       ]);
       expectRejected(publish('v1.2.3', [{ name: '@hpmws/core', version: '1.2.3', raw }]), message);
     });
 
     test.each(['S', 'g', 'L', 'K', '1', '2'])('rejects entry type %p', (type) => {
       const raw = rawTar([
-        { name: 'package/package.json', data: '{"name":"@hpmws/core","version":"1.2.3"}' },
+        {
+          name: 'package/package.json',
+          data: '{"name":"@hpmws/core","version":"1.2.3","description":"test"}',
+        },
         { name: 'package/dist/x.js', data: 'x', type },
       ]);
       const r = publish('v1.2.3', [{ name: '@hpmws/core', version: '1.2.3', raw }]);
@@ -674,7 +724,12 @@ describe('release.yml publish step', () => {
         Buffer.concat([rawHeader('package/dist/late.js', 1, '0'), Buffer.from('x')]),
       );
       const raw = rawTar(
-        [{ name: 'package/package.json', data: '{"name":"@hpmws/core","version":"1.2.3"}' }],
+        [
+          {
+            name: 'package/package.json',
+            data: '{"name":"@hpmws/core","version":"1.2.3","description":"test"}',
+          },
+        ],
         trailer,
       );
       expectRejected(
@@ -685,7 +740,10 @@ describe('release.yml publish step', () => {
 
     test('accepts a well-formed tarball written by the raw writer', () => {
       const raw = rawTar([
-        { name: 'package/package.json', data: '{"name":"@hpmws/core","version":"1.2.3"}' },
+        {
+          name: 'package/package.json',
+          data: '{"name":"@hpmws/core","version":"1.2.3","description":"test"}',
+        },
         { name: 'package/dist/index.js', data: 'export {};' },
       ]);
       const r = publish('v1.2.3', [{ name: '@hpmws/core', version: '1.2.3', raw }]);
