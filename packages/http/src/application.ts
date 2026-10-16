@@ -14,7 +14,7 @@ import {
 } from './compiler.js';
 import { ErrorLog, logError } from './error-log.js';
 import { HttpConfigError } from './exceptions.js';
-import { ConsoleLogger, LOGGER, type Logger } from './logger.js';
+import { LOGGER, type Logger } from './logger.js';
 import {
   compileAllowedHosts,
   compileTrust,
@@ -33,12 +33,21 @@ import { type WsData, WsRegistry, type WsServerOptions } from './ws.js';
 /** Default `maxRequestBodySize`: 1 MiB. */
 export const DEFAULT_MAX_REQUEST_BODY_SIZE = 1024 * 1024;
 
-/** Global module the factory registers: provides LOGGER and WsRegistry everywhere. */
+/**
+ * Global module the factory registers: provides HTTP_DEVELOPMENT, WsRegistry and ErrorLog
+ * everywhere. LOGGER comes from @knead-js/core's default (a ConsoleLogger), unless a global module
+ * such as LoggingModule provides one, or the `logger` option replaces it.
+ */
 @Module({})
 export class HttpCoreModule {}
 
 export interface CreateApplicationOptions {
   overrides?: Iterable<readonly [Token, Provider]>;
+  /**
+   * The LOGGER of every module, replacing any module's LOGGER provider (a LOGGER entry in
+   * `overrides` still wins). Default: the LOGGER of a global module such as LoggingModule, or a
+   * ConsoleLogger.
+   */
   logger?: Logger;
   /** Development mode exposes error details in 500 responses. Defaults to NODE_ENV === 'development'. */
   development?: boolean;
@@ -103,16 +112,15 @@ export class KneadFactory {
     const core = {
       module: HttpCoreModule,
       global: true,
-      providers: [
-        { provide: LOGGER, useValue: options.logger ?? new ConsoleLogger() },
-        { provide: HTTP_DEVELOPMENT, useValue: development },
-        WsRegistry,
-        ErrorLog,
-      ],
-      exports: [LOGGER, HTTP_DEVELOPMENT, WsRegistry, ErrorLog],
+      providers: [{ provide: HTTP_DEVELOPMENT, useValue: development }, WsRegistry, ErrorLog],
+      exports: [HTTP_DEVELOPMENT, WsRegistry, ErrorLog],
     };
+    // Overrides apply to every LOGGER provider, so the logger option is the LOGGER everywhere.
+    const overrides: (readonly [Token, Provider])[] = options.logger
+      ? [[LOGGER, { provide: LOGGER, useValue: options.logger }]]
+      : [];
     const context = await ApplicationContext.create(root, {
-      overrides: options.overrides,
+      overrides: [...overrides, ...(options.overrides ?? [])],
       globalModules: [core],
     });
     return new HttpApplication(context, context.get(LOGGER), development);
