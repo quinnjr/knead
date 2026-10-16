@@ -1,0 +1,1 @@
+# @knead-js/prisma

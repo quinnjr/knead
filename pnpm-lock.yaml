@@ -370,6 +370,22 @@ importers:
         specifier: workspace:^
         version: link:../core
 
+  packages/prisma:
+    dependencies:
+      '@prisma/client':
+        specifier: ^7
+        version: 7.10.1(typescript@7.0.2)
+    devDependencies:
+      '@knead-js/core':
+        specifier: workspace:^
+        version: link:../core
+      '@knead-js/http':
+        specifier: workspace:^
+        version: link:../http
+      '@knead-js/testing':
+        specifier: workspace:^
+        version: link:../testing
+
   packages/rate-limit:
     devDependencies:
       '@knead-js/core':
@@ -614,6 +630,21 @@ packages:
   '@pnpm/deps.graph-sequencer@1100.0.1':
     resolution: {integrity: sha512-pOr5+q1fLYKwFN3LAJuGZEnfXDcQ73zqgDHMtGy+K+uIoUqyY+6MeDCWFwfu+4EFuq76I5EPFofoNAI+Bmmq4A==}
     engines: {node: '>=22.13'}
+
+  '@prisma/client-runtime-utils@7.10.1':
+    resolution: {integrity: sha512-AzoATVIgmO3lcZfM443+9SI7+cyLMW2+Psw4op8WQHpHvHCX//CKxv8fwhiL0yGWF8DjdQrFewxrZo5McBdB8g==}
+
+  '@prisma/client@7.10.1':
+    resolution: {integrity: sha512-5tgAbFGh//zVOC6WPNVgziOErJHYkUE+wmqCwbIyq6IrTXUYtv9y2iBFGh/Owo99Mx0+cr0j1FOrxkYBMuyhaQ==}
+    engines: {node: ^20.19 || ^22.12 || >=24.0}
+    peerDependencies:
+      prisma: '*'
+      typescript: '>=5.4.0'
+    peerDependenciesMeta:
+      prisma:
+        optional: true
+      typescript:
+        optional: true
 
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
@@ -1136,6 +1167,14 @@ snapshots:
       yaml: 2.9.1
 
   '@pnpm/deps.graph-sequencer@1100.0.1': {}
+
+  '@prisma/client-runtime-utils@7.10.1': {}
+
+  '@prisma/client@7.10.1(typescript@7.0.2)':
+    dependencies:
+      '@prisma/client-runtime-utils': 7.10.1
+    optionalDependencies:
+      typescript: 7.0.2
 
   '@standard-schema/spec@1.1.0': {}
 
