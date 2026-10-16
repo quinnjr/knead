@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { SchedulerRegistry } from '@knead-js/schedule';
 import { Test, type TestApp, type TestingModule } from '@knead-js/testing';
 import { AppModule } from '../src/app.module.js';
+import { UsersStats } from '../src/users/users.stats.js';
 
 let mod: TestingModule;
 let app: TestApp;
@@ -16,6 +18,21 @@ afterAll(async () => {
 });
 
 describe('example REST API', () => {
+  test('the hourly users report is scheduled and can be triggered', async () => {
+    const registry = mod.get(SchedulerRegistry);
+    const job = registry.get('users.hourly-stats');
+    expect(job?.state).toBe('scheduled');
+    expect(job?.nextRunAt?.getMinutes()).toBe(0);
+    const log = console.log;
+    console.log = () => {};
+    try {
+      await registry.trigger('users.hourly-stats');
+    } finally {
+      console.log = log;
+    }
+    expect(mod.get(UsersStats).lastCount).toBe(1);
+  });
+
   test('lists users with security, CORS and rate-limit headers', async () => {
     const res = await app.request('GET', '/users', { headers: origin });
     expect(res.status).toBe(200);
