@@ -167,4 +167,23 @@ describe('createSubscriptionEndpoint defences (Leaven stubbed)', () => {
     await t.close();
     expect(iterators.map((it) => it.returned)).toEqual([1, 1]);
   });
+
+  test('complete forgets pending subscribes, so subscribe/complete loops do not grow state', async () => {
+    const t = setup();
+    for (let i = 0; i < 50; i++) {
+      await t.config().onSubscribe?.(t.socket(), 'x', { query: 'subscription { t }' });
+      await t.send({ id: 'x', type: 'complete' });
+    }
+    expect(t.endpoint.stats(t.ws)).toEqual({ pending: 0, iterators: 0 });
+  });
+
+  test('onComplete forgets a pending subscribe Leaven abandoned before the executor', async () => {
+    const t = setup();
+    const request = { query: 'subscription { t }' };
+    await t.config().onSubscribe?.(t.socket(), 'y', request);
+    await t.config().context?.(t.socket(), request);
+    expect(t.endpoint.stats(t.ws)?.pending).toBe(1);
+    await t.config().onComplete?.(t.socket(), 'y');
+    expect(t.endpoint.stats(t.ws)?.pending).toBe(0);
+  });
 });

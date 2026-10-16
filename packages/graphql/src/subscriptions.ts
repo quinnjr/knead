@@ -143,6 +143,15 @@ export type HandlerFactory = (
 
 const leavenHandler: HandlerFactory = (config) => new WebSocketHandler<OperationContext>(config);
 
+/** Marks `id`'s pending subscribes cancelled and forgets them. */
+function dropPending(state: SocketState, id: string): void {
+  for (const pending of state.pending) {
+    if (pending.id !== id) continue;
+    pending.cancelled = true;
+    state.pending.delete(pending);
+  }
+}
+
 /** The graphql-transport-ws endpoint registered with WsRegistry at the GraphQL path. */
 export function createSubscriptionEndpoint(
   runtime: GraphQLRuntime,
@@ -193,6 +202,13 @@ export function createSubscriptionEndpoint(
     subscriptionManager: {
       executor,
       maxSubscriptionsPerConnection: options.maxSubscriptionsPerConnection,
+    },
+    // Every way a subscribe ends reaches onComplete; a pending entry still there (Leaven gave up
+    // before calling the executor, for example) is forgotten.
+    onComplete: (socket, id) => {
+      const state = states.get(socket);
+      if (!state) return;
+      for (const pending of state.pending) if (pending.id === id) state.pending.delete(pending);
     },
     onSubscribe: (socket, id, request) => {
       const pending: PendingSubscribe = { id, cancelled: false };
@@ -291,7 +307,7 @@ export function createSubscriptionEndpoint(
         state.initStarted = true;
       }
       if (parsed?.type === 'complete' && typeof parsed.id === 'string') {
-        for (const pending of state.pending) if (pending.id === parsed.id) pending.cancelled = true;
+        dropPending(state, parsed.id);
         const iterator = state.iterators.get(parsed.id);
         if (iterator) discard(iterator);
       }
@@ -324,6 +340,7 @@ export function createSubscriptionEndpoint(
       state.closed = true;
       for (const iterator of state.iterators.values()) discard(iterator);
       state.iterators.clear();
+      state.pending.clear();
       await handler.handleClose(asLeavenSocket(facade));
     },
   };
