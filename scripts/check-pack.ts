@@ -103,6 +103,7 @@ function smokeTest(dir: string): void {
     ['@leaven-graphql/errors', 'packages/graphql/node_modules/@leaven-graphql/errors'],
     ['@leaven-graphql/playground', 'packages/graphql/node_modules/@leaven-graphql/playground'],
     ['@leaven-graphql/ws', 'packages/graphql/node_modules/@leaven-graphql/ws'],
+    ['croner', 'packages/schedule/node_modules/croner'],
     ['@types/bun', 'node_modules/@types/bun'],
   ];
   for (const [name, from] of thirdParty) {
@@ -145,6 +146,7 @@ import { CorsModule } from '@knead-js/cors';
 import { Field, GraphQLModule, ID, ObjectType, Query, Resolver, type ResolverCtx } from '@knead-js/graphql';
 import { Controller, type Ctx, Get, KneadFactory, MemoryLogger } from '@knead-js/http';
 import { RateLimitModule } from '@knead-js/rate-limit';
+import { Interval, ScheduleModule, SchedulerRegistry } from '@knead-js/schedule';
 import { sanitize, type SanitizePolicy } from '@knead-js/sanitize';
 import { SecurityHeadersModule } from '@knead-js/security-headers';
 import type { TestingModuleBuilder } from '@knead-js/testing';
@@ -171,6 +173,15 @@ class Greeting {
   @Field(() => String) text!: string;
 }
 
+class Ticker {
+  ticks = 0;
+
+  @Interval(10)
+  tick() {
+    this.ticks++;
+  }
+}
+
 @Resolver()
 class GreetingResolver {
   readonly greeter = inject(Greeter);
@@ -187,9 +198,10 @@ class GreetingResolver {
     CorsModule.forRoot({ origin: 'https://app.example' }),
     RateLimitModule.forRoot({ limit: 10, window: '1m' }),
     SecurityHeadersModule.forRoot(),
+    ScheduleModule.forRoot(),
   ],
   controllers: [GreetController],
-  providers: [Greeter, GreetingResolver],
+  providers: [Greeter, GreetingResolver, Ticker],
 })
 class AppModule {}
 
@@ -210,6 +222,7 @@ try {
     body: JSON.stringify({ query: '{ greeting(name: "ada") { text } }' }),
   });
   const gqlBody = (await gql.json()) as { data?: { greeting: { text: string } } };
+  await Bun.sleep(50);
   const checks = [
     res.status === 200,
     body.message === sanitize('<b>hello ada</b>', policy),
@@ -218,6 +231,8 @@ try {
     res.headers.get('x-frame-options') === 'DENY',
     gql.status === 200,
     gqlBody.data?.greeting.text === body.message,
+    app.get(Ticker).ticks > 0,
+    app.get(SchedulerRegistry).get('Ticker.tick')?.state === 'scheduled',
   ];
   if (checks.includes(false)) throw new Error(\`checks failed: \${JSON.stringify(checks)}\`);
 } finally {

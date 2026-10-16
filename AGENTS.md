@@ -18,6 +18,7 @@ injection, and is secure by default.
 | `packages/rate-limit` | `@knead-js/rate-limit` | Rate limiting (memory and Redis stores) |
 | `packages/security-headers` | `@knead-js/security-headers` | CSP, HSTS and other headers |
 | `packages/sanitize` | `@knead-js/sanitize` | Allowlist HTML sanitization |
+| `packages/schedule` | `@knead-js/schedule` | Cron/interval/timeout jobs, `SchedulerRegistry`, memory and Redis lock stores |
 | `packages/graphql` | `@knead-js/graphql` | Code-first GraphQL on [Leaven](https://github.com/quinnjr/leaven) |
 | `packages/testing` | `@knead-js/testing` | Test modules, overrides, real ephemeral servers |
 | `examples/rest-api`, `examples/graphql-server` | private | Reference apps; `graphql-server` has an end-to-end `smoke` script |
@@ -49,7 +50,7 @@ pnpm --filter @knead-js/example-graphql-server smoke   # runs the real example s
 ```
 
 Redis-backed suites skip unless `REDIS_URL` is set. Run them before finishing any change that
-touches `rate-limit`, `RedisPubSub` or WebSockets:
+touches `rate-limit`, `RedisPubSub`, `RedisLockStore` or WebSockets:
 
 ```bash
 docker run -d --rm -p 6390:6379 redis:7-alpine

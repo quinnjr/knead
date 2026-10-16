@@ -187,6 +187,7 @@ jobs:
             @knead-js/http
             @knead-js/rate-limit
             @knead-js/sanitize
+            @knead-js/schedule
             @knead-js/security-headers
             @knead-js/testing
           # Per package, the only names allowed in dependencies, optionalDependencies and
@@ -198,6 +199,7 @@ jobs:
             @knead-js/http: @knead-js/core @standard-schema/spec
             @knead-js/rate-limit: @knead-js/core @knead-js/http
             @knead-js/sanitize: @standard-schema/spec sanitize-html
+            @knead-js/schedule: @knead-js/core croner
             @knead-js/security-headers: @knead-js/core @knead-js/http
             @knead-js/testing: @knead-js/core @knead-js/http
         run: |
