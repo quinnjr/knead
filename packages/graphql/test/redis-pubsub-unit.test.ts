@@ -262,6 +262,20 @@ describe('RedisPubSub hardening', () => {
     await pubsub.close();
   });
 
+  test('a received payload is deep-frozen before listeners see it', async () => {
+    const fake = loopback();
+    const pubsub = new RedisPubSub({ client: fake.client, logger: new MemoryLogger() });
+    const seen: { a: { b: number } }[] = [];
+    pubsub.subscribe('t', (payload) => seen.push(payload as { a: { b: number } }));
+    pubsub.subscribe('t', (payload) => seen.push(payload as { a: { b: number } }));
+    await until(() => fake.subscribed() === 1);
+    fake.inject('hpmws:gql:t', JSON.stringify({ a: { b: 1 } }));
+    expect(seen).toHaveLength(2);
+    expect(Object.isFrozen(seen[0]!.a)).toBe(true);
+    expect(seen[0]).toBe(seen[1]!);
+    await pubsub.close();
+  });
+
   test('requireTls: a plaintext remote URL throws at construction', () => {
     expect(() => new RedisPubSub({ url: 'redis://cache.internal', requireTls: true })).toThrow(
       HttpConfigError,

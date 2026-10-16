@@ -31,8 +31,33 @@ export class EventSourceError extends Error {
   }
 }
 
+/** Objects already frozen all the way down, so a payload shared by many subscribers is walked once. */
+const deeplyFrozen = new WeakSet<object>();
+
 /**
- * An async iterator over `topics` on any PubSubEngine. `filter` runs per event; `return()`
+ * Freezes `value` and every object reachable through its own properties (typed arrays and
+ * buffers are skipped: they cannot be frozen), and returns it. Event payloads are shared by
+ * every subscriber, so one resolver must not be able to change what the others receive.
+ */
+export function deepFreeze<T>(value: T): T {
+  const stack: unknown[] = [value];
+  while (stack.length > 0) {
+    const item = stack.pop();
+    if (typeof item !== 'object' || item === null) continue;
+    if (deeplyFrozen.has(item) || ArrayBuffer.isView(item) || item instanceof ArrayBuffer) continue;
+    Object.freeze(item);
+    deeplyFrozen.add(item);
+    for (const key of Reflect.ownKeys(item)) {
+      const descriptor = Object.getOwnPropertyDescriptor(item, key);
+      if (descriptor && 'value' in descriptor) stack.push(descriptor.value);
+    }
+  }
+  return value;
+}
+
+/**
+ * An async iterator over `topics` on any PubSubEngine. Payloads are deep-frozen when they
+ * arrive (deepFreeze), so they are immutable for resolvers. `filter` runs per event; `return()`
  * unsubscribes from every topic.
  */
 export function eventIterator<T>(
@@ -50,6 +75,7 @@ export function eventIterator<T>(
   let failure: EventSourceError | undefined;
   const push = (payload: unknown) => {
     if (done) return;
+    deepFreeze(payload);
     const waiter = waiting.shift();
     if (waiter) waiter.resolve({ value: payload as T, done: false });
     else {

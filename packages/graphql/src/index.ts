@@ -27,7 +27,7 @@ export {
   PlaygroundGate,
   playgroundPage,
 } from './playground.js';
-export { eventIterator, PUBSUB } from './pubsub.js';
+export { deepFreeze, eventIterator, PUBSUB } from './pubsub.js';
 export { RedisPubSub, type RedisPubSubKey, type RedisPubSubOptions } from './redis-pubsub.js';
 export {
   type ArgsOf,

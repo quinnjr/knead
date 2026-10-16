@@ -17,6 +17,7 @@ import {
 } from '@hpmws/http';
 import type { PubSubEngine } from '@leaven-graphql/ws';
 import { RedisClient } from 'bun';
+import { deepFreeze } from './pubsub.js';
 
 /** Key material: a string (its UTF-8 bytes) or bytes. */
 export type RedisPubSubKey = string | Uint8Array;
@@ -381,6 +382,8 @@ export class RedisPubSub implements PubSubEngine {
       this.#drop(topic, 'not JSON');
       return;
     }
+    // One parsed payload is shared by every listener: frozen, so none can change it for others.
+    deepFreeze(payload);
     for (const listener of this.#topics.get(topic) ?? []) {
       try {
         listener.callback(payload);
