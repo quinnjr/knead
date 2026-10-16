@@ -9,12 +9,21 @@ export interface Logger {
 
 export const LOGGER = new InjectionToken<Logger>('LOGGER');
 
-/** `scheme://user:pass@` (any userinfo up to the first `/`, `?`, `#` or whitespace). */
-const URL_CREDENTIALS = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/?#@]+@/gi;
+/** `scheme://` and the rest of the URL token (whitespace, quotes and angle brackets end it). */
+const URL_CREDENTIALS = /\b([a-z][a-z0-9+.-]*:\/\/)([^\s"'<>]*@[^\s"'<>]*)/gi;
+/** A token starting `host[:port]/`: an `@` after it is in the path, not in the userinfo. */
+const HOST_THEN_PATH = /^[^:/@]+(?::\d*)?\//;
 
-/** Replaces URL credentials (`redis://user:pass@host`) with `redis://***@host`. */
+/**
+ * Replaces URL credentials with `***`: `redis://user:pass@host` becomes `redis://***@host`. The
+ * userinfo runs to the LAST `@` of the URL, since passwords often contain unencoded `@` or `/`,
+ * unless the URL starts with `host[:port]/` (then the `@` is in its path).
+ */
 export function redactCredentials(text: string): string {
-  return text.replace(URL_CREDENTIALS, '$1***@');
+  return text.replace(URL_CREDENTIALS, (match, scheme: string, rest: string) => {
+    if (HOST_THEN_PATH.test(rest)) return match;
+    return `${scheme}***${rest.slice(rest.lastIndexOf('@'))}`;
+  });
 }
 
 /** The error's own text: its stack (which starts with `Name: message`), or `Name: message`. */
@@ -24,8 +33,8 @@ function errorText(error: Error): string {
 
 function containsCredentials(error: unknown, depth = 0): boolean {
   if (!(error instanceof Error) || depth > 8) return false;
-  URL_CREDENTIALS.lastIndex = 0;
-  if (URL_CREDENTIALS.test(errorText(error))) return true;
+  const text = errorText(error);
+  if (redactCredentials(text) !== text) return true;
   return containsCredentials(error.cause, depth + 1);
 }
 

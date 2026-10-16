@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from 'bun:test';
-import { ConsoleLogger, MemoryLogger } from '../src/index.js';
+import { ConsoleLogger, MemoryLogger, redactCredentials } from '../src/index.js';
 
 test('MemoryLogger records entries per level and clears', () => {
   const logger = new MemoryLogger();
@@ -88,4 +88,17 @@ test('an Error whose only credentials are in its cause is masked too', () => {
   } finally {
     spy.mockRestore();
   }
+});
+
+describe('redactCredentials', () => {
+  test.each([
+    ['redis://u:p@ss@h:6379', 'redis://***@h:6379'],
+    ['redis://u:a/b@h/0', 'redis://***@h/0'],
+    ['rediss://default:pw@cache.example:6380', 'rediss://***@cache.example:6380'],
+    ['postgres://app:secret@db/app?sslmode=require', 'postgres://***@db/app?sslmode=require'],
+    ['see https://example.com/path?q=1 now', 'see https://example.com/path?q=1 now'],
+    ['a redis://x:y@h1 and redis://p:q@h2', 'a redis://***@h1 and redis://***@h2'],
+  ])('%s', (input, expected) => {
+    expect(redactCredentials(input)).toBe(expected);
+  });
 });
