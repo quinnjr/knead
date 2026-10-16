@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -179,5 +179,20 @@ describe('versionsAtRef', () => {
       { name: '@hpmws/core', version: '1.0.0' },
       { name: '@hpmws/new', version: undefined },
     ]);
+  });
+});
+
+describe('release.yml publish allowlist', () => {
+  test('equals the publishable workspace packages', () => {
+    const workflow = Bun.YAML.parse(
+      readFileSync(join(import.meta.dir, '../.github/workflows/release.yml'), 'utf8'),
+    ) as { jobs: { publish: { steps: { name?: string; env?: Record<string, string> }[] } } };
+    const step = workflow.jobs.publish.steps.find((s) => s.name === 'Publish tarballs');
+    const allowed = String(step?.env?.ALLOWED_PACKAGES ?? '')
+      .split(/\s+/)
+      .filter(Boolean);
+    const names = publishablePackages(join(import.meta.dir, '..')).map((p) => p.name);
+    expect(allowed).toEqual(names);
+    expect(allowed).toHaveLength(8);
   });
 });
