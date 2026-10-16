@@ -337,6 +337,24 @@ describe('RegExp origins must be anchored', () => {
     }
   });
 
+  test('top-level alternation is rejected with a hint to group it', () => {
+    for (const origin of [/^https:\/\/a\.com|https:\/\/b\.com$/, /^a$|^b$/]) {
+      expect(() => CorsModule.forRoot({ origin })).toThrow(CorsConfigError);
+      expect(() => CorsModule.forRoot({ origin })).toThrow('^(?:a|b)$');
+    }
+  });
+
+  test('alternation inside groups or classes, or escaped, is fine', () => {
+    for (const origin of [
+      /^https:\/\/(?:a|b)\.com$/,
+      /^https:\/\/[a|b]\.com$/,
+      /^https:\/\/a\|b\.com$/,
+      /^(https:\/\/(x|y)\.com)$/,
+    ]) {
+      expect(() => CorsModule.forRoot({ origin })).not.toThrow();
+    }
+  });
+
   test('anchored RegExps are accepted', () => {
     for (const origin of [/^https:\/\/app\.example$/, /^https:\/\/(?:a|b)\.example$/i, /^a\\$/]) {
       expect(() => CorsModule.forRoot({ origin })).not.toThrow();

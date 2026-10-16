@@ -37,6 +37,26 @@ function isAnchored(source: string): boolean {
   return backslashes % 2 === 0;
 }
 
+/** Whether a RegExp source has an unescaped `|` outside every group and character class. */
+function hasTopLevelAlternation(source: string): boolean {
+  let depth = 0;
+  let inClass = false;
+  for (let i = 0; i < source.length; i++) {
+    const c = source[i];
+    if (c === '\\') {
+      i++;
+      continue;
+    }
+    if (inClass) {
+      if (c === ']') inClass = false;
+    } else if (c === '[') inClass = true;
+    else if (c === '(') depth++;
+    else if (c === ')') depth--;
+    else if (c === '|' && depth === 0) return true;
+  }
+  return false;
+}
+
 /** @throws CorsConfigError for invalid options, including an unanchored RegExp origin. */
 export function validateCorsOptions(options: CorsOptions): void {
   if (Array.isArray(options.origin) && options.origin.includes('*')) {
@@ -45,6 +65,12 @@ export function validateCorsOptions(options: CorsOptions): void {
   if (options.origin === '*' && options.credentials) {
     throw new CorsConfigError(
       'CORS origin "*" cannot be combined with credentials: true; list the allowed origins explicitly.',
+    );
+  }
+  if (options.origin instanceof RegExp && hasTopLevelAlternation(options.origin.source)) {
+    throw new CorsConfigError(
+      `CORS origin RegExp ${String(options.origin)} has a top-level |, so ^ and $ anchor only ` +
+        'its first and last alternative; wrap the alternatives as /^(?:a|b)$/.',
     );
   }
   if (options.origin instanceof RegExp && !isAnchored(options.origin.source)) {
