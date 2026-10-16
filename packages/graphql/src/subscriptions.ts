@@ -1,6 +1,10 @@
 import { BadRequestException, type Ctx, type WsEndpoint, type WsSocket } from '@hpmws/http';
 import type { GraphQLRequest, LeavenExecutor, SubscriptionIterator } from '@leaven-graphql/core';
-import { type WebSocketContext, WebSocketHandler } from '@leaven-graphql/ws';
+import {
+  type WebSocketContext,
+  WebSocketHandler,
+  type WebSocketHandlerConfig,
+} from '@leaven-graphql/ws';
 import type { ServerWebSocket } from 'bun';
 import type { OperationContext } from './context.js';
 import { logInternalError, toSafeError } from './errors.js';
@@ -120,14 +124,30 @@ export interface GraphQLConnection {
 export interface SubscriptionEndpoint extends WsEndpoint<UpgradeData> {
   /** The connection of a socket on this endpoint, or undefined for any other socket. */
   connection(ws: WsSocket): GraphQLConnection | undefined;
+  /** @internal Pending subscribes and tracked iterators of a socket (for tests). */
+  stats(ws: WsSocket): { pending: number; iterators: number } | undefined;
 }
 
 const EMPTY_CONTEXT: Readonly<Record<PropertyKey, unknown>> = Object.freeze({});
+
+/** The parts of Leaven's WebSocketHandler the endpoint drives. */
+export type LeavenSocketHandler = Pick<
+  WebSocketHandler<OperationContext>,
+  'handleOpen' | 'handleMessage' | 'handleClose'
+>;
+
+/** Builds Leaven's handler; a parameter so tests can drive the endpoint without Leaven. */
+export type HandlerFactory = (
+  config: WebSocketHandlerConfig<OperationContext>,
+) => LeavenSocketHandler;
+
+const leavenHandler: HandlerFactory = (config) => new WebSocketHandler<OperationContext>(config);
 
 /** The graphql-transport-ws endpoint registered with WsRegistry at the GraphQL path. */
 export function createSubscriptionEndpoint(
   runtime: GraphQLRuntime,
   options: SubscriptionOptions,
+  createHandler: HandlerFactory = leavenHandler,
 ): SubscriptionEndpoint {
   const facades = new WeakMap<WsSocket, SocketFacade>();
   const states = new WeakMap<object, SocketState>();
@@ -165,7 +185,7 @@ export function createSubscriptionEndpoint(
       return track(entry.state, entry.pending.id, result);
     },
   });
-  const handler = new WebSocketHandler<OperationContext>({
+  const handler = createHandler({
     schema: runtime.schema,
     logger: leavenLogger(runtime.logger),
     connectionInitTimeout: options.connectionInitTimeout,
@@ -212,6 +232,11 @@ export function createSubscriptionEndpoint(
     },
   });
   return {
+    stats(ws) {
+      const facade = facades.get(ws);
+      const state = facade && states.get(facade);
+      return state && { pending: state.pending.size, iterators: state.iterators.size };
+    },
     connection(ws) {
       const facade = facades.get(ws);
       const state = facade && states.get(facade);
