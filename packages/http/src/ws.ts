@@ -442,6 +442,8 @@ export class WsRegistry {
         if (state?.timer !== undefined) clearTimeout(state.timer);
         this.#sockets.delete(ws);
         this.release(ws.data);
+        // An idle registry holds no predicate closures.
+        if (this.#upgrades.size === 0) this.#dropKept();
         return this.#dispatch(ws, 'close', code, reason);
       },
       drain: (ws) => this.#dispatch(ws, 'drain'),
@@ -471,8 +473,12 @@ export class WsRegistry {
     const now = Date.now();
     this.#sweep(now);
     if (this.#upgrades.size > 0) this.#record(predicate, code, reason, now);
-    // Nothing is pending to keep it for: only an expired upgrade could have needed it.
-    else this.#lostSeq = ++this.#revocationSeq;
+    else {
+      // Nothing is pending to keep it for: only an expired upgrade could have needed it. The
+      // predicates kept so far are no longer needed by anyone either.
+      this.#lostSeq = ++this.#revocationSeq;
+      this.#dropKept();
+    }
     let count = 0;
     for (const ws of [...this.#sockets.keys()]) {
       let matches: boolean;
@@ -576,6 +582,19 @@ export class WsRegistry {
       entry.checkedThrough = Math.max(entry.checkedThrough, revocation.seq);
       if (matched) entry.revoked = { code: revocation.code, reason: revocation.reason };
     }
+  }
+
+  /** Drops every kept predicate when no upgrade is pending (only expired ones could need them). */
+  #dropKept(): void {
+    if (this.#head >= this.#revocations.length) return;
+    this.#lostSeq = Math.max(this.#lostSeq, this.#revocations[this.#revocations.length - 1]!.seq);
+    this.#revocations = [];
+    this.#head = 0;
+  }
+
+  /** @internal Kept closeWhere() predicates (for tests). */
+  get keptRevocations(): number {
+    return this.#revocations.length - this.#head;
   }
 
   #pruneRevocations(now: number): void {

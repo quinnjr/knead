@@ -711,6 +711,30 @@ describe('closeWhere re-application at open (fail closed)', () => {
     expect(nosy.socket.close).toHaveBeenCalledWith(1008, 'Revocation state unavailable');
   });
 
+  test('an idle registry drops its kept predicates (closeWhere with nothing pending, or a close)', async () => {
+    const ws = await registry();
+    ws.register('/x', { upgrade: () => ({}) });
+    const ctx = {};
+    ws.beginUpgrade(ctx);
+    ws.closeWhere(() => false);
+    expect(ws.keptRevocations).toBe(1);
+    ws.endUpgrade(ctx);
+    ws.closeWhere(() => false); // nothing pending
+    expect(ws.keptRevocations).toBe(0);
+
+    const other = {};
+    ws.beginUpgrade(other);
+    ws.closeWhere(() => false);
+    ws.endUpgrade(other);
+    expect(ws.keptRevocations).toBe(1);
+    const socket = {
+      data: { endpoint: '/x', data: null },
+      close: mock(() => {}),
+    } as unknown as WsSocket;
+    await ws.handler().close?.(socket, 1000, '');
+    expect(ws.keptRevocations).toBe(0);
+  });
+
   test('20k beginUpgrade and closeWhere calls stay under 100 ms', async () => {
     const ws = await registry();
     const started = performance.now();
