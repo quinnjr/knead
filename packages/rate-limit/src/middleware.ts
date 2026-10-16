@@ -78,6 +78,27 @@ export const RATE_LIMIT_OPTIONS = new InjectionToken<RateLimitModuleOptions>('RA
 export const RATE_LIMIT_STORE = new InjectionToken<RateLimitStore>('RATE_LIMIT_STORE');
 
 /**
+ * The request Ctx, resolver metadata and field name of a GraphQL ResolverCtx (which has
+ * `http`, `meta` and `info`), or undefined for an HTTP Ctx.
+ */
+function resolverParts(
+  ctx: Ctx,
+): { http: Ctx; meta: Readonly<Record<PropertyKey, unknown>>; field: string } | undefined {
+  const candidate = ctx as unknown as {
+    http?: Ctx;
+    meta?: Readonly<Record<PropertyKey, unknown>>;
+    info?: { parentType?: { name?: string }; fieldName?: string };
+  };
+  if (!candidate.http || candidate.http === ctx) return undefined;
+  const info = candidate.info;
+  return {
+    http: candidate.http,
+    meta: candidate.meta ?? {},
+    field: `${info?.parentType?.name ?? '?'}.${info?.fieldName ?? '?'}`,
+  };
+}
+
+/**
  * The limit check shared by RateLimitMiddleware and RateLimitGuard. Returns the RateLimit-*
  * headers to send, `undefined` when the request is not limited, or throws 429 (or 403/503).
  */
@@ -97,14 +118,22 @@ export class RateLimiter implements OnModuleDestroy {
     ctx: Ctx,
     phase: 'middleware' | 'guard',
   ): Promise<Record<string, string> | undefined> {
-    const meta = ctx.route?.meta;
+    // On a GraphQL ResolverCtx the request is `ctx.http`, and the metadata is the resolver's.
+    const resolver = resolverParts(ctx);
+    const meta = resolver ? resolver.meta : ctx.route?.meta;
     if (meta?.[SKIP_RATE_LIMIT_META]) return undefined;
     const override = meta?.[RATE_LIMIT_META] as RateLimitRouteMeta | undefined;
     const limit = override?.limit ?? this.#options.limit;
     const windowMs = override?.windowMs ?? this.#windowMs;
     const keyFn: KeyFn = override?.key ?? this.#options.key ?? this.#defaultKey;
-    const key = await keyFn(ctx);
-    const route = override && ctx.route ? `${ctx.route.method} ${ctx.route.path}` : 'global';
+    const key = await (keyFn === this.#defaultKey && resolver ? keyFn(resolver.http) : keyFn(ctx));
+    const route = !override
+      ? 'global'
+      : resolver
+        ? `graphql ${resolver.field}`
+        : ctx.route
+          ? `${ctx.route.method} ${ctx.route.path}`
+          : 'global';
     const scope = phase === 'guard' ? `guard:${route}` : route;
     let storeKey = `${scope}|${key}`;
     if (!key) {
@@ -183,7 +212,9 @@ export class RateLimitGuard implements Guard {
 
   async canActivate(ctx: Ctx): Promise<boolean> {
     const headers = await this.#limiter.check(ctx, 'guard');
-    for (const [name, value] of Object.entries(headers ?? {})) ctx.res.headers.set(name, value);
+    // On a ResolverCtx the headers go on the GraphQL HTTP response (`ctx.http.res`).
+    const target = resolverParts(ctx)?.http ?? ctx;
+    for (const [name, value] of Object.entries(headers ?? {})) target.res?.headers.set(name, value);
     return true;
   }
 }

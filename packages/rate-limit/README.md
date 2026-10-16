@@ -29,7 +29,7 @@ RateLimitModule.forRoot({ limit: 100, window: '1m', middleware: false, key: (ctx
 @UseGuards(AuthGuard, RateLimitGuard) // or provide it as APP_GUARD
 ```
 
-`RateLimitGuard` uses the same module options and `@RateLimit()` overrides, sets the same `RateLimit-*` headers on the handler's response and keeps counters separate from the middleware's; `middleware: false` turns the global middleware off when only the guard should count.
+`RateLimitGuard` works on HTTP routes and on GraphQL resolvers (`@UseGuards(RateLimitGuard)` on a resolver method or class): on a resolver it reads the request from `ctx.http` (the default key is `ctx.http.ip`), puts the `RateLimit-*` headers on the GraphQL HTTP response, keeps one counter per resolver field that has `@RateLimit()`, and a denial is `RATE_LIMITED`. It uses the same module options and `@RateLimit()` overrides, sets the same `RateLimit-*` headers on the handler's response and keeps counters separate from the middleware's; `middleware: false` turns the global middleware off when only the guard should count.
 
 Browsers on other origins can only read the `RateLimit-*` and `Retry-After` headers if CORS exposes them:
 
