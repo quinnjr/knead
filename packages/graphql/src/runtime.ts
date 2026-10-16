@@ -508,6 +508,16 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
     return this.#endpoint?.connection(ws);
   }
 
+  /** @internal See SubscriptionEndpoint.deferRevocation. */
+  deferRevocation(
+    ws: WsSocket,
+    predicate: (connection: GraphQLConnection) => boolean,
+    code: number,
+    reason: string,
+  ): boolean {
+    return this.#endpoint?.deferRevocation(ws, predicate, code, reason) ?? false;
+  }
+
   get subscriptionsEnabled(): boolean {
     return this.options.subscriptions !== false && this.schema.getSubscriptionType() !== undefined;
   }

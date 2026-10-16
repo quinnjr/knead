@@ -14,6 +14,9 @@ export class GraphQLSubscriptions {
   /**
    * Closes every GraphQL subscription socket whose connection matches `predicate` (default code
    * 1008, reason "Connection revoked"), ending its subscriptions, and returns how many closed.
+   * Sockets whose `onConnect` has not completed (or that have not sent connection_init yet) are
+   * checked again once it completes, and closed then if they match. A predicate that throws for
+   * a socket is logged and that socket is skipped.
    */
   closeWhere(
     predicate: (connection: GraphQLConnection) => boolean,
@@ -23,7 +26,11 @@ export class GraphQLSubscriptions {
     return this.#ws.closeWhere(
       (ws) => {
         const connection = this.#runtime.connection(ws);
-        return connection !== undefined && predicate(connection);
+        if (connection === undefined) return false;
+        // A socket still in connection_init/onConnect has no context yet: the predicate is
+        // applied again when its init completes, so it cannot escape the revocation.
+        this.#runtime.deferRevocation(ws, predicate, code, reason);
+        return predicate(connection);
       },
       code,
       reason,

@@ -44,6 +44,16 @@ interface SocketState {
   pending: Set<PendingSubscribe>;
   /** The active iterator per subscription id. */
   iterators: Map<string, AsyncIterator<unknown>>;
+  /** Set once onConnect has settled; until then revocations are deferred. */
+  initDone: boolean;
+  /** closeWhere predicates issued before init completed, re-applied when it does. */
+  deferred: DeferredRevocation[];
+}
+
+interface DeferredRevocation {
+  readonly predicate: (connection: GraphQLConnection) => boolean;
+  readonly code: number;
+  readonly reason: string;
 }
 
 interface PeekedMessage {
@@ -124,11 +134,28 @@ export interface GraphQLConnection {
 export interface SubscriptionEndpoint extends WsEndpoint<UpgradeData> {
   /** The connection of a socket on this endpoint, or undefined for any other socket. */
   connection(ws: WsSocket): GraphQLConnection | undefined;
+  /**
+   * @internal Records a GraphQLSubscriptions.closeWhere predicate for a socket whose init has not
+   * completed, to be re-applied to its connection once it has. Returns whether it was recorded.
+   */
+  deferRevocation(
+    ws: WsSocket,
+    predicate: (connection: GraphQLConnection) => boolean,
+    code: number,
+    reason: string,
+  ): boolean;
   /** @internal Pending subscribes and tracked iterators of a socket (for tests). */
   stats(ws: WsSocket): { pending: number; iterators: number } | undefined;
 }
 
 const EMPTY_CONTEXT: Readonly<Record<PropertyKey, unknown>> = Object.freeze({});
+
+function connectionOf(state: SocketState): GraphQLConnection {
+  return {
+    http: state.http,
+    context: state.extra ? Object.freeze({ ...state.extra }) : EMPTY_CONTEXT,
+  };
+}
 
 /** The parts of Leaven's WebSocketHandler the endpoint drives. */
 export type LeavenSocketHandler = Pick<
@@ -216,21 +243,40 @@ export function createSubscriptionEndpoint(
       requests.set(request, pending);
     },
     onConnect: async (socket, params) => {
-      if (!options.onConnect) return true;
       const state = stateOf(socket);
-      try {
-        const result = await options.onConnect(state.http, params ?? {});
-        if (result === false) return false;
-        if (typeof result === 'object' && result !== null) state.extra = result;
-        return true;
-      } catch (error) {
-        logInternalError(
-          runtime.masking,
-          'GraphQL subscriptions onConnect threw; rejecting the connection',
-          error,
-        );
-        return false;
+      let accepted = true;
+      if (options.onConnect) {
+        try {
+          const result = await options.onConnect(state.http, params ?? {});
+          if (result === false) accepted = false;
+          else if (typeof result === 'object' && result !== null) state.extra = result;
+        } catch (error) {
+          logInternalError(
+            runtime.masking,
+            'GraphQL subscriptions onConnect threw; rejecting the connection',
+            error,
+          );
+          accepted = false;
+        }
       }
+      state.initDone = true;
+      const deferred = state.deferred.splice(0);
+      if (!accepted) return false;
+      // A revocation issued while onConnect was pending must not miss this socket.
+      const connection = connectionOf(state);
+      for (const revocation of deferred) {
+        let matches = false;
+        try {
+          matches = revocation.predicate(connection);
+        } catch (error) {
+          runtime.logger.error('GraphQLSubscriptions.closeWhere predicate threw', error);
+        }
+        if (matches) {
+          (socket as unknown as SocketFacade).close(revocation.code, revocation.reason);
+          return false;
+        }
+      }
+      return true;
     },
     context: async (socket, request) => {
       const state = stateOf(socket);
@@ -256,11 +302,14 @@ export function createSubscriptionEndpoint(
     connection(ws) {
       const facade = facades.get(ws);
       const state = facade && states.get(facade);
-      if (!state) return undefined;
-      return {
-        http: state.http,
-        context: state.extra ? Object.freeze({ ...state.extra }) : EMPTY_CONTEXT,
-      };
+      return state && connectionOf(state);
+    },
+    deferRevocation(ws, predicate, code, reason) {
+      const facade = facades.get(ws);
+      const state = facade && states.get(facade);
+      if (!state || state.initDone || state.closed) return false;
+      state.deferred.push({ predicate, code, reason });
+      return true;
     },
     upgrade(ctx) {
       const offered = (ctx.req.headers.get('sec-websocket-protocol') ?? '')
@@ -289,6 +338,8 @@ export function createSubscriptionEndpoint(
         closed: false,
         pending: new Set(),
         iterators: new Map(),
+        initDone: false,
+        deferred: [],
       });
       handler.handleOpen(asLeavenSocket(facade));
     },
@@ -341,6 +392,7 @@ export function createSubscriptionEndpoint(
       for (const iterator of state.iterators.values()) discard(iterator);
       state.iterators.clear();
       state.pending.clear();
+      state.deferred.length = 0;
       await handler.handleClose(asLeavenSocket(facade));
     },
   };
