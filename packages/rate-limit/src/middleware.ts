@@ -57,8 +57,9 @@ export function validateRateLimitOptions(options: RateLimitModuleOptions): void 
   }
   parseDuration(options.window);
   const subnet = options.ipv6Subnet;
-  if (subnet !== undefined && !isIpv6Prefix(subnet)) {
-    throw new RangeError(`ipv6Subnet must be an integer from 0 to 128, got ${String(subnet)}.`);
+  // 0 would put every IPv6 client into one bucket, so it is not accepted.
+  if (subnet !== undefined && (!isIpv6Prefix(subnet) || subnet < 1)) {
+    throw new RangeError(`ipv6Subnet must be an integer from 1 to 128, got ${String(subnet)}.`);
   }
   if (options.onMissingKey !== undefined && !MISSING_KEY_MODES.has(options.onMissingKey)) {
     throw new RangeError(

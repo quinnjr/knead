@@ -274,6 +274,7 @@ describe('Bun WebSocket limits', () => {
       { idleTimeout: 1.5 },
       { maxConnectionsPerIp: 0 },
       { ipv6Subnet: -1 },
+      { ipv6Subnet: 0 },
       { ipv6Subnet: 129 },
       { ipv6Subnet: 1.5 },
       { maxConnections: Number.NaN },
@@ -395,13 +396,6 @@ describe('connection limits', () => {
     ws.configure({ maxConnectionsPerIp: 1 });
     ws.reserve({}, '1.2.3.4');
     expect(() => ws.reserve({}, '::ffff:1.2.3.4')).toThrow(TooManyRequestsException);
-  });
-
-  test('ipv6Subnet 0 groups every IPv6 client together', async () => {
-    const ws = await registry();
-    ws.configure({ maxConnectionsPerIp: 1, ipv6Subnet: 0 });
-    ws.reserve({}, '2001:db8::1');
-    expect(() => ws.reserve({}, 'fd00::1')).toThrow(TooManyRequestsException);
   });
 
   test('ipv6Subnet is configurable (128 counts full addresses)', async () => {

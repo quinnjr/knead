@@ -61,7 +61,7 @@ WebSockets are limited by default. `listen({ websocket })` sets the server-wide 
 | `backpressureLimit` / `closeOnBackpressureLimit` | 1 MiB / `true` | a reader that falls that far behind is closed |
 | `idleTimeout` | 120 (seconds) | |
 | `maxConnectionsPerIp` | 100 | open sockets per `ctx.ip`; further upgrades get 429 (`false` disables) |
-| `ipv6Subnet` | 64 | IPv6 clients count per /64 (one client usually controls a whole /64); an integer from 0 to 128, where 128 counts full addresses. IPv4-mapped addresses count as their IPv4 address (`maskIp(ip, prefix)` is exported and throws a `RangeError` for other prefixes) |
+| `ipv6Subnet` | 64 | IPv6 clients count per /64 (one client usually controls a whole /64); an integer from 1 to 128, where 128 counts full addresses (0 is rejected: it would group every IPv6 client together). IPv4-mapped addresses count as their IPv4 address (`maskIp(ip, prefix)` is exported and throws a `RangeError` for other prefixes) |
 | `maxConnections` | none | open sockets in total; further upgrades get 503 |
 | `messageRate` | `{ limit: 100, windowMs: 10_000 }` | per-socket token bucket; exceeding it closes with 1008 (`false` disables) |
 
