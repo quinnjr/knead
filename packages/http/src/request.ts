@@ -27,8 +27,13 @@ function collect<V>(entries: Iterable<[string, V]>, maxParams: number): Fields<V
   return out;
 }
 
-/** Text that may hold an unsafe key: `__proto__`, `constructor`, `prototype` or a `\u` escape. */
-const UNSAFE_JSON = /__proto__|constructor|prototype|\\u/;
+/**
+ * Text that may hold an unsafe key: `__proto__`, `constructor` or `prototype` written out, or a
+ * `\u00XX` escape of a printable ASCII character (which could spell any letter of them, such as
+ * `\u005f`, `\u0063` or `\u0070`, or `c\u006fnstructor`). Escapes of non-ASCII and control
+ * characters (Python's `ensure_ascii` output) stay on the fast path.
+ */
+const UNSAFE_JSON = /__proto__|constructor|prototype|\\u00[2-7][0-9a-f]/i;
 
 /** Drops `__proto__` at every depth, and `constructor`/`prototype` when they hold an object. */
 function safeReviver(key: string, value: unknown): unknown {

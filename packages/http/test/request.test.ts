@@ -117,6 +117,46 @@ describe('parseBody (Review Focus 1)', () => {
     expect(Object.getPrototypeOf(body)).toBe(Object.prototype);
   });
 
+  test('escaped spellings of unsafe keys take the slow path and are dropped', async () => {
+    for (const key of [
+      '\\u005F\\u005Fproto\\u005f\\u005f',
+      'c\\u006fnstructor',
+      '\\u0070rototype',
+    ]) {
+      const body = (await parseBody(
+        post(`{"${key}":{"x":1},"a":1}`, 'application/json'),
+      )) as object;
+      expect(Object.keys(body)).toEqual(['a']);
+    }
+  });
+
+  test('ensure_ascii payloads with non-ASCII text stay on the fast path', async () => {
+    // What Python's json.dumps(ensure_ascii=True) writes for non-ASCII text and control chars.
+    const items = Array.from({ length: 20_000 }, (_, i) => ({
+      id: i,
+      name: `caf\\u00e9 \\u4e2d\\u6587 \\ud83d\\ude00 ${i}`,
+      note: 'tab\\u0009 bell\\u0007',
+    }));
+    const text = JSON.stringify({ items }).replaceAll('\\\\u', '\\u');
+    expect(JSON.parse(text).items[0].name).toBe('café 中文 😀 0');
+    for (let i = 0; i < 3; i++) {
+      JSON.parse(text);
+      await parseBody(post(text, 'application/json'));
+    }
+    let native = Number.POSITIVE_INFINITY;
+    let ours = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < 5; i++) {
+      const t0 = performance.now();
+      JSON.parse(text);
+      native = Math.min(native, performance.now() - t0);
+      const req = post(text, 'application/json');
+      const t1 = performance.now();
+      await parseBody(req);
+      ours = Math.min(ours, performance.now() - t1);
+    }
+    expect(ours).toBeLessThan(native * 2.5 + 5);
+  });
+
   test('a 1.4 MB body without unsafe keys parses at near-native speed', async () => {
     const items = Array.from({ length: 20_000 }, (_, i) => ({
       id: i,
