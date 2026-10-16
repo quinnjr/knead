@@ -300,3 +300,31 @@ describe('WebSocket upgrades', () => {
     expect(await outcome('https://evil.example')).toBe('error');
   });
 });
+
+describe('oversized Origin headers', () => {
+  const long = `https://${'a'.repeat(2048)}.example`;
+
+  test('an Origin longer than 2048 characters is never allowed', async () => {
+    let calls = 0;
+    const a = await serve({
+      origin: (origin) => {
+        calls++;
+        return origin.endsWith('.example');
+      },
+    });
+    const res = await a.request('GET', '/api/data', { headers: { origin: long } });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('access-control-allow-origin')).toBeNull();
+    expect(calls).toBe(0);
+    const ok = await a.request('GET', '/api/data', { headers: { origin: 'https://b.example' } });
+    expect(ok.headers.get('access-control-allow-origin')).toBe('https://b.example');
+  });
+
+  test("even origin: '*' does not answer an oversized Origin", async () => {
+    const a = await serve({ origin: '*' });
+    const res = await a.request('OPTIONS', '/api/data', {
+      headers: { origin: long, 'access-control-request-method': 'GET' },
+    });
+    expect(res.headers.get('access-control-allow-origin')).toBeNull();
+  });
+});

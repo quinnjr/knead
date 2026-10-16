@@ -3,6 +3,8 @@ import { type Ctx, ForbiddenException, type Middleware, type Next, withHeaders }
 import { CORS_OPTIONS } from './options.js';
 
 const DEFAULT_METHODS = ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE'];
+/** Longer Origin headers are treated as disallowed without consulting the configured rule. */
+export const MAX_ORIGIN_LENGTH = 2048;
 
 export function mergeVary(res: Response, values: readonly string[]): Response {
   if (values.length === 0) return res;
@@ -23,7 +25,8 @@ export class CorsMiddleware implements Middleware {
     const origin = ctx.req.headers.get('origin');
     const wildcard = o.origin === '*';
     const vary = wildcard ? [] : ['Origin'];
-    const allowed = origin !== null && (await this.#matches(origin, ctx));
+    const allowed =
+      origin !== null && origin.length <= MAX_ORIGIN_LENGTH && (await this.#matches(origin, ctx));
     // Browsers do not enforce CORS on WebSockets, so a cross-site page could otherwise open an
     // authenticated socket (cross-site WebSocket hijacking). Clients without Origin are not browsers.
     if (
