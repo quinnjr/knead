@@ -1,5 +1,5 @@
 import { InjectionToken } from '@hpmws/core';
-import { type Ctx, HttpConfigError } from '@hpmws/http';
+import { type Ctx, HttpConfigError, type WsMessageRate } from '@hpmws/http';
 import type {
   CompilerOptions,
   ExecutionHooks,
@@ -30,6 +30,12 @@ export interface SubscriptionOptions {
    * (non-browser clients) are always allowed. Others are rejected with 403.
    */
   allowedOrigins?: readonly string[] | '*';
+  /**
+   * Per-socket message rate for the subscription endpoint (a token bucket; exceeding it closes
+   * the socket with 1008). `false` disables it. Default: the server's `listen({ websocket })`
+   * `messageRate`, 100 messages per 10s.
+   */
+  messageRate?: WsMessageRate | false;
 }
 
 export interface GraphQLModuleOptions {

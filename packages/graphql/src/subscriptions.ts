@@ -1,4 +1,5 @@
 import { BadRequestException, type Ctx, type WsEndpoint, type WsSocket } from '@hpmws/http';
+import type { GraphQLRequest, LeavenExecutor, SubscriptionIterator } from '@leaven-graphql/core';
 import { type WebSocketContext, WebSocketHandler } from '@leaven-graphql/ws';
 import type { ServerWebSocket } from 'bun';
 import type { OperationContext } from './context.js';
@@ -22,9 +23,22 @@ interface SocketFacade {
   close(code?: number, reason?: string): void;
 }
 
+/** A subscribe message between Leaven's onSubscribe and the executor's result. */
+interface PendingSubscribe {
+  readonly id: string;
+  cancelled: boolean;
+}
+
 interface SocketState {
   http: Ctx;
   extra: object | undefined;
+  /** Set synchronously on the first connection_init, before Leaven awaits onConnect. */
+  initStarted: boolean;
+  /** Set when the socket closed; a subscribe that completes later is returned at once. */
+  closed: boolean;
+  pending: Set<PendingSubscribe>;
+  /** The active iterator per subscription id. */
+  iterators: Map<string, AsyncIterator<unknown>>;
 }
 
 interface PeekedMessage {
@@ -45,6 +59,52 @@ function peek(message: string | Buffer): PeekedMessage | undefined {
   }
 }
 
+const isIterator = <T>(value: object): value is SubscriptionIterator<T> =>
+  Symbol.asyncIterator in value;
+
+/** Calls `return()` and ignores its failure (the iterator is being discarded). */
+function discard(iterator: AsyncIterator<unknown>): void {
+  void iterator.return?.()?.catch?.(() => {});
+}
+
+/**
+ * Wraps `iterator` so it leaves `state.iterators` once it finishes or is returned, and returns
+ * whatever iterator was registered under the same id before it.
+ */
+function track<T>(
+  state: SocketState,
+  id: string,
+  iterator: SubscriptionIterator<T>,
+): SubscriptionIterator<T> {
+  const forget = () => {
+    if (state.iterators.get(id) === tracked) state.iterators.delete(id);
+  };
+  const tracked: SubscriptionIterator<T> = {
+    [Symbol.asyncIterator]() {
+      return this;
+    },
+    async next() {
+      const result = await iterator.next();
+      if (result.done) forget();
+      return result;
+    },
+    async return() {
+      forget();
+      await iterator.return?.();
+      return { value: undefined, done: true };
+    },
+    async throw(error?: unknown) {
+      forget();
+      if (iterator.throw) return iterator.throw(error);
+      throw error;
+    },
+  };
+  const previous = state.iterators.get(id);
+  if (previous) discard(previous);
+  state.iterators.set(id, tracked);
+  return tracked;
+}
+
 const asLeavenSocket = (facade: SocketFacade) =>
   facade as unknown as ServerWebSocket<WebSocketContext>;
 
@@ -60,13 +120,47 @@ export function createSubscriptionEndpoint(
     if (!state) throw new Error('Unknown GraphQL WebSocket');
     return state;
   };
+  const requests = new WeakMap<GraphQLRequest, PendingSubscribe>();
+  const operations = new WeakMap<object, { state: SocketState; pending: PendingSubscribe }>();
+  const settle = (context: unknown) => {
+    const entry = typeof context === 'object' && context !== null && operations.get(context);
+    if (entry) entry.state.pending.delete(entry.pending);
+    return entry || undefined;
+  };
+  // Leaven's subscription manager accepts only a LeavenExecutor, so this one inherits from the
+  // runtime's and only intercepts results: a subscription that resolves after its socket closed
+  // (or after the client completed it) is returned at once, and every other one is tracked so
+  // close() and a reused id can return it.
+  const real = runtime.executor;
+  const executor = Object.create(real) as LeavenExecutor;
+  Object.assign(executor, {
+    execute: (request: GraphQLRequest, context: unknown) => {
+      settle(context);
+      return real.execute(request, context);
+    },
+    subscribe: async (request: GraphQLRequest, context: unknown) => {
+      const result = await real.subscribe(request, context);
+      const entry = settle(context);
+      if (!entry || !isIterator(result)) return result;
+      if (entry.state.closed || entry.pending.cancelled) {
+        await result.return?.();
+        return result;
+      }
+      return track(entry.state, entry.pending.id, result);
+    },
+  });
   const handler = new WebSocketHandler<OperationContext>({
     schema: runtime.schema,
     connectionInitTimeout: options.connectionInitTimeout,
     keepAliveInterval: options.keepAliveInterval,
     subscriptionManager: {
-      executor: runtime.executor,
+      executor,
       maxSubscriptionsPerConnection: options.maxSubscriptionsPerConnection,
+    },
+    onSubscribe: (socket, id, request) => {
+      const pending: PendingSubscribe = { id, cancelled: false };
+      stateOf(socket).pending.add(pending);
+      requests.set(request, pending);
     },
     onConnect: async (socket, params) => {
       if (!options.onConnect) return true;
@@ -86,11 +180,14 @@ export function createSubscriptionEndpoint(
     },
     context: async (socket, request) => {
       const state = stateOf(socket);
+      const pending = requests.get(request);
       try {
         const op = await runtime.createOperationContext(state.http, ['subscription'], state.extra);
         op.operationName = request.operationName;
+        if (pending) operations.set(op, { state, pending });
         return op;
       } catch (error) {
+        if (pending) state.pending.delete(pending);
         // Leaven sends a thrown error's message to the client verbatim.
         throw toSafeError(error, runtime.masking, 'the subscription context factory');
       }
@@ -117,13 +214,35 @@ export function createSubscriptionEndpoint(
         close: (code, reason) => ws.close(code, reason),
       };
       facades.set(ws, facade);
-      states.set(facade, { http, extra: undefined });
+      states.set(facade, {
+        http,
+        extra: undefined,
+        initStarted: false,
+        closed: false,
+        pending: new Set(),
+        iterators: new Map(),
+      });
       handler.handleOpen(asLeavenSocket(facade));
     },
     async message(ws, message) {
       const facade = facades.get(ws);
       if (!facade) return;
+      const state = stateOf(facade);
       const parsed = peek(message);
+      if (parsed?.type === 'connection_init') {
+        // Leaven marks the socket initialized only after awaiting onConnect, so two quick
+        // connection_init messages would both be acknowledged.
+        if (state.initStarted) {
+          ws.close(4429, 'Too many initialisation requests');
+          return;
+        }
+        state.initStarted = true;
+      }
+      if (parsed?.type === 'complete' && typeof parsed.id === 'string') {
+        for (const pending of state.pending) if (pending.id === parsed.id) pending.cancelled = true;
+        const iterator = state.iterators.get(parsed.id);
+        if (iterator) discard(iterator);
+      }
       const max = runtime.options.maxQueryLength;
       if (
         parsed?.type === 'subscribe' &&
@@ -149,6 +268,10 @@ export function createSubscriptionEndpoint(
       const facade = facades.get(ws);
       if (!facade) return;
       facades.delete(ws);
+      const state = stateOf(facade);
+      state.closed = true;
+      for (const iterator of state.iterators.values()) discard(iterator);
+      state.iterators.clear();
       await handler.handleClose(asLeavenSocket(facade));
     },
   };
