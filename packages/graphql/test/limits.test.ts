@@ -11,6 +11,7 @@ import {
   resolveOptions,
   Subscription,
 } from '../src/index.js';
+import { GraphQLRuntime } from '../src/runtime.js';
 import { type Started, startGraphQL } from './helpers.js';
 
 @ObjectType()
@@ -59,7 +60,9 @@ describe('safe default limits', () => {
     expect(o.maxDepth).toBe(10);
     expect(o.executor.maxDepth).toBeUndefined();
     expect(o.executor.maxComplexity).toBe(1000);
-    expect(o.executor.parseOptions?.maxTokens).toBe(10_000);
+    expect(o.executor.parseOptions?.maxTokens).toBe(3000);
+    expect(o.maxFields).toBe(1000);
+    expect(o.executor.cache).toEqual({ maxSize: 100 });
     expect(o.maxQueryLength).toBe(100 * 1024);
     expect(o.maxAliases).toBe(30);
   });
@@ -144,9 +147,9 @@ describe('safe default limits', () => {
     expect(res.errors?.[0]?.extensions?.code).toBe('COMPLEXITY_LIMIT');
   });
 
-  test('maxTokens 10000', async () => {
+  test('maxTokens 3000', async () => {
     s = await startGraphQL([M]);
-    const res = await s.app.graphql(`{ tree { ${'n '.repeat(10_001)}} }`);
+    const res = await s.app.graphql(`{ tree { ${'n '.repeat(3001)}} }`);
     expect(res.data).toBeUndefined();
     expect(res.errors?.[0]?.message).toContain('tokens');
   });
@@ -201,5 +204,63 @@ describe('safe default limits', () => {
     });
     expect((await sub.next()).done).toBe(true);
     await sub.close();
+  });
+});
+
+describe('maxFields (FIELD_LIMIT)', () => {
+  const cacheSize = async () =>
+    (await s!.mod.get(GraphQLRuntime).executor.getCacheStats()).document?.size ?? 0;
+
+  test('getIntrospectionQuery() passes every default', async () => {
+    s = await startGraphQL([M], { introspection: true });
+    const res = await s.app.graphql(getIntrospectionQuery());
+    expect(res.errors).toBeUndefined();
+  });
+
+  test('1000 fields run, 1001 are FIELD_LIMIT; fragments count where spread', async () => {
+    s = await startGraphQL([M], { maxComplexity: false });
+    expect((await s.app.graphql(`{ tree { ${'n '.repeat(999)}} }`)).errors).toBeUndefined();
+    const res = await s.app.graphql(`{ tree { ${'n '.repeat(1000)}} }`);
+    expect(res.errors?.[0]?.extensions?.code).toBe('FIELD_LIMIT');
+    // 4 fields in F, spread 300 times: 1200 fields from a short document.
+    const spread = await s.app.graphql(
+      `{ tree { ${'...F '.repeat(300)}} } fragment F on Tree { n child { n child { n } } }`,
+    );
+    expect(spread.errors?.[0]?.extensions?.code).toBe('FIELD_LIMIT');
+  });
+
+  test('9,300 __typename are rejected quickly and not cached', async () => {
+    s = await startGraphQL([M], { parseOptions: { maxTokens: Infinity } });
+    const before = await cacheSize();
+    const started = performance.now();
+    const res = await s.app.graphql(`{ ${'__typename '.repeat(9300)}}`);
+    expect(performance.now() - started).toBeLessThan(50);
+    expect(res.errors?.[0]?.extensions?.code).toBe('FIELD_LIMIT');
+    expect(await cacheSize()).toBe(before);
+  });
+
+  test('10k repeated fields are rejected before validation in under 50 ms', async () => {
+    s = await startGraphQL([M], { parseOptions: { maxTokens: Infinity }, maxAliases: false });
+    const query = `{ tree { ${'n '.repeat(10_000)}} }`;
+    await s.app.graphql('{ tree { n } }'); // warm up
+    const started = performance.now();
+    const res = await s.app.graphql(query);
+    expect(performance.now() - started).toBeLessThan(50);
+    expect(res.errors?.[0]?.extensions?.code).toBe('FIELD_LIMIT');
+  });
+
+  test('maxFields can be raised or disabled, and is validated', async () => {
+    expect(resolveOptions({ maxFields: false }, '/graphql').maxFields).toBe(false);
+    expect(resolveOptions({ maxFields: 5000 }, '/graphql').maxFields).toBe(5000);
+    for (const bad of [0, -1, 1.5]) {
+      expect(() => resolveOptions({ maxFields: bad }, '/graphql')).toThrow(HttpConfigError);
+    }
+  });
+
+  test('a custom cache is kept', () => {
+    expect(resolveOptions({ cache: false }, '/graphql').executor.cache).toBe(false);
+    expect(resolveOptions({ cache: { maxSize: 5 } }, '/graphql').executor.cache).toEqual({
+      maxSize: 5,
+    });
   });
 });

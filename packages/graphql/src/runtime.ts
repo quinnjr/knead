@@ -245,12 +245,18 @@ export function rejectionMessage(
  * it parsed, validated and cached) is allowed on this transport, then the user's hooks with
  * their errors made safe.
  */
+export interface DocumentLimits {
+  readonly maxAliases?: number | false;
+  readonly maxDepth?: number | false;
+  readonly maxFields?: number | false;
+}
+
 export function buildHooks(
   user: ExecutionHooks | undefined,
   masking: ErrorMaskingOptions,
-  maxAliases: number | false = false,
-  maxDepth: number | false = false,
+  limits: DocumentLimits = {},
 ): ExecutionHooks {
+  const { maxAliases = false, maxDepth = false, maxFields = false } = limits;
   const safe = <A extends unknown[]>(
     name: string,
     fn: ((...args: A) => void | Promise<void>) | undefined,
@@ -268,8 +274,11 @@ export function buildHooks(
   const userError = user?.onError;
   return {
     onParse: safe('onParse', user?.onParse),
-    // Runs for cached documents too, so the alias limit holds whatever the cache contains.
+    // Runs before validation and before Leaven caches the document (it caches only validated
+    // documents), and for cached documents too, so the limits hold whatever the cache contains.
+    // The field count goes first: it bounds the quadratic OverlappingFieldsCanBeMerged rule.
     onParsed: async (document: DocumentNode) => {
+      if (maxFields !== false) checkFields(document, maxFields);
       if (maxDepth !== false) checkDepth(document, maxDepth);
       if (maxAliases !== false) checkAliases(document, maxAliases);
       await userParsed?.(document);
@@ -367,6 +376,52 @@ export function queryDepth(document: DocumentNode): number {
     }
   }
   return deepest;
+}
+
+/**
+ * Rejects a document with more than `max` field selections (FIELD_LIMIT), counting every field
+ * of every operation with fragments expanded where they are spread (each fragment is counted
+ * once and memoized; a cycle adds nothing, and validation rejects it). Stops as soon as the
+ * count passes `max`, and visits at most 100 000 selections.
+ */
+export function checkFields(document: DocumentNode, max: number): void {
+  const fragments = new Map<string, FragmentDefinitionNode>();
+  for (const definition of document.definitions) {
+    if (definition.kind === Kind.FRAGMENT_DEFINITION)
+      fragments.set(definition.name.value, definition);
+  }
+  const memo = new Map<string, number>();
+  let visits = 0;
+  let total = 0;
+  const over = () =>
+    new LeavenError(`The document selects more than ${max} fields.`, 'FIELD_LIMIT' as ErrorCode, {
+      statusCode: 400,
+    });
+  const count = (set: SelectionSetNode | undefined): number => {
+    let n = 0;
+    for (const selection of set?.selections ?? []) {
+      if (++visits > MAX_DEPTH_VISITS) throw over();
+      if (selection.kind === Kind.FIELD) n += 1 + count(selection.selectionSet);
+      else if (selection.kind === Kind.INLINE_FRAGMENT) n += count(selection.selectionSet);
+      else {
+        const name = selection.name.value;
+        let known = memo.get(name);
+        if (known === undefined) {
+          memo.set(name, 0); // a cycle counts as nothing
+          known = count(fragments.get(name)?.selectionSet);
+          memo.set(name, known);
+        }
+        n += known;
+      }
+      if (n > max) throw over();
+    }
+    return n;
+  };
+  for (const definition of document.definitions) {
+    if (definition.kind !== Kind.OPERATION_DEFINITION) continue;
+    total += count(definition.selectionSet);
+    if (total > max) throw over();
+  }
 }
 
 /** Rejects a document deeper than `max` with Leaven's DEPTH_LIMIT error. */
@@ -534,7 +589,11 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
         compilerOptions: calculator
           ? { complexityCalculator: calculator, ...compilerOptions }
           : compilerOptions,
-        hooks: buildHooks(hooks, this.masking, this.options.maxAliases, this.options.maxDepth),
+        hooks: buildHooks(hooks, this.masking, {
+          maxAliases: this.options.maxAliases,
+          maxDepth: this.options.maxDepth,
+          maxFields: this.options.maxFields,
+        }),
         formatExecutionError: createErrorFormatter(this.masking),
       },
       this.masking,

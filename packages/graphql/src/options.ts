@@ -93,9 +93,20 @@ export interface GraphQLModuleOptions {
   maxQueryLength?: number | false;
   /** Most field aliases in one document. Default 30; `Infinity` or `false` disables. */
   maxAliases?: number | false;
+  /**
+   * Most field selections in one document, fragments expanded where they are spread (FIELD_LIMIT).
+   * Checked right after parsing, before validation (whose overlapping-fields rule is quadratic in
+   * repeated fields) and before the document is cached. Default 1000; `Infinity` or `false`
+   * disables.
+   */
+  maxFields?: number | false;
+  /**
+   * Leaven's parsed-document cache. Default `{ maxSize: 100 }` documents; `false` disables it.
+   * Every entry keeps the document's AST, so keep it small.
+   */
   cache?: ExecutorConfig['cache'];
   compilerOptions?: CompilerOptions;
-  /** Leaven parser options. `maxTokens` defaults to 10000; `Infinity` disables it. */
+  /** Leaven parser options. `maxTokens` defaults to 3000; `Infinity` disables it. */
   parseOptions?: ParseOptions;
   /** Leaven execution hooks (Leaven has no plugin system; these are its extension point). */
   hooks?: ExecutionHooks;
@@ -146,6 +157,7 @@ export interface ResolvedGraphQLOptions {
   readonly defaultDeny: boolean;
   readonly maxQueryLength: number | false;
   readonly maxAliases: number | false;
+  readonly maxFields: number | false;
   /** Checked by hpmws (introspection fields excluded); Leaven's own maxDepth stays unset. */
   readonly maxDepth: number | false;
   readonly executor: Pick<
@@ -158,10 +170,14 @@ export interface ResolvedGraphQLOptions {
 export const GRAPHQL_LIMITS = Object.freeze({
   maxDepth: 10,
   maxComplexity: 1000,
-  maxTokens: 10_000,
+  maxTokens: 3000,
   maxQueryLength: 100 * 1024,
   maxAliases: 30,
+  maxFields: 1000,
 });
+
+/** Default Leaven document cache: at most 100 parsed documents. */
+export const DEFAULT_DOCUMENT_CACHE = Object.freeze({ maxSize: 100 });
 
 /** The client error for a query over `maxQueryLength`. */
 export function queryTooLongMessage(max: number): string {
@@ -203,6 +219,7 @@ export function validateGraphQLOptions(options: GraphQLModuleOptions): void {
   limit('maxComplexity', options.maxComplexity, 1);
   limit('maxQueryLength', options.maxQueryLength, 1);
   limit('maxAliases', options.maxAliases, 1);
+  limit('maxFields', options.maxFields, 1);
   limit('parseOptions.maxTokens', options.parseOptions?.maxTokens, 1);
   const endpoint =
     typeof options.playground === 'object' ? options.playground.subscriptionEndpoint : undefined;
@@ -255,13 +272,14 @@ export function resolveOptions(
     defaultDeny: options.defaultDeny ?? false,
     maxQueryLength: limit('maxQueryLength', options.maxQueryLength, GRAPHQL_LIMITS.maxQueryLength),
     maxAliases: limit('maxAliases', options.maxAliases, GRAPHQL_LIMITS.maxAliases),
+    maxFields: limit('maxFields', options.maxFields, GRAPHQL_LIMITS.maxFields),
     maxDepth,
     executor: {
       // Leaven's depth check counts introspection selections, so getIntrospectionQuery() (depth
       // 15) would fail; runtime.ts runs its own check instead.
       maxDepth: undefined,
       maxComplexity: maxComplexity === false ? undefined : maxComplexity,
-      cache: options.cache,
+      cache: options.cache ?? { ...DEFAULT_DOCUMENT_CACHE },
       compilerOptions: options.compilerOptions,
       parseOptions: parseOptionsWithDefaults(options.parseOptions),
       hooks: options.hooks,
