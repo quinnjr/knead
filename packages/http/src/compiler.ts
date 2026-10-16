@@ -71,19 +71,25 @@ function isUpgrade(req: Request): boolean {
   return req.headers.get('upgrade')?.toLowerCase() === 'websocket';
 }
 
+/**
+ * The handler of an upgrade to a WebSocket endpoint: `middleware` (global middleware, plus the
+ * GET route's module, controller and route middleware when the path also has a GET route), then
+ * the Origin check, `guards` (global, plus that route's controller and route guards), then the
+ * endpoint's upgrade().
+ */
 function upgradeChain(
   path: string,
   endpoint: WsEndpoint,
   registry: WsRegistry,
-  globalMiddleware: readonly Middleware[],
-  globalGuards: readonly Guard<any>[],
+  middleware: readonly Middleware[],
+  guards: readonly Guard<any>[],
   onError: ErrorHandler,
 ): Handler {
   const terminal: Handler = async (ctx) => {
     try {
       registry.checkOrigin(path, ctx);
-      // Global guards protect upgrades like any route; ctx.route is null here.
-      await runGuards(globalGuards, ctx);
+      // Guards protect upgrades like any route; ctx.route is the GET route sharing the path, if any.
+      await runGuards(guards, ctx);
       const data = await endpoint.upgrade(ctx);
       if (data === false) throw new ForbiddenException('WebSocket upgrade rejected');
       const socketData: WsData = { endpoint: path, data, ip: ctx.ip };
@@ -102,7 +108,7 @@ function upgradeChain(
       return onError(error, ctx);
     }
   };
-  return composeMiddleware(globalMiddleware, terminal, onError);
+  return composeMiddleware(middleware, terminal, onError);
 }
 
 async function runUpgrade(
@@ -111,8 +117,9 @@ async function runUpgrade(
   req: Request,
   server: Server<any>,
   net: NetConfig,
+  route: RouteInfo | null = null,
 ): Promise<Response | undefined> {
-  const ctx = new RequestContext(req, server, null, net, Object.freeze({ path }));
+  const ctx = new RequestContext(req, server, route, net, Object.freeze({ path }));
   const res = await handler(ctx);
   return upgraded.has(ctx) ? undefined : res;
 }
@@ -267,7 +274,12 @@ export function compileApplication(input: CompileInput): CompiledApp {
             }
           };
           const handle = composeMiddleware(chain, terminal, onError);
-          const ws = method === 'GET' ? wsHandlers.get(path) : undefined;
+          // A WebSocket endpoint on the path of a GET route: upgrades run that route's
+          // middleware and guards too (secure by default), with ctx.route set to it.
+          const endpoint = method === 'GET' ? input.ws.get(path) : undefined;
+          const ws = endpoint
+            ? upgradeChain(path, endpoint, input.ws, chain, guards, onError)
+            : undefined;
           let byMethod = routes[path];
           if (!byMethod) {
             byMethod = {};
@@ -276,7 +288,7 @@ export function compileApplication(input: CompileInput): CompiledApp {
           byMethod[method] = async (req, server) => {
             if (misdirected(req)) return misdirectedResponse();
             checkForwarded(req);
-            if (ws && isUpgrade(req)) return runUpgrade(path, ws, req, server, net);
+            if (ws && isUpgrade(req)) return runUpgrade(path, ws, req, server, net, info);
             return withCacheDefault(await handle(new RequestContext(req, server, info, net)));
           };
           const entry = allowed.get(path) ?? {
