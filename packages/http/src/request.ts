@@ -27,6 +27,9 @@ function collect<V>(entries: Iterable<[string, V]>, maxParams: number): Fields<V
   return out;
 }
 
+/** Text that may hold an unsafe key: `__proto__`, `constructor`, `prototype` or a `\u` escape. */
+const UNSAFE_JSON = /__proto__|constructor|prototype|\\u/;
+
 /** Drops `__proto__` at every depth, and `constructor`/`prototype` when they hold an object. */
 function safeReviver(key: string, value: unknown): unknown {
   if (key === '__proto__') return undefined;
@@ -120,7 +123,9 @@ export async function parseBody(req: Request, maxParams = DEFAULT_MAX_PARAMS): P
     const text = await readBody(() => req.text());
     if (text.length === 0) return undefined;
     try {
-      return JSON.parse(text, safeReviver);
+      // The reviver costs several times a plain parse, so it runs only when an unsafe key could
+      // be present (directly, or spelled with a \u escape).
+      return UNSAFE_JSON.test(text) ? JSON.parse(text, safeReviver) : JSON.parse(text);
     } catch {
       throw new BadRequestException('Malformed JSON body');
     }

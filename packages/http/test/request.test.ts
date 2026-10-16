@@ -109,6 +109,42 @@ describe('parseBody (Review Focus 1)', () => {
     expect(({} as Record<string, unknown>).admin).toBeUndefined();
   });
 
+  test('a __proto__ key spelled with a \\u escape is dropped too', async () => {
+    const body = (await parseBody(
+      post('{"\\u005f\\u005fproto\\u005f\\u005f":{"admin":true},"a":1}', 'application/json'),
+    )) as object;
+    expect(Object.keys(body)).toEqual(['a']);
+    expect(Object.getPrototypeOf(body)).toBe(Object.prototype);
+  });
+
+  test('a 1.4 MB body without unsafe keys parses at near-native speed', async () => {
+    const items = Array.from({ length: 20_000 }, (_, i) => ({
+      id: i,
+      name: `item ${i}`,
+      tags: ['a', 'b'],
+      ok: true,
+    }));
+    const text = JSON.stringify({ items });
+    expect(text.length).toBeGreaterThan(1_000_000);
+    for (let i = 0; i < 3; i++) {
+      JSON.parse(text);
+      await parseBody(post(text, 'application/json'));
+    }
+    let native = Number.POSITIVE_INFINITY;
+    let ours = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < 5; i++) {
+      const t0 = performance.now();
+      JSON.parse(text);
+      native = Math.min(native, performance.now() - t0);
+      const req = post(text, 'application/json');
+      const t1 = performance.now();
+      await parseBody(req);
+      ours = Math.min(ours, performance.now() - t1);
+    }
+    // The reviver made this about 7 times slower; reading the body adds a little.
+    expect(ours).toBeLessThan(native * 2.5 + 5);
+  });
+
   test('forms with more than maxParams fields are a 413', async () => {
     const error = (await parseBody(
       post('a=1&b=2&c=3', 'application/x-www-form-urlencoded'),
