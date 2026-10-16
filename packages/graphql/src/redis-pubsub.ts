@@ -10,6 +10,7 @@ import {
   ConsoleLogger,
   defaultRedisUrl,
   HttpConfigError,
+  isLoopbackHostname,
   type Logger,
   logError,
   plaintextRedisHost,
@@ -52,6 +53,16 @@ function aesKey(material: Uint8Array): Buffer {
   return Buffer.from(
     hkdfSync('sha256', material, new Uint8Array(0), 'hpmws:redis-pubsub:aes-256-gcm', 32),
   );
+}
+
+/** Whether a Redis URL points at this machine (a loopback host or a Unix socket). */
+function isLocalRedisUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol.endsWith('+unix:') || isLoopbackHostname(parsed.hostname);
+  } catch {
+    return false;
+  }
 }
 
 /** Dropped messages are reported at most this often, in milliseconds. */
@@ -193,9 +204,14 @@ export class RedisPubSub implements PubSubEngine {
     this.#prefix = options.prefix ?? 'hpmws:gql:';
     this.#explicitLogger = options.logger !== undefined;
     this.#logger = options.logger ?? new ConsoleLogger('hpmws:graphql');
-    const remote = plaintextRedisHost(
-      options.client === undefined ? (options.url ?? defaultRedisUrl()) : undefined,
-    );
+    const url = options.client === undefined ? (options.url ?? defaultRedisUrl()) : undefined;
+    if (this.#signingKeys === undefined && url !== undefined && !isLocalRedisUrl(url)) {
+      this.#logger.warn(
+        'RedisPubSub has no signingKey and its Redis server is not on loopback: any client ' +
+          'that can publish to the server can inject subscription events. Set signingKey.',
+      );
+    }
+    const remote = plaintextRedisHost(url);
     if (remote !== undefined) {
       const problem =
         `RedisPubSub connects to ${remote} over plaintext redis://, so events and credentials ` +

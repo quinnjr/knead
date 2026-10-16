@@ -187,6 +187,23 @@ describe('RedisPubSub hardening', () => {
     expect(() => new RedisPubSub({ client: never, publishTimeout: 0 })).toThrow(HttpConfigError);
   });
 
+  test('warns once at construction without signingKey on a non-loopback server', async () => {
+    const cases: [object, boolean][] = [
+      [{ url: 'rediss://cache.internal' }, true],
+      [{ url: 'rediss://cache.internal', signingKey: 'k'.repeat(32) }, false],
+      [{ url: 'redis://127.0.0.1:6379' }, false],
+      [{ url: 'redis+unix:///tmp/redis.sock' }, false],
+      [{ client: loopback().client }, false],
+    ];
+    for (const [options, warns] of cases) {
+      const logger = new MemoryLogger();
+      const pubsub = new RedisPubSub({ logger, ...options });
+      const warnings = logger.entries.filter((e) => e.message.includes('no signingKey'));
+      expect([options, warnings.length]).toEqual([options, warns ? 1 : 0]);
+      await pubsub.close();
+    }
+  });
+
   test('requireTls: a plaintext remote URL throws at construction', () => {
     expect(() => new RedisPubSub({ url: 'redis://cache.internal', requireTls: true })).toThrow(
       HttpConfigError,
