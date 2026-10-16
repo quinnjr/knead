@@ -198,14 +198,24 @@ export function resolveSecure(
   return protos[Math.min(index, protos.length - 1)]!.toLowerCase() === 'https';
 }
 
+/** Whether `prefix` is a valid IPv6 prefix length: an integer from 0 to 128. */
+export function isIpv6Prefix(prefix: unknown): prefix is number {
+  return typeof prefix === 'number' && Number.isInteger(prefix) && prefix >= 0 && prefix <= 128;
+}
+
 /**
- * A client address as a per-client key: IPv4 as is, IPv6 masked to `prefix` bits and written as
- * `network/prefix` (one IPv6 client usually controls a whole /64). Unparseable input is
- * returned unchanged.
+ * A client address as a per-client key: IPv4 (including IPv4-mapped IPv6, returned in its IPv4
+ * form) as is, IPv6 masked to `prefix` bits and written as `network/prefix` (one IPv6 client
+ * usually controls a whole /64). The prefix applies to IPv6 only. Unparseable input is returned
+ * unchanged. Throws a RangeError unless `prefix` is an integer from 0 to 128.
  */
 export function maskIp(ip: string, prefix: number): string {
+  if (!isIpv6Prefix(prefix)) {
+    throw new RangeError(`IPv6 prefix must be an integer from 0 to 128, got ${String(prefix)}.`);
+  }
   const bytes = parseIp(ip);
-  if (!bytes || bytes.length === 4) return ip;
+  if (!bytes) return ip;
+  if (bytes.length === 4) return formatIp(bytes);
   const masked = Uint8Array.from(bytes);
   for (let bit = prefix; bit < 128; bit++) masked[bit >> 3]! &= ~(0x80 >> (bit & 7));
   return `${formatIp(masked)}/${prefix}`;

@@ -7,7 +7,7 @@ import {
   TooManyRequestsException,
 } from './exceptions.js';
 import { LOGGER } from './logger.js';
-import { maskIp } from './net.js';
+import { isIpv6Prefix, maskIp } from './net.js';
 import { joinPaths } from './path.js';
 import type { Ctx } from './types.js';
 
@@ -63,7 +63,7 @@ export interface WsServerOptions {
   maxConnectionsPerIp?: number | false;
   /**
    * IPv6 prefix length the per-IP limit groups clients by (one client usually controls a whole
-   * /64). 128 counts full addresses. Default 64.
+   * /64). An integer from 0 to 128; 128 counts full addresses. Default 64.
    */
   ipv6Subnet?: number;
   /** Open sockets in total; more upgrades get 503. Default: no limit. */
@@ -122,9 +122,10 @@ function resolveServerOptions(options: WsServerOptions): ResolvedServerOptions {
   if (o.maxConnectionsPerIp !== false)
     assertInteger('maxConnectionsPerIp', o.maxConnectionsPerIp, 1);
   if (o.maxConnections !== undefined) assertInteger('maxConnections', o.maxConnections, 1);
-  assertInteger('ipv6Subnet', o.ipv6Subnet, 1);
-  if (o.ipv6Subnet > 128) {
-    throw new HttpConfigError(`WebSocket ipv6Subnet must be at most 128, got ${o.ipv6Subnet}.`);
+  if (!isIpv6Prefix(o.ipv6Subnet)) {
+    throw new HttpConfigError(
+      `WebSocket ipv6Subnet must be an integer from 0 to 128, got ${String(o.ipv6Subnet)}.`,
+    );
   }
   assertRate('messageRate', o.messageRate);
   return o;

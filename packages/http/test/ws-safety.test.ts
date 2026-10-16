@@ -273,8 +273,9 @@ describe('Bun WebSocket limits', () => {
       { backpressureLimit: -1 },
       { idleTimeout: 1.5 },
       { maxConnectionsPerIp: 0 },
-      { ipv6Subnet: 0 },
+      { ipv6Subnet: -1 },
       { ipv6Subnet: 129 },
+      { ipv6Subnet: 1.5 },
       { maxConnections: Number.NaN },
       { messageRate: { limit: 0, windowMs: 1000 } },
     ]) {
@@ -387,6 +388,20 @@ describe('connection limits', () => {
       TooManyRequestsException,
     );
     ws.reserve({}, '2001:db8:1:3::1');
+  });
+
+  test('IPv4-mapped clients share the slot of their IPv4 address', async () => {
+    const ws = await registry();
+    ws.configure({ maxConnectionsPerIp: 1 });
+    ws.reserve({}, '1.2.3.4');
+    expect(() => ws.reserve({}, '::ffff:1.2.3.4')).toThrow(TooManyRequestsException);
+  });
+
+  test('ipv6Subnet 0 groups every IPv6 client together', async () => {
+    const ws = await registry();
+    ws.configure({ maxConnectionsPerIp: 1, ipv6Subnet: 0 });
+    ws.reserve({}, '2001:db8::1');
+    expect(() => ws.reserve({}, 'fd00::1')).toThrow(TooManyRequestsException);
   });
 
   test('ipv6Subnet is configurable (128 counts full addresses)', async () => {

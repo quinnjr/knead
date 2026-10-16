@@ -4,6 +4,7 @@ import {
   cidrMatcher,
   compileTrust,
   formatIp,
+  maskIp,
   normalizeIp,
   parseIp,
   resolveClientIp,
@@ -147,5 +148,28 @@ describe('resolveSecure', () => {
     expect(
       resolveSecure(false, '10.0.0.1', '203.0.113.9, 10.0.0.2', 'http, https, http', cidr),
     ).toBe(true);
+  });
+});
+
+describe('maskIp', () => {
+  test('masks IPv6 to the prefix and leaves IPv4 alone', () => {
+    expect(maskIp('2001:db8:1:2:aaaa:bbbb:cccc:dddd', 64)).toBe('2001:db8:1:2::/64');
+    expect(maskIp('2001:db8::1', 0)).toBe('::/0');
+    expect(maskIp('2001:db8::1', 128)).toBe('2001:db8::1/128');
+    expect(maskIp('203.0.113.9', 64)).toBe('203.0.113.9');
+    expect(maskIp('not-an-ip', 64)).toBe('not-an-ip');
+  });
+
+  test('IPv4-mapped input is returned in its IPv4 form', () => {
+    expect(maskIp('::ffff:1.2.3.4', 64)).toBe('1.2.3.4');
+    expect(maskIp('::ffff:0102:0304', 64)).toBe('1.2.3.4');
+    expect(maskIp('::FFFF:1.2.3.4', 128)).toBe('1.2.3.4');
+  });
+
+  test('the prefix must be an integer from 0 to 128', () => {
+    for (const bad of [-1, 129, 1.5, Number.NaN, Infinity]) {
+      expect(() => maskIp('2001:db8::1', bad)).toThrow(RangeError);
+      expect(() => maskIp('1.2.3.4', bad)).toThrow(RangeError);
+    }
   });
 });

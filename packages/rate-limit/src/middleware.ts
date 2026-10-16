@@ -2,6 +2,7 @@ import { InjectionToken, inject, type OnModuleDestroy } from '@hpmws/core';
 import {
   type Ctx,
   ForbiddenException,
+  isIpv6Prefix,
   LOGGER,
   type Middleware,
   type Next,
@@ -54,8 +55,8 @@ export function validateRateLimitOptions(options: RateLimitModuleOptions): void 
   }
   parseDuration(options.window);
   const subnet = options.ipv6Subnet;
-  if (subnet !== undefined && (!Number.isInteger(subnet) || subnet < 1 || subnet > 128)) {
-    throw new RangeError(`ipv6Subnet must be an integer from 1 to 128, got ${String(subnet)}.`);
+  if (subnet !== undefined && !isIpv6Prefix(subnet)) {
+    throw new RangeError(`ipv6Subnet must be an integer from 0 to 128, got ${String(subnet)}.`);
   }
   if (options.onMissingKey !== undefined && !MISSING_KEY_MODES.has(options.onMissingKey)) {
     throw new RangeError(
