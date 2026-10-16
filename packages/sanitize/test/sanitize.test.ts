@@ -57,6 +57,7 @@ describe('img schemes', () => {
       allowedTags: ['img'],
       allowedAttributes: { img: ['src'] },
       allowedSchemes: ['https', 'ftp', 'mailto'],
+      extraSchemes: ['ftp'],
     };
     expect(sanitize('<img src="ftp://x.example/a.png">', policy)).toContain('src="ftp:');
     expect(sanitize('<img src="mailto:a@b.example">', policy)).toBe('');
@@ -123,7 +124,7 @@ describe('custom policy guard', () => {
   });
   test('accepts safe policies', () => {
     expect(() =>
-      sanitize('x', bad({ allowedTags: ['p'], allowedAttributes: { p: ['id'] } })),
+      sanitize('x', bad({ allowedTags: ['p'], allowedAttributes: { p: ['title'] } })),
     ).not.toThrow();
   });
   test('sanitizedHtml validates eagerly', () => {
@@ -144,5 +145,84 @@ describe('legitimate content survives', () => {
   ];
   test.each(cases)('%s', (input, expected) => {
     expect(sanitize(input, 'basic')).toBe(expected);
+  });
+});
+
+describe('hardened policy checks', () => {
+  const bad = (p: object) => ({ allowedAttributes: {}, allowedTags: [], ...p });
+
+  test('raw-text, legacy and embedding tags cannot be allowed', () => {
+    for (const tag of [
+      'xmp',
+      'noembed',
+      'noframes',
+      'plaintext',
+      'title',
+      'frame',
+      'frameset',
+      'applet',
+      'portal',
+    ]) {
+      expect(() => sanitize('x', bad({ allowedTags: [tag] }))).toThrow(TypeError);
+    }
+  });
+
+  test('id and name need allowClobberingAttributes: true', () => {
+    for (const attr of ['id', 'name', 'ID']) {
+      expect(() =>
+        sanitize('x', bad({ allowedTags: ['a'], allowedAttributes: { a: [attr] } })),
+      ).toThrow(/clobber/);
+    }
+    const policy = bad({
+      allowedTags: ['h2'],
+      allowedAttributes: { h2: ['id'] },
+      allowClobberingAttributes: true,
+    });
+    expect(sanitize('<h2 id="intro">x</h2>', policy)).toBe('<h2 id="intro">x</h2>');
+  });
+
+  test('schemes are an allowlist: http, https, mailto, tel', () => {
+    expect(sanitize('<a href="tel:+15551234">call</a>', 'basic')).toBe(
+      '<a href="tel:+15551234" rel="noopener noreferrer">call</a>',
+    );
+    for (const href of ['ftp://x.example/', 'file:///etc/passwd', 'sms:123', 'intent://x']) {
+      expect(sanitize(`<a href="${href}">x</a>`, 'basic')).toBe(
+        '<a rel="noopener noreferrer">x</a>',
+      );
+    }
+    expect(() =>
+      sanitize(
+        'x',
+        bad({ allowedTags: ['a'], allowedAttributes: { a: ['href'] }, allowedSchemes: ['ftp'] }),
+      ),
+    ).toThrow(/extraSchemes/);
+  });
+
+  test('extraSchemes extends the allowlist, but never with script-capable schemes', () => {
+    const policy = bad({
+      allowedTags: ['a'],
+      allowedAttributes: { a: ['href'] },
+      extraSchemes: ['ftp'],
+    });
+    expect(sanitize('<a href="ftp://x.example/">f</a>', policy)).toBe(
+      '<a href="ftp://x.example/" rel="noopener noreferrer">f</a>',
+    );
+    expect(sanitize('<a href="https://x.example/">h</a>', policy)).toContain('href="https:');
+    for (const scheme of ['javascript', 'Data', 'vbscript', 'not a scheme']) {
+      expect(() => sanitize('x', bad({ extraSchemes: [scheme] }))).toThrow(TypeError);
+    }
+  });
+
+  test('schemes are checked on every URL attribute, not just href and src', () => {
+    const policy = bad({
+      allowedTags: ['blockquote', 'q', 'del', 'ins'],
+      allowedAttributes: { blockquote: ['cite'], q: ['cite'], del: ['cite'], ins: ['cite'] },
+    });
+    expect(sanitize('<blockquote cite="javascript:alert(1)">x</blockquote>', policy)).toBe(
+      '<blockquote>x</blockquote>',
+    );
+    expect(sanitize('<q cite="https://example.com">x</q>', policy)).toBe(
+      '<q cite="https://example.com">x</q>',
+    );
   });
 });
