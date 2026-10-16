@@ -1,6 +1,6 @@
 {
   "name": "@knead-js/cors",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "CORS module for the Knead framework",
   "license": "MIT OR Apache-2.0",
   "repository": {

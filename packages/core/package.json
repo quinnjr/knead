@@ -1,6 +1,6 @@
 {
   "name": "@knead-js/core",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Dependency injection and module system for the Knead framework",
   "license": "MIT OR Apache-2.0",
   "repository": {
