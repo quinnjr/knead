@@ -19,7 +19,7 @@ export {
   parseIp,
   type TrustProxy,
 } from './net.js';
-export { requestUrl } from './request.js';
+export { DEFAULT_MAX_PARAMS, requestUrl } from './request.js';
 export { withHeaders } from './response.js';
 export * from './tokens.js';
 export type * from './types.js';

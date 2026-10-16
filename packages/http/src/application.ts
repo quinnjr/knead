@@ -21,7 +21,7 @@ import {
   parseIp,
   type TrustProxy,
 } from './net.js';
-import { requestUrl } from './request.js';
+import { DEFAULT_MAX_PARAMS, requestUrl } from './request.js';
 import { resolveFilter, resolveGuard, resolveMiddleware } from './resolve.js';
 import { APP_FILTER, APP_GUARD, APP_MIDDLEWARE, HTTP_DEVELOPMENT } from './tokens.js';
 import type { FilterRef, GlobalMiddleware, GuardRef, MiddlewareRef } from './types.js';
@@ -66,6 +66,11 @@ export interface ListenOptions {
    * 100 sockets per IP and 100 messages per 10s per socket by default.
    */
   websocket?: WsServerOptions;
+  /**
+   * Most query parameters (more is a 400) or urlencoded/multipart body fields (more is a 413)
+   * parsed per request. Default 1000.
+   */
+  maxParams?: number;
   /** Largest accepted request body in bytes; larger bodies get 413. Default 1 MiB. */
   maxRequestBodySize?: number;
   idleTimeout?: number;
@@ -412,6 +417,10 @@ export class HttpApplication {
       throw new HttpConfigError('redirectHttp requires tls.');
     }
     const hosts = this.#allowedHosts(options);
+    const maxParams = options.maxParams;
+    if (maxParams !== undefined && (!Number.isInteger(maxParams) || maxParams < 1)) {
+      throw new HttpConfigError(`maxParams must be an integer >= 1, got ${String(maxParams)}.`);
+    }
     const canonicalHost = options.redirectHttp?.host;
     // Validated before anything binds; the origin is computed once the HTTPS port is known.
     if (canonicalHost !== undefined) canonicalOrigin(canonicalHost, 443);
@@ -445,7 +454,11 @@ export class HttpApplication {
       ],
       logger: this.logger,
       development: this.development,
-      net: { trust: compileTrust(options.trustProxy ?? false), tls: options.tls !== undefined },
+      net: {
+        trust: compileTrust(options.trustProxy ?? false),
+        tls: options.tls !== undefined,
+        maxParams: options.maxParams ?? DEFAULT_MAX_PARAMS,
+      },
       ws,
       hosts,
     });

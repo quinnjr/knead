@@ -231,3 +231,37 @@ describe('development mode', () => {
     expect(devWarnings(app)).toEqual([]);
   });
 });
+
+describe('listen({ maxParams })', () => {
+  @Controller('/params')
+  class Params {
+    @Get('/')
+    query(ctx: Ctx) {
+      return { keys: Object.keys(ctx.query) };
+    }
+    @Post('/')
+    async form(ctx: Ctx) {
+      return { keys: Object.keys((await ctx.json()) as object) };
+    }
+  }
+  @Module({ controllers: [Params] })
+  class ParamsModule {}
+
+  test('caps query parameters (400) and form fields (413)', async () => {
+    app = await start(ParamsModule, { maxParams: 2 });
+    expect((await fetch(new URL('/params?a=1&b=2', app.url))).status).toBe(200);
+    expect((await fetch(new URL('/params?a=1&b=2&c=3', app.url))).status).toBe(400);
+    const res = await fetch(new URL('/params', app.url), {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: 'a=1&b=2&c=3',
+    });
+    expect(res.status).toBe(413);
+  });
+
+  test('an invalid maxParams is a configuration error', async () => {
+    for (const maxParams of [0, -1, 1.5]) {
+      await expect(start(ParamsModule, { maxParams })).rejects.toThrow(HttpConfigError);
+    }
+  });
+});

@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { BadRequestException, UnsupportedMediaTypeException } from '../src/exceptions.js';
+import {
+  BadRequestException,
+  type HttpException,
+  UnsupportedMediaTypeException,
+} from '../src/exceptions.js';
 import { headersToObject, parseBody, parseQuery } from '../src/request.js';
 
 const post = (body: Bun.BodyInit | null, contentType?: string) =>
@@ -17,13 +21,29 @@ describe('parseQuery', () => {
     });
   });
 
-  test('prototype-polluting keys are plain data (Review Focus 5)', () => {
-    const q = parseQuery(new URLSearchParams('__proto__=x&constructor=y&__proto__[polluted]=1'));
+  test('prototype-polluting keys are dropped (Review Focus 5)', () => {
+    const q = parseQuery(
+      new URLSearchParams('__proto__=x&constructor=y&prototype=z&__proto__[polluted]=1&a=1'),
+    );
     expect(Object.getPrototypeOf(q)).toBeNull();
-    expect(Object.hasOwn(q, '__proto__')).toBe(true);
-    expect(Reflect.get(q, 'constructor')).toBe('y');
+    expect(Object.keys(q)).toEqual(['__proto__[polluted]', 'a']);
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
-    expect(({} as Record<string, unknown>).x).toBeUndefined();
+  });
+
+  test('more than maxParams parameters is a 400', () => {
+    expect(() => parseQuery(new URLSearchParams('a=1&b=2&c=3'), 2)).toThrow(BadRequestException);
+    expect(Object.keys(parseQuery(new URLSearchParams('a=1&b=2'), 2))).toEqual(['a', 'b']);
+  });
+
+  test('100k repeated keys are rejected in linear time', () => {
+    const query = new URLSearchParams('a=1&'.repeat(100_000));
+    const t0 = performance.now();
+    expect(() => parseQuery(query)).toThrow(BadRequestException);
+    expect(performance.now() - t0).toBeLessThan(50);
+    // Repeats under the cap are collected in place, not copied on every repeat.
+    const t1 = performance.now();
+    expect((parseQuery(query, 200_000).a as string[]).length).toBe(100_000);
+    expect(performance.now() - t1).toBeLessThan(50);
   });
 });
 
@@ -52,14 +72,59 @@ describe('parseBody (Review Focus 1)', () => {
 
   test('urlencoded forms are parsed safely', async () => {
     const body = (await parseBody(
-      post('a=1&a=2&__proto__=x', 'application/x-www-form-urlencoded'),
+      post('a=1&a=2&__proto__=x&constructor=y', 'application/x-www-form-urlencoded'),
     )) as object;
     expect(Object.getPrototypeOf(body)).toBeNull();
-    expect(Object.entries(body)).toEqual([
-      ['a', ['1', '2']],
-      ['__proto__', 'x'],
-    ]);
+    expect(Object.entries(body)).toEqual([['a', ['1', '2']]]);
     expect(({} as Record<string, unknown>).x).toBeUndefined();
+  });
+
+  test('JSON bodies drop __proto__ at every depth, and constructor/prototype objects', async () => {
+    const body = (await parseBody(
+      post(
+        '{"a":{"__proto__":{"admin":true},"b":{"constructor":{"prototype":{"x":1}},"prototype":{}}},"constructor":"ok","__proto__":{"admin":true}}',
+        'application/json',
+      ),
+    )) as Record<string, any>;
+    expect(Object.hasOwn(body, '__proto__')).toBe(false);
+    expect(Object.hasOwn(body.a, '__proto__')).toBe(false);
+    expect(Object.keys(body.a.b)).toEqual([]);
+    expect(Reflect.get(body, 'constructor')).toBe('ok');
+    class Entity {
+      admin = false;
+      nested: Record<string, unknown> = {};
+    }
+    const entity = Object.assign(new Entity(), body);
+    expect(entity).toBeInstanceOf(Entity);
+    expect(Object.getPrototypeOf(entity)).toBe(Entity.prototype);
+    expect((entity as unknown as { admin: boolean }).admin).toBe(false);
+    expect(({} as Record<string, unknown>).admin).toBeUndefined();
+  });
+
+  test('forms with more than maxParams fields are a 413', async () => {
+    const error = (await parseBody(
+      post('a=1&b=2&c=3', 'application/x-www-form-urlencoded'),
+      2,
+    ).catch((e) => e)) as HttpException;
+    expect(error.status).toBe(413);
+    const form = new FormData();
+    for (let i = 0; i < 3; i++) form.append('f', String(i));
+    const multipart = (await parseBody(
+      new Request('http://localhost/', { method: 'POST', body: form }),
+      2,
+    ).catch((e) => e)) as HttpException;
+    expect(multipart.status).toBe(413);
+  });
+
+  test('100k repeated keys in a 1 MiB body are rejected quickly', async () => {
+    const text = 'a=1&'.repeat(100_000);
+    expect(text.length).toBeLessThanOrEqual(1024 * 1024);
+    const t0 = performance.now();
+    const error = (await parseBody(post(text, 'application/x-www-form-urlencoded')).catch(
+      (e) => e,
+    )) as HttpException;
+    expect(error.status).toBe(413);
+    expect(performance.now() - t0).toBeLessThan(50);
   });
 
   test('multipart forms keep files and repeated fields', async () => {
