@@ -118,6 +118,26 @@ describe('createSubscriptionEndpoint defences (Leaven stubbed)', () => {
     expect(t.closes).toEqual([4429]);
   });
 
+  test('subscribe/complete ids outside [A-Za-z0-9_.:-]{1,64} close with 4400 before Leaven', async () => {
+    for (const id of ['', 'a\nb', 'x'.repeat(65), 'a b', '\u001b[31m', 7, null]) {
+      for (const type of ['subscribe', 'complete']) {
+        const t = setup();
+        await t.send({ type, id, payload: { query: 'subscription { t }' } });
+        expect(t.reached).toEqual([]);
+        expect(t.closes).toEqual([4400]);
+      }
+    }
+    const ok = setup();
+    await ok.send({
+      type: 'subscribe',
+      id: 'op-1:a_b.c',
+      payload: { query: 'subscription { t }' },
+    });
+    await ok.send({ type: 'complete', id: 'x'.repeat(64) });
+    expect(ok.reached).toEqual(['subscribe', 'complete']);
+    expect(ok.closes).toEqual([]);
+  });
+
   test('a subscribe that resolves after the socket closed is returned at once', async () => {
     const t = setup();
     const pending = t.subscribe('1');

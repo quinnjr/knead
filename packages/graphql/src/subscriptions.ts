@@ -14,6 +14,9 @@ import type { GraphQLRuntime } from './runtime.js';
 
 export const GRAPHQL_TRANSPORT_WS = 'graphql-transport-ws';
 
+/** Accepted subscribe/complete message ids. */
+const MESSAGE_ID = /^[A-Za-z0-9_.:-]{1,64}$/;
+
 interface UpgradeData {
   http: Ctx;
 }
@@ -360,6 +363,15 @@ export function createSubscriptionEndpoint(
           return;
         }
         state.initStarted = true;
+      }
+      // Ids end up in Leaven's logs and maps: anything but a short, plain id closes the socket
+      // before the message reaches Leaven.
+      if (
+        (parsed?.type === 'subscribe' || parsed?.type === 'complete') &&
+        (typeof parsed.id !== 'string' || !MESSAGE_ID.test(parsed.id))
+      ) {
+        ws.close(4400, 'Invalid message id');
+        return;
       }
       if (parsed?.type === 'complete' && typeof parsed.id === 'string') {
         dropPending(state, parsed.id);
