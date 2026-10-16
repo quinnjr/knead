@@ -11,7 +11,3 @@ regexes = ['''dGhlIHNhbXBsZSBub25jZQ==''']
 description = "Demo bearer tokens of the example apps (admin-token, grace-token, ada-token)"
 regexTarget = "match"
 regexes = ['''Bearer (admin|grace|ada)-token''']
-
-[[allowlists]]
-description = "Fake credentials in the log/error redaction test fixtures"
-paths = ['''^packages/[^/]+/test/[^/]*(logger|redact)[^/]*\.test\.ts$''']

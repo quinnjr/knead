@@ -61,7 +61,7 @@ REDIS_URL=redis://localhost:6379 pnpm test   # include RedisStore and RedisPubSu
 
 Work follows git-flow: feature branches from `develop`, squash-merged by pull request.
 
-CI also scans the full git history for committed secrets with a pinned, checksum-verified [gitleaks](https://github.com/gitleaks/gitleaks) (the `secrets` job in `ci.yml`). Known fakes (the RFC 6455 WebSocket sample key, the example apps' demo tokens and the redaction test fixtures) are allowlisted in `.github/gitleaks.toml`. To run it locally: `gitleaks git --config .github/gitleaks.toml --redact .`
+CI also scans the full git history for committed secrets with a pinned, checksum-verified [gitleaks](https://github.com/gitleaks/gitleaks) (the `secrets` job in `ci.yml`). Two known fakes (the RFC 6455 WebSocket sample key and the example apps' demo tokens) are allowlisted in `.github/gitleaks.toml`. To run it locally: `gitleaks git --config .github/gitleaks.toml --redact .`
 
 ### Releasing
 
