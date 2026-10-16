@@ -1,6 +1,6 @@
 // A small blog schema used by the schema, HTTP and snapshot tests.
-import { inject, Module } from '@hpmws/core';
-import { NotFoundException } from '@hpmws/http';
+import { inject, Module } from '@knead/core';
+import { NotFoundException } from '@knead/http';
 import {
   ArgsType,
   type BatchLoader,

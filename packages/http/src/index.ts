@@ -1,8 +1,8 @@
 export {
   type CreateApplicationOptions,
-  HpmwsFactory,
   HttpApplication,
   HttpCoreModule,
+  KneadFactory,
   type ListenOptions,
   redirectToHttps,
 } from './application.js';

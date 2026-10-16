@@ -1,5 +1,5 @@
-import type { OnModuleInit } from '@hpmws/core';
-import { NotFoundException } from '@hpmws/http';
+import type { OnModuleInit } from '@knead/core';
+import { NotFoundException } from '@knead/http';
 import type { CurrentUser } from '../auth/auth.js';
 import { Author, Comment, type Node, Post, PostStatus } from './blog.types.js';
 

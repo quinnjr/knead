@@ -181,25 +181,25 @@ importers:
 
   examples/graphql-server:
     dependencies:
-      '@hpmws/core':
+      '@knead/core':
         specifier: workspace:^
         version: link:../../packages/core
-      '@hpmws/cors':
+      '@knead/cors':
         specifier: workspace:^
         version: link:../../packages/cors
-      '@hpmws/graphql':
+      '@knead/graphql':
         specifier: workspace:^
         version: link:../../packages/graphql
-      '@hpmws/http':
+      '@knead/http':
         specifier: workspace:^
         version: link:../../packages/http
-      '@hpmws/rate-limit':
+      '@knead/rate-limit':
         specifier: workspace:^
         version: link:../../packages/rate-limit
-      '@hpmws/sanitize':
+      '@knead/sanitize':
         specifier: workspace:^
         version: link:../../packages/sanitize
-      '@hpmws/security-headers':
+      '@knead/security-headers':
         specifier: workspace:^
         version: link:../../packages/security-headers
       graphql:
@@ -209,31 +209,31 @@ importers:
         specifier: ^1.5.0
         version: 1.5.0(typescript@7.0.2)
     devDependencies:
-      '@hpmws/testing':
+      '@knead/testing':
         specifier: workspace:^
         version: link:../../packages/testing
 
   examples/rest-api:
     dependencies:
-      '@hpmws/core':
+      '@knead/core':
         specifier: workspace:^
         version: link:../../packages/core
-      '@hpmws/cors':
+      '@knead/cors':
         specifier: workspace:^
         version: link:../../packages/cors
-      '@hpmws/graphql':
+      '@knead/graphql':
         specifier: workspace:^
         version: link:../../packages/graphql
-      '@hpmws/http':
+      '@knead/http':
         specifier: workspace:^
         version: link:../../packages/http
-      '@hpmws/rate-limit':
+      '@knead/rate-limit':
         specifier: workspace:^
         version: link:../../packages/rate-limit
-      '@hpmws/sanitize':
+      '@knead/sanitize':
         specifier: workspace:^
         version: link:../../packages/sanitize
-      '@hpmws/security-headers':
+      '@knead/security-headers':
         specifier: workspace:^
         version: link:../../packages/security-headers
       graphql:
@@ -243,7 +243,7 @@ importers:
         specifier: ^1.5.0
         version: 1.5.0(typescript@7.0.2)
     devDependencies:
-      '@hpmws/testing':
+      '@knead/testing':
         specifier: workspace:^
         version: link:../../packages/testing
 
@@ -251,13 +251,13 @@ importers:
 
   packages/cors:
     devDependencies:
-      '@hpmws/core':
+      '@knead/core':
         specifier: workspace:^
         version: link:../core
-      '@hpmws/http':
+      '@knead/http':
         specifier: workspace:^
         version: link:../http
-      '@hpmws/testing':
+      '@knead/testing':
         specifier: workspace:^
         version: link:../testing
 
@@ -282,19 +282,19 @@ importers:
         specifier: 2.2.3
         version: 2.2.3
     devDependencies:
-      '@hpmws/core':
+      '@knead/core':
         specifier: workspace:^
         version: link:../core
-      '@hpmws/http':
+      '@knead/http':
         specifier: workspace:^
         version: link:../http
-      '@hpmws/rate-limit':
+      '@knead/rate-limit':
         specifier: workspace:^
         version: link:../rate-limit
-      '@hpmws/security-headers':
+      '@knead/security-headers':
         specifier: workspace:^
         version: link:../security-headers
-      '@hpmws/testing':
+      '@knead/testing':
         specifier: workspace:^
         version: link:../testing
       graphql:
@@ -307,22 +307,22 @@ importers:
         specifier: ^1.1.0
         version: 1.1.0
     devDependencies:
-      '@hpmws/core':
+      '@knead/core':
         specifier: workspace:^
         version: link:../core
 
   packages/rate-limit:
     devDependencies:
-      '@hpmws/core':
+      '@knead/core':
         specifier: workspace:^
         version: link:../core
-      '@hpmws/cors':
+      '@knead/cors':
         specifier: workspace:^
         version: link:../cors
-      '@hpmws/http':
+      '@knead/http':
         specifier: workspace:^
         version: link:../http
-      '@hpmws/testing':
+      '@knead/testing':
         specifier: workspace:^
         version: link:../testing
 
@@ -341,28 +341,28 @@ importers:
 
   packages/security-headers:
     devDependencies:
-      '@hpmws/core':
+      '@knead/core':
         specifier: workspace:^
         version: link:../core
-      '@hpmws/cors':
+      '@knead/cors':
         specifier: workspace:^
         version: link:../cors
-      '@hpmws/http':
+      '@knead/http':
         specifier: workspace:^
         version: link:../http
-      '@hpmws/rate-limit':
+      '@knead/rate-limit':
         specifier: workspace:^
         version: link:../rate-limit
-      '@hpmws/testing':
+      '@knead/testing':
         specifier: workspace:^
         version: link:../testing
 
   packages/testing:
     devDependencies:
-      '@hpmws/core':
+      '@knead/core':
         specifier: workspace:^
         version: link:../core
-      '@hpmws/http':
+      '@knead/http':
         specifier: workspace:^
         version: link:../http
 

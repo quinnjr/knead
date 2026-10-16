@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { getMetadata, getMethodMetadata, getOwnMetadata } from '@hpmws/core';
+import { getMetadata, getMethodMetadata, getOwnMetadata } from '@knead/core';
 import {
   All,
   CATCH,

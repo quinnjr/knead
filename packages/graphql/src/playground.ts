@@ -1,4 +1,4 @@
-import type { Logger } from '@hpmws/http';
+import type { Logger } from '@knead/http';
 import { renderPlayground } from '@leaven-graphql/playground';
 
 /**

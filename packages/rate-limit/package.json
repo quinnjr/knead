@@ -1,11 +1,11 @@
 {
-  "name": "@hpmws/rate-limit",
+  "name": "@knead/rate-limit",
   "version": "0.0.0",
-  "description": "Rate limiting with memory and Redis stores for the hpmws framework",
+  "description": "Rate limiting with memory and Redis stores for the Knead framework",
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/quinnjr/high-performance-modular-web-server.git",
+    "url": "git+https://github.com/quinnjr/knead.git",
     "directory": "packages/rate-limit"
   },
   "type": "module",
@@ -27,14 +27,14 @@
     "prepack": "bun ../../scripts/copy-licenses.ts"
   },
   "peerDependencies": {
-    "@hpmws/core": "workspace:^",
-    "@hpmws/http": "workspace:^"
+    "@knead/core": "workspace:^",
+    "@knead/http": "workspace:^"
   },
   "devDependencies": {
-    "@hpmws/core": "workspace:^",
-    "@hpmws/cors": "workspace:^",
-    "@hpmws/http": "workspace:^",
-    "@hpmws/testing": "workspace:^"
+    "@knead/core": "workspace:^",
+    "@knead/cors": "workspace:^",
+    "@knead/http": "workspace:^",
+    "@knead/testing": "workspace:^"
   },
   "publishConfig": {
     "access": "public",

@@ -1,5 +1,5 @@
-import { type DynamicModule, inject, Module } from '@hpmws/core';
-import { APP_MIDDLEWARE } from '@hpmws/http';
+import { type DynamicModule, inject, Module } from '@knead/core';
+import { APP_MIDDLEWARE } from '@knead/http';
 import { MemoryStore } from './memory-store.js';
 import {
   RATE_LIMIT_OPTIONS,

@@ -1,5 +1,5 @@
-import { inject } from '@hpmws/core';
-import { ID, Query, Resolver, type ResolverCtx } from '@hpmws/graphql';
+import { inject } from '@knead/core';
+import { ID, Query, Resolver, type ResolverCtx } from '@knead/graphql';
 import * as v from 'valibot';
 import { BlogService } from './blog.service.js';
 import { type Author, Node, type Post, SearchResult } from './blog.types.js';

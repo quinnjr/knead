@@ -1,5 +1,5 @@
 {
-  "name": "@hpmws/example-graphql-server",
+  "name": "@knead/example-graphql-server",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,17 +9,17 @@
     "smoke": "bun scripts/smoke.ts"
   },
   "dependencies": {
-    "@hpmws/core": "workspace:^",
-    "@hpmws/cors": "workspace:^",
-    "@hpmws/graphql": "workspace:^",
-    "@hpmws/http": "workspace:^",
-    "@hpmws/rate-limit": "workspace:^",
-    "@hpmws/sanitize": "workspace:^",
-    "@hpmws/security-headers": "workspace:^",
+    "@knead/core": "workspace:^",
+    "@knead/cors": "workspace:^",
+    "@knead/graphql": "workspace:^",
+    "@knead/http": "workspace:^",
+    "@knead/rate-limit": "workspace:^",
+    "@knead/sanitize": "workspace:^",
+    "@knead/security-headers": "workspace:^",
     "graphql": "^16.14.2",
     "valibot": "^1.5.0"
   },
   "devDependencies": {
-    "@hpmws/testing": "workspace:^"
+    "@knead/testing": "workspace:^"
   }
 }

@@ -1,7 +1,7 @@
 import type { Logger } from './logger.js';
 
 /**
- * The oldest Bun hpmws supports: 1.4.3 fixes CVE-2026-48618 (TLS hostname matching, including
+ * The oldest Bun Knead supports: 1.4.3 fixes CVE-2026-48618 (TLS hostname matching, including
  * Bun.RedisClient), request smuggling through bare-LF chunked bodies, WebSocket frames sent with
  * the upgrade request, `req.url`/headers of aborted requests and the TLS handshake idle timeout.
  */

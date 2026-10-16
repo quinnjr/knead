@@ -14,7 +14,7 @@ import {
   type Logger,
   logError,
   plaintextRedisHost,
-} from '@hpmws/http';
+} from '@knead/http';
 import type { PubSubEngine } from '@leaven-graphql/ws';
 import { RedisClient } from 'bun';
 import { deepFreeze } from './pubsub.js';
@@ -52,7 +52,7 @@ const ENVELOPE = /^e2\.(\d{1,16})\.([A-Za-z0-9_-]{16})\.([A-Za-z0-9_-]+)$/;
 /** An AES-256 key derived from key material (HKDF-SHA256, so any length >= 32 bytes works). */
 function aesKey(material: Uint8Array): Buffer {
   return Buffer.from(
-    hkdfSync('sha256', material, new Uint8Array(0), 'hpmws:redis-pubsub:aes-256-gcm', 32),
+    hkdfSync('sha256', material, new Uint8Array(0), 'knead:redis-pubsub:aes-256-gcm', 32),
   );
 }
 
@@ -87,7 +87,7 @@ export interface RedisPubSubOptions {
   requireTls?: boolean;
   /** Connection URL when no client is given (default: Bun's REDIS_URL / localhost). */
   url?: string;
-  /** Channel prefix. Default 'hpmws:gql:'. */
+  /** Channel prefix. Default 'knead:gql:'. */
   prefix?: string;
   /** Where failures are reported. Default: the application's LOGGER once GraphQLModule starts. */
   logger?: Logger;
@@ -208,9 +208,9 @@ export class RedisPubSub implements PubSubEngine {
       );
     }
     this.#maxMessageBytes = maxBytes;
-    this.#prefix = options.prefix ?? 'hpmws:gql:';
+    this.#prefix = options.prefix ?? 'knead:gql:';
     this.#explicitLogger = options.logger !== undefined;
-    this.#logger = options.logger ?? new ConsoleLogger('hpmws:graphql');
+    this.#logger = options.logger ?? new ConsoleLogger('knead:graphql');
     const url = options.client === undefined ? (options.url ?? defaultRedisUrl()) : undefined;
     if (this.#signingKeys === undefined && url !== undefined && !isLocalRedisUrl(url)) {
       this.#logger.warn(

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { LOGGER, type Logger } from '@hpmws/http';
-import { Test, type TestingModule } from '@hpmws/testing';
+import { LOGGER, type Logger } from '@knead/http';
+import { Test, type TestingModule } from '@knead/testing';
 import { GraphQLModule, PUBSUB, Query, Resolver } from '../src/index.js';
 
 @Resolver()

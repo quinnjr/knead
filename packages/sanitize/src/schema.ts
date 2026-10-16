@@ -11,7 +11,7 @@ export function sanitizedHtml<S extends StandardSchemaV1>(
   return {
     '~standard': {
       version: 1,
-      vendor: 'hpmws',
+      vendor: 'knead',
       async validate(value) {
         const result = await inner['~standard'].validate(value);
         if (result.issues) return { issues: result.issues };

@@ -1,11 +1,11 @@
 {
-  "name": "@hpmws/cors",
+  "name": "@knead/cors",
   "version": "0.0.0",
-  "description": "CORS module for the hpmws framework",
+  "description": "CORS module for the Knead framework",
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/quinnjr/high-performance-modular-web-server.git",
+    "url": "git+https://github.com/quinnjr/knead.git",
     "directory": "packages/cors"
   },
   "type": "module",
@@ -27,13 +27,13 @@
     "prepack": "bun ../../scripts/copy-licenses.ts"
   },
   "peerDependencies": {
-    "@hpmws/core": "workspace:^",
-    "@hpmws/http": "workspace:^"
+    "@knead/core": "workspace:^",
+    "@knead/http": "workspace:^"
   },
   "devDependencies": {
-    "@hpmws/core": "workspace:^",
-    "@hpmws/http": "workspace:^",
-    "@hpmws/testing": "workspace:^"
+    "@knead/core": "workspace:^",
+    "@knead/http": "workspace:^",
+    "@knead/testing": "workspace:^"
   },
   "publishConfig": {
     "access": "public",

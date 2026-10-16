@@ -1,6 +1,6 @@
 import { describe, expect, setSystemTime, test } from 'bun:test';
 import { createHmac } from 'node:crypto';
-import { HttpConfigError, MemoryLogger } from '@hpmws/http';
+import { HttpConfigError, MemoryLogger } from '@knead/http';
 import type { RedisClient } from 'bun';
 import { RedisPubSub } from '../src/index.js';
 import { until } from './helpers.js';
@@ -42,7 +42,7 @@ describe('RedisPubSub failure handling', () => {
     await until(() => errors.length === 1);
     expect(logger.entries.some((e) => e.level === 'error' && e.message.includes('a'))).toBe(true);
     pubsub.subscribe('b', () => {});
-    await until(() => fake.subscribed.includes('hpmws:gql:b'));
+    await until(() => fake.subscribed.includes('knead:gql:b'));
     expect(fake.duplicates()).toBe(2);
     await pubsub.close();
   });
@@ -58,7 +58,7 @@ describe('RedisPubSub failure handling', () => {
     );
     await until(() => errors.length === 1);
     pubsub.subscribe('a', () => {});
-    await until(() => fake.subscribed.includes('hpmws:gql:a'));
+    await until(() => fake.subscribed.includes('knead:gql:a'));
     await pubsub.close();
   });
 
@@ -100,9 +100,9 @@ describe('RedisPubSub failure handling', () => {
     release?.();
     await until(() => ops.length === 3);
     expect(ops).toEqual([
-      'subscribe hpmws:gql:t',
-      'unsubscribe hpmws:gql:t',
-      'subscribe hpmws:gql:t',
+      'subscribe knead:gql:t',
+      'unsubscribe knead:gql:t',
+      'subscribe knead:gql:t',
     ]);
     await pubsub.publish('t', { n: 1 });
     expect(received).toEqual([{ n: 1 }]);
@@ -269,7 +269,7 @@ describe('RedisPubSub hardening', () => {
     pubsub.subscribe('t', (payload) => seen.push(payload as { a: { b: number } }));
     pubsub.subscribe('t', (payload) => seen.push(payload as { a: { b: number } }));
     await until(() => fake.subscribed() === 1);
-    fake.inject('hpmws:gql:t', JSON.stringify({ a: { b: 1 } }));
+    fake.inject('knead:gql:t', JSON.stringify({ a: { b: 1 } }));
     expect(seen).toHaveLength(2);
     expect(Object.isFrozen(seen[0]!.a)).toBe(true);
     expect(seen[0]).toBe(seen[1]!);
@@ -296,8 +296,8 @@ describe('RedisPubSub hardening', () => {
     await until(() => fake.subscribed() === 1);
     await sender.publish('t', { n: 1 });
     expect(received).toEqual([{ n: 1 }]);
-    fake.inject('hpmws:gql:t', JSON.stringify({ n: 2 }));
-    fake.inject('hpmws:gql:t', `${'0'.repeat(64)}.${Date.now()}.${JSON.stringify({ n: 3 })}`);
+    fake.inject('knead:gql:t', JSON.stringify({ n: 2 }));
+    fake.inject('knead:gql:t', `${'0'.repeat(64)}.${Date.now()}.${JSON.stringify({ n: 3 })}`);
     const other = new RedisPubSub({ client: fake.client, signingKey: 'x'.repeat(32), logger });
     await other.publish('t', { n: 4 });
     expect(received).toEqual([{ n: 1 }]);
@@ -380,7 +380,7 @@ describe('RedisPubSub hardening', () => {
       close: () => {},
     } as unknown as RedisClient;
     await new RedisPubSub({ client: spy, signingKey }).publish('a', { n: 1 });
-    fake.inject('hpmws:gql:b', captured);
+    fake.inject('knead:gql:b', captured);
     expect(received).toEqual([]);
     await receiver.close();
   });
@@ -423,13 +423,13 @@ describe('RedisPubSub hardening', () => {
     const signed = (ts: number, payload: unknown) => {
       const json = JSON.stringify(payload);
       const mac = createHmac('sha256', signingKey)
-        .update(`hpmws:gql:t\0${ts}\0${json}`)
+        .update(`knead:gql:t\0${ts}\0${json}`)
         .digest('hex');
       return `${mac}.${ts}.${json}`;
     };
-    fake.inject('hpmws:gql:t', signed(Date.now(), { fresh: true }));
-    fake.inject('hpmws:gql:t', signed(Date.now() - 6000, { stale: true }));
-    fake.inject('hpmws:gql:t', signed(Date.now() + 61_000, { future: true }));
+    fake.inject('knead:gql:t', signed(Date.now(), { fresh: true }));
+    fake.inject('knead:gql:t', signed(Date.now() - 6000, { stale: true }));
+    fake.inject('knead:gql:t', signed(Date.now() + 61_000, { future: true }));
     expect(received).toEqual([{ fresh: true }]);
     expect(logger.entries.filter((e) => e.message.includes('signature')).length).toBe(1);
     await receiver.close();
@@ -442,11 +442,11 @@ describe('RedisPubSub hardening', () => {
     receiver.subscribe('t', () => {});
     await until(() => fake.subscribed() === 1);
     try {
-      for (let i = 0; i < 1000; i++) fake.inject('hpmws:gql:t', `${'0'.repeat(64)}.1.{}`);
+      for (let i = 0; i < 1000; i++) fake.inject('knead:gql:t', `${'0'.repeat(64)}.1.{}`);
       expect(logger.entries.length).toBe(1);
       expect(logger.entries[0]!.message).toContain('dropped 1 message(s)');
       setSystemTime(new Date(Date.now() + 11_000));
-      fake.inject('hpmws:gql:t', 'forged');
+      fake.inject('knead:gql:t', 'forged');
       expect(logger.entries.length).toBe(2);
       expect(logger.entries[1]!.message).toContain('dropped 1000 message(s)');
     } finally {
@@ -469,7 +469,7 @@ describe('RedisPubSub hardening', () => {
     await until(() => fake.subscribed() === 1);
     const huge = `${'0'.repeat(64)}.${Date.now()}.${JSON.stringify('x'.repeat(10 * 1024 * 1024))}`;
     const started = performance.now();
-    fake.inject('hpmws:gql:t', huge);
+    fake.inject('knead:gql:t', huge);
     expect(performance.now() - started).toBeLessThan(20);
     expect(logger.entries[0]!.message).toContain('larger than 1024 bytes');
     const sender = new RedisPubSub({
@@ -532,7 +532,7 @@ describe('RedisPubSub hardening', () => {
       expect(spy.sent[0]).not.toContain('secret');
       const fake = loopback();
       const r = await receiver(fake, { encryptionKey: key });
-      fake.inject('hpmws:gql:t', spy.sent[0]!);
+      fake.inject('knead:gql:t', spy.sent[0]!);
       expect(r.received).toEqual([{ secret: 'x' }]);
       // Every message gets a fresh IV.
       await new RedisPubSub({ client: spy.client, encryptionKey: key }).publish('t', {
@@ -550,9 +550,9 @@ describe('RedisPubSub hardening', () => {
       const r = await receiver(fake, { encryptionKey: key });
       const good = spy.sent[0]!;
       const flipped = `${good.slice(0, -2)}${good.at(-2) === 'A' ? 'B' : 'A'}${good.at(-1)}`;
-      fake.inject('hpmws:gql:t', flipped);
-      fake.inject('hpmws:gql:t', spy.sent[1]!);
-      fake.inject('hpmws:gql:t', JSON.stringify(3));
+      fake.inject('knead:gql:t', flipped);
+      fake.inject('knead:gql:t', spy.sent[1]!);
+      fake.inject('knead:gql:t', JSON.stringify(3));
       expect(r.received).toEqual([]);
       expect(r.logger.entries.some((e) => e.message.includes('failed to decrypt'))).toBe(true);
       await r.pubsub.close();
@@ -567,7 +567,7 @@ describe('RedisPubSub hardening', () => {
       );
       const fake = loopback();
       const r = await receiver(fake, { encryptionKey: [key, 'o'.repeat(32)] });
-      for (const message of spy.sent) fake.inject('hpmws:gql:t', message);
+      for (const message of spy.sent) fake.inject('knead:gql:t', message);
       expect(r.received).toEqual([1, 2]);
       const onlyOld = await receiver(loopback(), { encryptionKey: 'o'.repeat(32) });
       expect(onlyOld.received).toEqual([]);
@@ -580,7 +580,7 @@ describe('RedisPubSub hardening', () => {
       await new RedisPubSub({ client: spy.client, encryptionKey: key }).publish('a', 1);
       const fake = loopback();
       const r = await receiver(fake, { encryptionKey: key }, 'b');
-      fake.inject('hpmws:gql:b', spy.sent[0]!);
+      fake.inject('knead:gql:b', spy.sent[0]!);
       expect(r.received).toEqual([]);
       expect(r.logger.entries.some((e) => e.message.includes('failed to decrypt'))).toBe(true);
       await r.pubsub.close();
@@ -603,18 +603,18 @@ describe('RedisPubSub hardening', () => {
       const r = await receiver(fake, { encryptionKey: key, maxSignatureAge: 5000 });
       // Re-dating the envelope breaks the AAD.
       const [, ts, ...rest] = captured.split('.');
-      fake.inject('hpmws:gql:t', ['e2', String(Number(ts) + 1), ...rest].join('.'));
+      fake.inject('knead:gql:t', ['e2', String(Number(ts) + 1), ...rest].join('.'));
       expect(r.received).toEqual([]);
       // Replaying it after maxSignatureAge is refused.
       setSystemTime(new Date(Date.now() + 6000));
       try {
-        fake.inject('hpmws:gql:t', captured);
+        fake.inject('knead:gql:t', captured);
         expect(r.received).toEqual([]);
       } finally {
         setSystemTime();
       }
       // Fresh, it is delivered.
-      fake.inject('hpmws:gql:t', captured);
+      fake.inject('knead:gql:t', captured);
       expect(r.received).toEqual([1]);
       await r.pubsub.close();
     });

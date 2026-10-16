@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from 'bun:test';
-import { ApplicationContext, Module } from '@hpmws/core';
+import { ApplicationContext, Module } from '@knead/core';
 import { HttpConfigError } from '../src/exceptions.js';
 import { LOGGER, MemoryLogger } from '../src/logger.js';
 import { type WsData, WsRegistry, type WsSocket } from '../src/ws.js';

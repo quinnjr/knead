@@ -1,4 +1,4 @@
-import { InjectionToken } from '@hpmws/core';
+import { InjectionToken } from '@knead/core';
 import type { FilterRef, GlobalMiddleware, GuardRef } from './types.js';
 
 /** Multi-provider: global middleware contributed by modules (e.g. CORS). */
@@ -8,7 +8,7 @@ export const APP_GUARD = new InjectionToken<GuardRef[]>('APP_GUARD');
 /** Multi-provider: exception filters applied after route and controller filters. */
 export const APP_FILTER = new InjectionToken<FilterRef[]>('APP_FILTER');
 /**
- * The application's resolved development flag (`HpmwsFactory.create(root, { development })`,
+ * The application's resolved development flag (`KneadFactory.create(root, { development })`,
  * default `NODE_ENV === 'development'`), injectable from any module.
  */
 export const HTTP_DEVELOPMENT = new InjectionToken<boolean>('HTTP_DEVELOPMENT');

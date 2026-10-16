@@ -1,11 +1,11 @@
 {
-  "name": "@hpmws/testing",
+  "name": "@knead/testing",
   "version": "0.0.0",
-  "description": "Testing utilities for hpmws applications",
+  "description": "Testing utilities for Knead applications",
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/quinnjr/high-performance-modular-web-server.git",
+    "url": "git+https://github.com/quinnjr/knead.git",
     "directory": "packages/testing"
   },
   "type": "module",
@@ -27,12 +27,12 @@
     "prepack": "bun ../../scripts/copy-licenses.ts"
   },
   "peerDependencies": {
-    "@hpmws/core": "workspace:^",
-    "@hpmws/http": "workspace:^"
+    "@knead/core": "workspace:^",
+    "@knead/http": "workspace:^"
   },
   "devDependencies": {
-    "@hpmws/core": "workspace:^",
-    "@hpmws/http": "workspace:^"
+    "@knead/core": "workspace:^",
+    "@knead/http": "workspace:^"
   },
   "publishConfig": {
     "access": "public",

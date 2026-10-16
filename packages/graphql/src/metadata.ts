@@ -1,5 +1,5 @@
-import { MetadataKey } from '@hpmws/core';
-import type { GuardRef } from '@hpmws/http';
+import { MetadataKey } from '@knead/core';
+import type { GuardRef } from '@knead/http';
 import type { StandardSchemaV1 } from '@standard-schema/spec';
 import type { GraphQLResolveInfo } from 'graphql';
 import type { Class, Nullable, TypeThunkResult } from './type-refs.js';
@@ -89,9 +89,9 @@ export interface ResolverDefinition {
   type: (() => Class) | undefined;
 }
 
-export const TYPE_DEF = new MetadataKey<TypeDefinition>('hpmws:graphql:type');
-export const FIELDS = new MetadataKey<FieldDefinition[]>('hpmws:graphql:fields');
-export const RESOLVER = new MetadataKey<ResolverDefinition>('hpmws:graphql:resolver');
+export const TYPE_DEF = new MetadataKey<TypeDefinition>('knead:graphql:type');
+export const FIELDS = new MetadataKey<FieldDefinition[]>('knead:graphql:fields');
+export const RESOLVER = new MetadataKey<ResolverDefinition>('knead:graphql:resolver');
 export const RESOLVER_METHODS = new MetadataKey<ResolverMethodDefinition[]>(
-  'hpmws:graphql:resolver-methods',
+  'knead:graphql:resolver-methods',
 );

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { Module } from '@hpmws/core';
-import { APP_GUARD, type Ctx } from '@hpmws/http';
+import { Module } from '@knead/core';
+import { APP_GUARD, type Ctx } from '@knead/http';
 import {
   GraphQLSubscriptions,
   Int,

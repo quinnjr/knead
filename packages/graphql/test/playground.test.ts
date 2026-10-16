@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { MemoryLogger } from '@hpmws/http';
+import { MemoryLogger } from '@knead/http';
 import { renderPlayground } from '@leaven-graphql/playground';
 import {
   PLAYGROUND_ASSETS,

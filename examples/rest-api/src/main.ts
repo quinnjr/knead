@@ -1,8 +1,8 @@
-import { HpmwsFactory } from '@hpmws/http';
+import { KneadFactory } from '@knead/http';
 import { AppModule } from './app.module.js';
 import { listenOptions } from './config.js';
 
-const app = await HpmwsFactory.create(AppModule);
+const app = await KneadFactory.create(AppModule);
 app.enableShutdownHooks();
 await app.listen({
   ...listenOptions(process.env),

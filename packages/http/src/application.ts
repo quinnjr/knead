@@ -4,7 +4,7 @@ import {
   type ModuleImport,
   type Provider,
   type Token,
-} from '@hpmws/core';
+} from '@knead/core';
 import type { Serve, Server, TLSOptions } from 'bun';
 import {
   type CompiledApp,
@@ -94,7 +94,7 @@ export interface ListenOptions {
   shutdownTimeout?: number;
 }
 
-export class HpmwsFactory {
+export class KneadFactory {
   static async create(
     root: ModuleImport,
     options: CreateApplicationOptions = {},

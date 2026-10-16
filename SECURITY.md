@@ -8,10 +8,10 @@ discussion.
 **Once this repository is public**, report vulnerabilities privately through
 GitHub private vulnerability reporting: open the repository's **Security** tab
 and choose **Report a vulnerability**
-(<https://github.com/quinnjr/high-performance-modular-web-server/security/advisories/new>).
+(<https://github.com/quinnjr/knead/security/advisories/new>).
 
 **At any time**, you can email the maintainer at
-<quinn.josephr@protonmail.com> (use the subject "hpmws security report"). While
+<quinn.josephr@protonmail.com> (use the subject "Knead security report"). While
 the repository is private this is the only reporting channel, because GitHub
 private vulnerability reporting is not available and outside reporters cannot
 open issues.
@@ -21,7 +21,7 @@ description of the impact, and steps or a proof of concept to reproduce it.
 
 ## Supported versions
 
-hpmws is released as a fixed set of `@hpmws/*` packages that all share one
+Knead is released as a fixed set of `@knead/*` packages that all share one
 version.
 
 | Version                      | Supported          |
@@ -29,7 +29,7 @@ version.
 | Latest release               | Yes                |
 | Older releases               | No: please upgrade |
 
-While hpmws is below 1.0.0, fixes ship only in a new release of the latest
+While Knead is below 1.0.0, fixes ship only in a new release of the latest
 minor line.
 
 ## What to expect
@@ -42,7 +42,7 @@ minor line.
 
 ## Scope
 
-In scope: the published `@hpmws/*` packages and this repository's release
+In scope: the published `@knead/*` packages and this repository's release
 pipeline. The example applications under `examples/` are demos; issues in them
-are welcome but are not treated as vulnerabilities in hpmws itself unless they
+are welcome but are not treated as vulnerabilities in Knead itself unless they
 show a flaw in a published package.

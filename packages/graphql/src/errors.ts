@@ -1,4 +1,4 @@
-import { HpmwsError } from '@hpmws/core';
+import { KneadError } from '@knead/core';
 import {
   BadRequestException,
   ForbiddenException,
@@ -9,12 +9,12 @@ import {
   NotFoundException,
   TooManyRequestsException,
   UnauthorizedException,
-} from '@hpmws/http';
+} from '@knead/http';
 import { type ErrorCode, isLeavenError, LeavenError } from '@leaven-graphql/errors';
 import { GraphQLError, type GraphQLFormattedError } from 'graphql';
 
 /** Thrown while building the schema at bootstrap; the message names the class and field. */
-export class SchemaBuildError extends HpmwsError {}
+export class SchemaBuildError extends KneadError {}
 
 export interface ArgsValidationIssue {
   arg: string;
@@ -75,7 +75,7 @@ export { LOGGED_MESSAGE_LENGTH };
 
 /**
  * Logs an unexpected error under a new correlation id and returns the id (sent to the client as
- * `extensions.correlationId`), through `@hpmws/http`'s logError(): outside development only its
+ * `extensions.correlationId`), through `@knead/http`'s logError(): outside development only its
  * name and its redacted, truncated message are logged, never the error object (its stack, cause
  * and properties, which may hold data); in development the full error, redacted.
  */

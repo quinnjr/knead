@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { Module } from '@hpmws/core';
-import type { TestApp } from '@hpmws/testing';
+import { Module } from '@knead/core';
+import type { TestApp } from '@knead/testing';
 import type { PubSub } from '@leaven-graphql/ws';
 import { Int, PUBSUB, Query, Resolver, Subscription } from '../src/index.js';
 import { type Started, startGraphQL, until } from './helpers.js';
@@ -188,7 +188,7 @@ describe("Leaven's handler and a deferred revocation in onConnect", () => {
     const handler = new WebSocketHandler({
       schema: buildSchema('type Query { a: Int } type Subscription { t: Int }'),
       keepAliveInterval: 0,
-      // What hpmws's onConnect does when a deferred closeWhere matches.
+      // What Knead's onConnect does when a deferred closeWhere matches.
       onConnect: async (s) => {
         (s as unknown as typeof socket).close(4001);
         return false;

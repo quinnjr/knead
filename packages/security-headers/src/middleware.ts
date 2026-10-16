@@ -1,4 +1,4 @@
-import { InjectionToken, inject } from '@hpmws/core';
+import { InjectionToken, inject } from '@knead/core';
 import {
   type Ctx,
   createRouteDecorator,
@@ -6,7 +6,7 @@ import {
   type Middleware,
   type Next,
   withHeaders,
-} from '@hpmws/http';
+} from '@knead/http';
 import { buildHeaders, generateNonce, nonceTargets } from './csp.js';
 import {
   DEFAULT_OPTIONS,
@@ -18,7 +18,7 @@ import {
 export const SECURITY_HEADERS_OPTIONS = new InjectionToken<SecurityHeadersOptions>(
   'SECURITY_HEADERS_OPTIONS',
 );
-export const SECURITY_HEADERS_META = Symbol('hpmws:security-headers');
+export const SECURITY_HEADERS_META = Symbol('knead:security-headers');
 
 /** The shortest HSTS max-age that does not log a warning: 180 days. */
 export const MIN_RECOMMENDED_HSTS_MAX_AGE = 15_552_000;

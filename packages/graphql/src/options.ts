@@ -1,5 +1,5 @@
-import { InjectionToken } from '@hpmws/core';
-import { type Ctx, type GuardRef, HttpConfigError, type WsMessageRate } from '@hpmws/http';
+import { InjectionToken } from '@knead/core';
+import { type Ctx, type GuardRef, HttpConfigError, type WsMessageRate } from '@knead/http';
 import type {
   CompilerOptions,
   ExecutionHooks,
@@ -177,7 +177,7 @@ export interface ResolvedGraphQLOptions {
   readonly maxAliases: number | false;
   readonly maxFields: number | false;
   readonly maxIntrospectionDepth: number | false;
-  /** Checked by hpmws (introspection fields excluded); Leaven's own maxDepth stays unset. */
+  /** Checked by Knead (introspection fields excluded); Leaven's own maxDepth stays unset. */
   readonly maxDepth: number | false;
   readonly executor: Pick<
     ExecutorConfig,

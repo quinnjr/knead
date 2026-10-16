@@ -1,4 +1,4 @@
-import { ResolveField, Resolver, type ResolverCtx } from '@hpmws/graphql';
+import { ResolveField, Resolver, type ResolverCtx } from '@knead/graphql';
 import { AuthorsById } from './blog.loaders.js';
 import { Author, Comment } from './blog.types.js';
 

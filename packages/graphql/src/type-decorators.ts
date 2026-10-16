@@ -1,4 +1,4 @@
-import { appendMetadata, setMetadata } from '@hpmws/core';
+import { appendMetadata, setMetadata } from '@knead/core';
 import type { GraphQLResolveInfo } from 'graphql';
 import { FIELDS, type FieldOptions, TYPE_DEF, type TypeKind } from './metadata.js';
 import type { Class, OutType, TypeThunkResult } from './type-refs.js';

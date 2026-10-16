@@ -1,4 +1,4 @@
-import { InjectionToken, inject, type OnModuleDestroy } from '@hpmws/core';
+import { InjectionToken, inject, type OnModuleDestroy } from '@knead/core';
 import {
   type Ctx,
   ForbiddenException,
@@ -12,7 +12,7 @@ import {
   ServiceUnavailableException,
   TooManyRequestsException,
   withHeaders,
-} from '@hpmws/http';
+} from '@knead/http';
 import {
   type KeyFn,
   RATE_LIMIT_META,

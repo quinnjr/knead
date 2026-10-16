@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { ApplicationContext, inject, Module } from '@hpmws/core';
+import { ApplicationContext, inject, Module } from '@knead/core';
 import type { RequestContext } from '../src/context.js';
 import { Catch } from '../src/decorators.js';
 import {

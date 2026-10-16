@@ -16,8 +16,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
-export const REPOSITORY_URL =
-  'git+https://github.com/quinnjr/high-performance-modular-web-server.git';
+export const REPOSITORY_URL = 'git+https://github.com/quinnjr/knead.git';
 
 export interface PublishablePackage {
   name: string;

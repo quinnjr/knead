@@ -4,7 +4,7 @@ import {
   HttpConfigError,
   type Logger,
   plaintextRedisHost,
-} from '@hpmws/http';
+} from '@knead/http';
 import { RedisClient } from 'bun';
 import { hashKey, hashSecretBytes } from './keys.js';
 
@@ -99,7 +99,7 @@ export interface RedisStoreOptions {
   client?: RedisClient;
   /** Connection URL when no client is given (default: Bun's REDIS_URL / localhost). */
   url?: string;
-  /** Key prefix. Default 'hpmws:rl:'. */
+  /** Key prefix. Default 'knead:rl:'. */
   prefix?: string;
   /**
    * Store hashes (32 hex characters) instead of raw keys, so client IPs or API keys are not
@@ -153,7 +153,7 @@ export class RedisStore implements RateLimitStore {
       throw new RangeError(`commandTimeout must be an integer >= 1 (ms), got ${String(timeout)}.`);
     }
     this.#commandTimeout = timeout;
-    this.#logger = options.logger ?? new ConsoleLogger('hpmws:rate-limit');
+    this.#logger = options.logger ?? new ConsoleLogger('knead:rate-limit');
     const remote = plaintextRedisHost(
       options.client === undefined ? (options.url ?? defaultRedisUrl()) : undefined,
     );
@@ -177,7 +177,7 @@ export class RedisStore implements RateLimitStore {
     }
     this.#owned = options.client === undefined;
     this.#client = options.client ?? new RedisClient(options.url);
-    this.#prefix = options.prefix ?? 'hpmws:rl:';
+    this.#prefix = options.prefix ?? 'knead:rl:';
   }
 
   async consume(key: string, rule: RateLimitRule): Promise<ConsumeResult> {

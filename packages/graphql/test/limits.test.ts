@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { Module } from '@hpmws/core';
-import { HttpConfigError } from '@hpmws/http';
+import { Module } from '@knead/core';
+import { HttpConfigError } from '@knead/http';
 import { getIntrospectionQuery } from 'graphql';
 import {
   Field,
@@ -56,7 +56,7 @@ const aliases = (count: number) =>
 describe('safe default limits', () => {
   test('resolveOptions applies the defaults', () => {
     const o = resolveOptions({}, '/graphql');
-    // hpmws checks depth itself (introspection excluded), so Leaven gets no maxDepth.
+    // Knead checks depth itself (introspection excluded), so Leaven gets no maxDepth.
     expect(o.maxDepth).toBe(10);
     expect(o.executor.maxDepth).toBeUndefined();
     expect(o.executor.maxComplexity).toBe(1000);

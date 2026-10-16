@@ -36,7 +36,7 @@ const stepEnv = Object.fromEntries(
 );
 
 const REGISTRY_FLAGS =
-  '--registry=https://registry.npmjs.org/ --@hpmws:registry=https://registry.npmjs.org/ --loglevel=notice';
+  '--registry=https://registry.npmjs.org/ --@knead:registry=https://registry.npmjs.org/ --loglevel=notice';
 
 // view <name> name: prints the name unless it is in FAKE_MISSING (E404) or FAKE_PREFLIGHT_ERROR is set.
 // view <name>@<version> version: prints the version for specs in FAKE_EXISTING.
@@ -261,7 +261,7 @@ function publish(
   packages: (FakePackage | [string, string])[],
   opts: PublishOptions = {},
 ) {
-  const tmp = mkdtempSync(join(tmpdir(), 'hpmws-publish-test-'));
+  const tmp = mkdtempSync(join(tmpdir(), 'knead-publish-test-'));
   dirs.push(tmp);
   const bin = join(tmp, 'bin');
   const tarballs = join(tmp, 'npm-tarballs');
@@ -349,13 +349,13 @@ function expectRejected(r: ReturnType<typeof publish>, message: string) {
 describe('release.yml publish step', () => {
   test('exists and declares the package allowlist', () => {
     expect(typeof publishStep).toBe('string');
-    expect(stepEnv.ALLOWED_PACKAGES).toContain('@hpmws/core');
+    expect(stepEnv.ALLOWED_PACKAGES).toContain('@knead/core');
   });
 
   test('publishes stable versions to latest without running scripts, against npmjs.org', () => {
-    const r = publish('v1.2.3', [['@hpmws/core', '1.2.3']]);
+    const r = publish('v1.2.3', [['@knead/core', '1.2.3']]);
     expect(r.exitCode).toBe(0);
-    expect(r.publishes).toEqual([publishCmd('hpmws-core-1.2.3.tgz', 'latest')]);
+    expect(r.publishes).toEqual([publishCmd('knead-core-1.2.3.tgz', 'latest')]);
     // Every npm call names the registry explicitly.
     expect(r.calls.length).toBeGreaterThan(1);
     for (const c of r.calls.filter((c) => c !== 'npm root -g'))
@@ -377,9 +377,9 @@ describe('release.yml publish step', () => {
     ['1.0.0-xyz.1', 'xyz'],
     ['1.0.0-vnext.1', 'vnext'],
   ])('prerelease %s publishes to dist-tag %s', (version, distTag) => {
-    const r = publish(`v${version}`, [['@hpmws/core', version]]);
+    const r = publish(`v${version}`, [['@knead/core', version]]);
     expect(r.exitCode).toBe(0);
-    expect(r.publishes).toEqual([publishCmd(`hpmws-core-${version}.tgz`, distTag)]);
+    expect(r.publishes).toEqual([publishCmd(`knead-core-${version}.tgz`, distTag)]);
   });
 
   describe('stable dist-tag', () => {
@@ -398,22 +398,22 @@ describe('release.yml publish step', () => {
       ['1.2.3', '1.2.3', 'v1.2-latest'],
       ['1.2.3', '1.2.4-rc.1', 'v1.2-latest'],
     ])('%s with latest at %s publishes to %s', (version, current, distTag) => {
-      const r = publish(`v${version}`, [['@hpmws/core', version]], {
-        env: { FAKE_LATEST: `@hpmws/core=${current}` },
+      const r = publish(`v${version}`, [['@knead/core', version]], {
+        env: { FAKE_LATEST: `@knead/core=${current}` },
       });
       expect(r.exitCode).toBe(0);
-      expect(r.publishes).toEqual([publishCmd(`hpmws-core-${version}.tgz`, distTag)]);
+      expect(r.publishes).toEqual([publishCmd(`knead-core-${version}.tgz`, distTag)]);
     });
 
     test('a package without a latest dist-tag takes latest', () => {
-      const r = publish('v0.1.0', [['@hpmws/core', '0.1.0']]);
+      const r = publish('v0.1.0', [['@knead/core', '0.1.0']]);
       expect(r.exitCode).toBe(0);
-      expect(r.publishes).toEqual([publishCmd('hpmws-core-0.1.0.tgz', 'latest')]);
+      expect(r.publishes).toEqual([publishCmd('knead-core-0.1.0.tgz', 'latest')]);
     });
 
     test('a garbled latest dist-tag stops the release', () => {
-      const r = publish('v1.2.3', [['@hpmws/core', '1.2.3']], {
-        env: { FAKE_LATEST: '@hpmws/core=not-a-version' },
+      const r = publish('v1.2.3', [['@knead/core', '1.2.3']], {
+        env: { FAKE_LATEST: '@knead/core=not-a-version' },
       });
       expectRejected(r, 'unexpected latest dist-tag');
     });
@@ -423,26 +423,26 @@ describe('release.yml publish step', () => {
     const r = publish(
       'v1.2.3',
       [
-        ['@hpmws/core', '1.2.3'],
-        ['@hpmws/http', '1.2.3'],
+        ['@knead/core', '1.2.3'],
+        ['@knead/http', '1.2.3'],
       ],
-      { env: { FAKE_EXISTING: '@hpmws/core@1.2.3' } },
+      { env: { FAKE_EXISTING: '@knead/core@1.2.3' } },
     );
     expect(r.exitCode).toBe(0);
-    expect(r.output).toContain('skip @hpmws/core@1.2.3');
-    expect(r.publishes).toEqual([publishCmd('hpmws-http-1.2.3.tgz', 'latest')]);
+    expect(r.output).toContain('skip @knead/core@1.2.3');
+    expect(r.publishes).toEqual([publishCmd('knead-http-1.2.3.tgz', 'latest')]);
   });
 
   test('publishes nothing when any tarball does not match the tag', () => {
     const r = publish('v1.2.3', [
-      ['@hpmws/core', '1.2.3'],
-      ['@hpmws/http', '1.2.2'],
+      ['@knead/core', '1.2.3'],
+      ['@knead/http', '1.2.2'],
     ]);
     expectRejected(r, 'is at 1.2.2');
   });
 
   test('stops when npm cannot be queried', () => {
-    const r = publish('v1.2.3', [['@hpmws/core', '1.2.3']], {
+    const r = publish('v1.2.3', [['@knead/core', '1.2.3']], {
       env: { FAKE_VIEW_ERROR: 'ETIMEDOUT' },
     });
     expectRejected(r, 'could not query npm');
@@ -450,7 +450,7 @@ describe('release.yml publish step', () => {
 
   describe('artifact directory and npm working directory', () => {
     test.each([
-      ['.npmrc', '@hpmws:registry=https://evil.example/\n'],
+      ['.npmrc', '@knead:registry=https://evil.example/\n'],
       ['notes.txt', 'x'],
       ['.hidden.tgz', 'x'],
     ])('rejects a planted %p', (name, contents) => {
@@ -468,7 +468,7 @@ describe('release.yml publish step', () => {
       expect(published).toHaveLength(8);
       for (const c of published) expect(c.split(' ')[2].startsWith(`${r.tarballs}/`)).toBe(true);
       for (const c of r.rawCalls.filter((c) => c !== 'npm root -g'))
-        expect(c).toContain('--@hpmws:registry=https://registry.npmjs.org/');
+        expect(c).toContain('--@knead:registry=https://registry.npmjs.org/');
     });
   });
 
@@ -485,14 +485,14 @@ describe('release.yml publish step', () => {
     });
 
     test('publishes nothing when a package does not exist on npm yet', () => {
-      const r = publish('v1.2.3', [], { env: { FAKE_MISSING: '@hpmws/testing' } });
-      expectRejected(r, '@hpmws/testing is not on npm yet');
+      const r = publish('v1.2.3', [], { env: { FAKE_MISSING: '@knead/testing' } });
+      expectRejected(r, '@knead/testing is not on npm yet');
       expect(r.output).toContain('trust:npm');
     });
 
     test('publishes nothing when the preflight query fails', () => {
       const r = publish('v1.2.3', [], { env: { FAKE_PREFLIGHT_ERROR: 'ETIMEDOUT' } });
-      expectRejected(r, 'could not query npm for @hpmws/core');
+      expectRejected(r, 'could not query npm for @knead/core');
     });
   });
 
@@ -505,14 +505,14 @@ describe('release.yml publish step', () => {
     });
 
     test('publishes nothing when a package is missing from the artifact', () => {
-      const r = publish('v1.2.3', [['@hpmws/core', '1.2.3']], { partial: true });
-      expectRejected(r, 'missing from the artifact: @hpmws/cors');
+      const r = publish('v1.2.3', [['@knead/core', '1.2.3']], { partial: true });
+      expectRejected(r, 'missing from the artifact: @knead/cors');
     });
 
     test('publishes nothing when a package appears twice', () => {
       const r = publish('v1.2.3', [
-        ['@hpmws/core', '1.2.3'],
-        { name: '@hpmws/core', version: '1.2.3', file: 'hpmws-core-1.2.3-copy.tgz' },
+        ['@knead/core', '1.2.3'],
+        { name: '@knead/core', version: '1.2.3', file: 'knead-core-1.2.3-copy.tgz' },
       ]);
       expect(r.exitCode).not.toBe(0);
       expect(r.allPublishes).toEqual([]);
@@ -520,11 +520,11 @@ describe('release.yml publish step', () => {
   });
 
   describe('package allowlist', () => {
-    test.each(['evil', '@hpmws/evil', '@hpmws/core-evil', '@hpmws/cor', '@HPMWS/core'])(
+    test.each(['evil', '@knead/evil', '@knead/core-evil', '@knead/cor', '@KNEAD/core'])(
       'publishes nothing for %p',
       (name) => {
         const r = publish('v1.2.3', [
-          ['@hpmws/core', '1.2.3'],
+          ['@knead/core', '1.2.3'],
           { name, version: '1.2.3', file: 'zz-evil-1.2.3.tgz' },
         ]);
         expectRejected(r, `unexpected package ${name}`);
@@ -533,32 +533,32 @@ describe('release.yml publish step', () => {
 
     test('publishes nothing when the tarball name does not match its manifest', () => {
       const r = publish('v1.2.3', [
-        { name: '@hpmws/http', version: '1.2.3', file: 'hpmws-core-1.2.3.tgz' },
+        { name: '@knead/http', version: '1.2.3', file: 'knead-core-1.2.3.tgz' },
       ]);
-      expectRejected(r, 'expected file hpmws-http-1.2.3.tgz');
+      expectRejected(r, 'expected file knead-http-1.2.3.tgz');
     });
   });
 
   describe('SHA256SUMS', () => {
     test('is required', () => {
       expectRejected(
-        publish('v1.2.3', [['@hpmws/core', '1.2.3']], { noSums: true, sumsDigest: 'a'.repeat(64) }),
+        publish('v1.2.3', [['@knead/core', '1.2.3']], { noSums: true, sumsDigest: 'a'.repeat(64) }),
         'SHA256SUMS is missing',
       );
     });
 
     test('must match the digest reported by the build job', () => {
-      const r = publish('v1.2.3', [['@hpmws/core', '1.2.3']], { sumsDigest: '0'.repeat(64) });
+      const r = publish('v1.2.3', [['@knead/core', '1.2.3']], { sumsDigest: '0'.repeat(64) });
       expectRejected(r, 'does not match the digest');
     });
 
     test('a missing build-job digest stops the release', () => {
-      const r = publish('v1.2.3', [['@hpmws/core', '1.2.3']], { sumsDigest: '' });
+      const r = publish('v1.2.3', [['@knead/core', '1.2.3']], { sumsDigest: '' });
       expectRejected(r, 'no SHA256SUMS digest');
     });
 
     test('rejects SHA256SUMS edited after the build job reported its digest', () => {
-      const r = publish('v1.2.3', [['@hpmws/core', '1.2.3']], {
+      const r = publish('v1.2.3', [['@knead/core', '1.2.3']], {
         tamperSums: (s) => `${'f'.repeat(64)}${s.slice(64)}`,
       });
       expectRejected(r, 'does not match the digest');
@@ -567,22 +567,22 @@ describe('release.yml publish step', () => {
     test('rejects a tarball whose checksum does not match even when the digest is consistent', () => {
       const r = publishWithConsistentDigest(
         'v1.2.3',
-        [['@hpmws/core', '1.2.3']],
+        [['@knead/core', '1.2.3']],
         (s) => `${'f'.repeat(64)}${s.slice(64)}`,
       );
       expectRejected(r, 'does not match SHA256SUMS');
     });
 
     test('rejects a malformed line', () => {
-      const r = publishWithConsistentDigest('v1.2.3', [['@hpmws/core', '1.2.3']], (s) =>
-        s.replace('  hpmws-core', '  ../hpmws-core'),
+      const r = publishWithConsistentDigest('v1.2.3', [['@knead/core', '1.2.3']], (s) =>
+        s.replace('  knead-core', '  ../knead-core'),
       );
       expectRejected(r, 'malformed line');
     });
 
     test('rejects a tarball that SHA256SUMS does not list', () => {
-      const r = publish('v1.2.3', [['@hpmws/core', '1.2.3']], {
-        unlisted: [{ name: '@hpmws/http', version: '1.2.3' }],
+      const r = publish('v1.2.3', [['@knead/core', '1.2.3']], {
+        unlisted: [{ name: '@knead/http', version: '1.2.3' }],
       });
       expectRejected(r, 'differ from those listed');
     });
@@ -590,14 +590,14 @@ describe('release.yml publish step', () => {
     test('rejects a listed tarball that is missing', () => {
       const r = publishWithConsistentDigest(
         'v1.2.3',
-        [['@hpmws/core', '1.2.3']],
-        (s) => `${s}${'a'.repeat(64)}  hpmws-http-1.2.3.tgz\n`,
+        [['@knead/core', '1.2.3']],
+        (s) => `${s}${'a'.repeat(64)}  knead-http-1.2.3.tgz\n`,
       );
       expectRejected(r, 'differ from those listed');
     });
 
     test('rejects a duplicated line', () => {
-      const r = publishWithConsistentDigest('v1.2.3', [['@hpmws/core', '1.2.3']], (s) => s + s);
+      const r = publishWithConsistentDigest('v1.2.3', [['@knead/core', '1.2.3']], (s) => s + s);
       expectRejected(r, 'differ from those listed');
     });
   });
@@ -606,7 +606,7 @@ describe('release.yml publish step', () => {
     test('accepts the files a package ships, including LICENSE files and nested dist', () => {
       const r = publish('v1.2.3', [
         {
-          name: '@hpmws/core',
+          name: '@knead/core',
           version: '1.2.3',
           files: ['package/LICENSE-MIT', 'package/LICENSE-APACHE', 'package/dist/sub/a.d.ts'],
         },
@@ -618,10 +618,10 @@ describe('release.yml publish step', () => {
     test('rejects a second package/package.json', () => {
       const r = publish('v1.2.3', [
         {
-          name: '@hpmws/core',
+          name: '@knead/core',
           version: '1.2.3',
           duplicateManifest: {
-            name: '@hpmws/core',
+            name: '@knead/core',
             version: '1.2.3',
             scripts: { postinstall: 'x' },
           },
@@ -638,13 +638,13 @@ describe('release.yml publish step', () => {
       'package/README.md.bak',
       'other/package.json',
     ])('rejects unexpected entry %p', (entry) => {
-      const r = publish('v1.2.3', [{ name: '@hpmws/core', version: '1.2.3', files: [entry] }]);
+      const r = publish('v1.2.3', [{ name: '@knead/core', version: '1.2.3', files: [entry] }]);
       expectRejected(r, `unexpected entries: - ${entry}`);
     });
 
     test('rejects a symlink, even inside dist', () => {
       const r = publish('v1.2.3', [
-        { name: '@hpmws/core', version: '1.2.3', symlinks: [['package/dist/x.js', '/etc/passwd']] },
+        { name: '@knead/core', version: '1.2.3', symlinks: [['package/dist/x.js', '/etc/passwd']] },
       ]);
       expectRejected(r, 'unexpected entries: l package/dist/x.js');
     });
@@ -652,9 +652,9 @@ describe('release.yml publish step', () => {
 
   describe('GNU tar and npm must read the tarball the same way', () => {
     test('the sparse-name PoC really differs between GNU tar and node-tar', () => {
-      const tmp = mkdtempSync(join(tmpdir(), 'hpmws-poc-'));
+      const tmp = mkdtempSync(join(tmpdir(), 'knead-poc-'));
       dirs.push(tmp);
-      writeFileSync(join(tmp, 'poc.tar'), sparseNameSwap('@hpmws/core', '1.2.3'));
+      writeFileSync(join(tmp, 'poc.tar'), sparseNameSwap('@knead/core', '1.2.3'));
       const gnu = JSON.parse(sh(['tar', '-xOf', 'poc.tar', 'package/package.json'], tmp));
       expect(gnu.scripts).toBeUndefined();
       const npmRoot = sh([REAL_NPM as string, 'root', '-g']).trim();
@@ -670,7 +670,7 @@ describe('release.yml publish step', () => {
 
     test('rejects the GNU.sparse.name PoC', () => {
       const r = publish('v1.2.3', [
-        { name: '@hpmws/core', version: '1.2.3', raw: sparseNameSwap('@hpmws/core', '1.2.3') },
+        { name: '@knead/core', version: '1.2.3', raw: sparseNameSwap('@knead/core', '1.2.3') },
       ]);
       expectRejected(r, 'GNU sparse');
     });
@@ -679,13 +679,13 @@ describe('release.yml publish step', () => {
       const raw = rawTar([
         {
           name: 'package/dist/x.js',
-          data: '{"name":"@hpmws/core","version":"1.2.3","description":"test"}',
+          data: '{"name":"@knead/core","version":"1.2.3","description":"test"}',
           pax: { path: 'package/package.json' },
         },
         { name: 'package/README.md', data: '# readme' },
       ]);
       expectRejected(
-        publish('v1.2.3', [{ name: '@hpmws/core', version: '1.2.3', raw }]),
+        publish('v1.2.3', [{ name: '@knead/core', version: '1.2.3', raw }]),
         'PAX path',
       );
     });
@@ -699,22 +699,22 @@ describe('release.yml publish step', () => {
       const raw = rawTar([
         {
           name: 'package/package.json',
-          data: '{"name":"@hpmws/core","version":"1.2.3","description":"test"}',
+          data: '{"name":"@knead/core","version":"1.2.3","description":"test"}',
           pax,
         },
       ]);
-      expectRejected(publish('v1.2.3', [{ name: '@hpmws/core', version: '1.2.3', raw }]), message);
+      expectRejected(publish('v1.2.3', [{ name: '@knead/core', version: '1.2.3', raw }]), message);
     });
 
     test.each(['S', 'g', 'L', 'K', '1', '2'])('rejects entry type %p', (type) => {
       const raw = rawTar([
         {
           name: 'package/package.json',
-          data: '{"name":"@hpmws/core","version":"1.2.3","description":"test"}',
+          data: '{"name":"@knead/core","version":"1.2.3","description":"test"}',
         },
         { name: 'package/dist/x.js', data: 'x', type },
       ]);
-      const r = publish('v1.2.3', [{ name: '@hpmws/core', version: '1.2.3', raw }]);
+      const r = publish('v1.2.3', [{ name: '@knead/core', version: '1.2.3', raw }]);
       expect(r.exitCode).not.toBe(0);
       expect(r.allPublishes).toEqual([]);
     });
@@ -727,13 +727,13 @@ describe('release.yml publish step', () => {
         [
           {
             name: 'package/package.json',
-            data: '{"name":"@hpmws/core","version":"1.2.3","description":"test"}',
+            data: '{"name":"@knead/core","version":"1.2.3","description":"test"}',
           },
         ],
         trailer,
       );
       expectRejected(
-        publish('v1.2.3', [{ name: '@hpmws/core', version: '1.2.3', raw }]),
+        publish('v1.2.3', [{ name: '@knead/core', version: '1.2.3', raw }]),
         'after the end-of-archive',
       );
     });
@@ -742,11 +742,11 @@ describe('release.yml publish step', () => {
       const raw = rawTar([
         {
           name: 'package/package.json',
-          data: '{"name":"@hpmws/core","version":"1.2.3","description":"test"}',
+          data: '{"name":"@knead/core","version":"1.2.3","description":"test"}',
         },
         { name: 'package/dist/index.js', data: 'export {};' },
       ]);
-      const r = publish('v1.2.3', [{ name: '@hpmws/core', version: '1.2.3', raw }]);
+      const r = publish('v1.2.3', [{ name: '@knead/core', version: '1.2.3', raw }]);
       expect(r.exitCode).toBe(0);
       expect(r.publishes).toHaveLength(1);
     });
@@ -756,29 +756,29 @@ describe('release.yml publish step', () => {
     test('rejects a tarball over 10 MiB before reading it', () => {
       const r = publish('v1.2.3', [
         {
-          name: '@hpmws/core',
+          name: '@knead/core',
           version: '1.2.3',
           blobs: [['package/dist/big.js', randomBytes(11 * 1024 * 1024)]],
         },
       ]);
-      expectRejected(r, 'hpmws-core-1.2.3.tgz is larger than 10 MiB');
+      expectRejected(r, 'knead-core-1.2.3.tgz is larger than 10 MiB');
     });
 
     test('rejects a gzip bomb', () => {
       const r = publish('v1.2.3', [
         {
-          name: '@hpmws/core',
+          name: '@knead/core',
           version: '1.2.3',
           blobs: [['package/dist/zeros.js', Buffer.alloc(80 * 1024 * 1024)]],
         },
       ]);
-      expectRejected(r, 'hpmws-core-1.2.3.tgz unpacks to more than 64 MiB');
+      expectRejected(r, 'knead-core-1.2.3.tgz unpacks to more than 64 MiB');
     });
 
     test('rejects a package.json over 1 MiB', () => {
       const r = publish('v1.2.3', [
         {
-          name: '@hpmws/core',
+          name: '@knead/core',
           version: '1.2.3',
           manifest: { description: 'x'.repeat(1024 * 1024) },
         },
@@ -791,11 +791,11 @@ describe('release.yml publish step', () => {
     test('accepts the dependencies a package is allowed', () => {
       const r = publish('v1.2.3', [
         {
-          name: '@hpmws/graphql',
+          name: '@knead/graphql',
           version: '1.2.3',
           manifest: {
             dependencies: { dataloader: '2.2.3', '@leaven-graphql/core': '0.2.2' },
-            peerDependencies: { graphql: '^16', '@hpmws/core': '1.2.3', '@hpmws/http': '1.2.3' },
+            peerDependencies: { graphql: '^16', '@knead/core': '1.2.3', '@knead/http': '1.2.3' },
           },
         },
       ]);
@@ -807,14 +807,14 @@ describe('release.yml publish step', () => {
       ['dependencies', { 'left-pad': '1.0.0' }, 'left-pad'],
       ['optionalDependencies', { 'left-pad': '1.0.0' }, 'left-pad'],
       ['peerDependencies', { 'left-pad': '1.0.0' }, 'left-pad'],
-      // Allowed for @hpmws/graphql, not for @hpmws/core.
+      // Allowed for @knead/graphql, not for @knead/core.
       ['dependencies', { dataloader: '2.2.3' }, 'dataloader'],
       ['peerDependencies', { graphql: '^16' }, 'graphql'],
-    ])('rejects %s %j on @hpmws/core', (field, deps, dep) => {
+    ])('rejects %s %j on @knead/core', (field, deps, dep) => {
       const r = publish('v1.2.3', [
-        { name: '@hpmws/core', version: '1.2.3', manifest: { [field]: deps } },
+        { name: '@knead/core', version: '1.2.3', manifest: { [field]: deps } },
       ]);
-      expectRejected(r, `@hpmws/core: dependency ${dep} is not allowed`);
+      expectRejected(r, `@knead/core: dependency ${dep} is not allowed`);
     });
   });
 
@@ -824,19 +824,19 @@ describe('release.yml publish step', () => {
       [{ author: 'A <a@example.com>' }],
       [{ keywords: 'a,b' }],
     ])('rejects %j, which npm publish would rewrite', (manifest) => {
-      const r = publish('v1.2.3', [{ name: '@hpmws/core', version: '1.2.3', manifest }]);
+      const r = publish('v1.2.3', [{ name: '@knead/core', version: '1.2.3', manifest }]);
       expectRejected(r, 'npm reads a different package.json');
     });
 
     test('ignores the readme, bugs and homepage fields pacote derives', () => {
       const r = publish('v1.2.3', [
         {
-          name: '@hpmws/core',
+          name: '@knead/core',
           version: '1.2.3',
           manifest: {
             repository: {
               type: 'git',
-              url: 'git+https://github.com/quinnjr/high-performance-modular-web-server.git',
+              url: 'git+https://github.com/quinnjr/knead.git',
               directory: 'packages/core',
             },
           },
@@ -856,7 +856,7 @@ describe('release.yml publish step', () => {
       [{ man: './dist/x.1' }, 'npm reads a different package.json'],
       [{ directories: { bin: 'dist' } }, 'npm reads a different package.json'],
     ])('rejects %j', (manifest, message) => {
-      const r = publish('v1.2.3', [{ name: '@hpmws/core', version: '1.2.3', manifest }]);
+      const r = publish('v1.2.3', [{ name: '@knead/core', version: '1.2.3', manifest }]);
       expectRejected(r, message);
     });
   });
@@ -868,7 +868,7 @@ describe('release.yml publish step', () => {
         'publishConfig may only set access',
       ],
       [
-        { publishConfig: { '@hpmws:registry': 'https://evil.example/' } },
+        { publishConfig: { '@knead:registry': 'https://evil.example/' } },
         'publishConfig may only set access',
       ],
       [{ publishConfig: 'x' }, 'publishConfig may only set access'],
@@ -886,7 +886,7 @@ describe('release.yml publish step', () => {
       [{ name: 42 }, 'pacote cannot read it'],
     ])('rejects %j', (manifest, message) => {
       const r = publish('v1.2.3', [
-        { name: '@hpmws/core', version: '1.2.3', manifest: manifest as Record<string, unknown> },
+        { name: '@knead/core', version: '1.2.3', manifest: manifest as Record<string, unknown> },
       ]);
       expectRejected(r, message);
     });
@@ -894,7 +894,7 @@ describe('release.yml publish step', () => {
     test('accepts publishConfig.access and ordinary scripts', () => {
       const r = publish('v1.2.3', [
         {
-          name: '@hpmws/core',
+          name: '@knead/core',
           version: '1.2.3',
           manifest: { publishConfig: { access: 'public' }, scripts: { test: 'bun test' } },
         },

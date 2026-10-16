@@ -1,8 +1,8 @@
-// Unit tests for hpmws's own WebSocket defences. Leaven's handler is replaced by a stub, so each
+// Unit tests for Knead's own WebSocket defences. Leaven's handler is replaced by a stub, so each
 // defence is exercised without Leaven's overlapping protections (each test fails when the
 // defence it names is removed).
 import { describe, expect, test } from 'bun:test';
-import { MemoryLogger, type WsSocket } from '@hpmws/http';
+import { MemoryLogger, type WsSocket } from '@knead/http';
 import type { WebSocketHandlerConfig } from '@leaven-graphql/ws';
 import { OperationContext } from '../src/context.js';
 import type { GraphQLRuntime } from '../src/runtime.js';
@@ -200,7 +200,7 @@ describe('createSubscriptionEndpoint defences (Leaven stubbed)', () => {
     const iterator = fakeIterator();
     t.results[0]!.resolve(iterator);
     await pending;
-    // The stub handler does nothing on complete, so only hpmws's own discard can return it.
+    // The stub handler does nothing on complete, so only Knead's own discard can return it.
     await t.send({ id: '1', type: 'complete' });
     expect(iterator.returned).toBe(1);
     expect(t.endpoint.stats(t.ws)).toEqual({ pending: 0, iterators: 0 });

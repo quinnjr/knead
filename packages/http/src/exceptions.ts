@@ -1,4 +1,4 @@
-import { HpmwsError } from '@hpmws/core';
+import { KneadError } from '@knead/core';
 
 export const STATUS_TITLES: Readonly<Record<number, string>> = {
   400: 'Bad Request',
@@ -129,7 +129,7 @@ export class ServiceUnavailableException extends HttpException {
 }
 
 /** Configuration errors detected while compiling or starting the application. */
-export class HttpConfigError extends HpmwsError {}
+export class HttpConfigError extends KneadError {}
 
 export function problemResponse(problem: ProblemDetails, headers?: Bun.HeadersInit): Response {
   const h = new Headers(headers);

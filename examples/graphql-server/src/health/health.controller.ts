@@ -1,5 +1,5 @@
-import { Controller, Get } from '@hpmws/http';
-import { SkipRateLimit } from '@hpmws/rate-limit';
+import { Controller, Get } from '@knead/http';
+import { SkipRateLimit } from '@knead/rate-limit';
 
 /**
  * A plain REST route next to the GraphQL endpoint. Not rate limited, for health checks. It

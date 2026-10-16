@@ -1,9 +1,9 @@
-import type { ModuleImport } from '@hpmws/core';
+import type { ModuleImport } from '@knead/core';
 import type { Server } from 'bun';
 import {
   type CreateApplicationOptions,
-  HpmwsFactory,
   type HttpApplication,
+  KneadFactory,
   type ListenOptions,
 } from '../src/application.js';
 import { type NetConfig, RequestContext } from '../src/context.js';
@@ -31,7 +31,7 @@ export async function start(
   listen: ListenOptions = {},
   create: CreateApplicationOptions = {},
 ): Promise<HttpApplication> {
-  const app = await HpmwsFactory.create(root, {
+  const app = await KneadFactory.create(root, {
     logger: new MemoryLogger(),
     development: false,
     ...create,

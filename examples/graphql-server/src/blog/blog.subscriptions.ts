@@ -1,6 +1,6 @@
-import { inject } from '@hpmws/core';
-import { ID, Resolver, type ResolverCtx, Subscription } from '@hpmws/graphql';
-import { type Guard, UseGuards } from '@hpmws/http';
+import { inject } from '@knead/core';
+import { ID, Resolver, type ResolverCtx, Subscription } from '@knead/graphql';
+import { type Guard, UseGuards } from '@knead/http';
 import { BlogService } from './blog.service.js';
 import {
   Comment,

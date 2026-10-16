@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { createConnection } from 'node:net';
-import { Module } from '@hpmws/core';
-import { HpmwsFactory, type HttpApplication, type ListenOptions } from '../src/application.js';
+import { Module } from '@knead/core';
+import { type HttpApplication, KneadFactory, type ListenOptions } from '../src/application.js';
 import { Controller, Get } from '../src/decorators.js';
 import { HttpConfigError } from '../src/exceptions.js';
 import { MemoryLogger } from '../src/logger.js';
@@ -54,7 +54,7 @@ afterEach(async () => {
 });
 
 async function serve(development: boolean, listen: ListenOptions = {}): Promise<number> {
-  app = await HpmwsFactory.create(M, { logger: new MemoryLogger(), development });
+  app = await KneadFactory.create(M, { logger: new MemoryLogger(), development });
   app.get(WsRegistry).register('/live', { upgrade: () => ({}) });
   await app.listen({ port: 0, hostname: '127.0.0.1', ...listen });
   return Number(app.url.port);

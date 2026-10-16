@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { CorsModule } from '@hpmws/cors';
-import { Controller, type Ctx, Get } from '@hpmws/http';
-import { RateLimitModule } from '@hpmws/rate-limit';
-import { Test, type TestingModule } from '@hpmws/testing';
+import { CorsModule } from '@knead/cors';
+import { Controller, type Ctx, Get } from '@knead/http';
+import { RateLimitModule } from '@knead/rate-limit';
+import { Test, type TestingModule } from '@knead/testing';
 import {
   SecurityHeaders,
   SecurityHeadersModule,

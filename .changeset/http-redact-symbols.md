@@ -1,5 +1,5 @@
 ---
-"@hpmws/http": patch
+"@knead/http": patch
 ---
 
 `redactValue` also walks own enumerable Symbol keys.

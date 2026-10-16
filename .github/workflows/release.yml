@@ -164,7 +164,7 @@ jobs:
           fi
       # npm trusted publishing (OIDC): no NPM_TOKEN. npm exchanges this job's GitHub OIDC token
       # (`id-token: write`) for a short-lived publish token per package, matched against the
-      # trusted publisher configured on npmjs.com (repo quinnjr/high-performance-modular-web-server,
+      # trusted publisher configured on npmjs.com (repo quinnjr/knead,
       # workflow release.yml). Provenance is attached automatically only while the repo is public.
       #
       # Every tarball is verified before any is published: SHA256SUMS must match the digest the
@@ -181,25 +181,25 @@ jobs:
           SUMS_SHA256: ${{ needs.build.outputs.sums-sha256 }}
           # Exactly the publishable workspace packages (scripts/release.test.ts checks this).
           ALLOWED_PACKAGES: >-
-            @hpmws/core
-            @hpmws/cors
-            @hpmws/graphql
-            @hpmws/http
-            @hpmws/rate-limit
-            @hpmws/sanitize
-            @hpmws/security-headers
-            @hpmws/testing
+            @knead/core
+            @knead/cors
+            @knead/graphql
+            @knead/http
+            @knead/rate-limit
+            @knead/sanitize
+            @knead/security-headers
+            @knead/testing
           # Per package, the only names allowed in dependencies, optionalDependencies and
           # peerDependencies (scripts/release.test.ts keeps this equal to the workspace manifests).
           ALLOWED_DEPENDENCIES: |
-            @hpmws/core:
-            @hpmws/cors: @hpmws/core @hpmws/http
-            @hpmws/graphql: @hpmws/core @hpmws/http @leaven-graphql/core @leaven-graphql/errors @leaven-graphql/playground @leaven-graphql/ws @standard-schema/spec dataloader graphql
-            @hpmws/http: @hpmws/core @standard-schema/spec
-            @hpmws/rate-limit: @hpmws/core @hpmws/http
-            @hpmws/sanitize: @standard-schema/spec sanitize-html
-            @hpmws/security-headers: @hpmws/core @hpmws/http
-            @hpmws/testing: @hpmws/core @hpmws/http
+            @knead/core:
+            @knead/cors: @knead/core @knead/http
+            @knead/graphql: @knead/core @knead/http @leaven-graphql/core @leaven-graphql/errors @leaven-graphql/playground @leaven-graphql/ws @standard-schema/spec dataloader graphql
+            @knead/http: @knead/core @standard-schema/spec
+            @knead/rate-limit: @knead/core @knead/http
+            @knead/sanitize: @standard-schema/spec sanitize-html
+            @knead/security-headers: @knead/core @knead/http
+            @knead/testing: @knead/core @knead/http
         run: |
           set -euo pipefail
           registry=https://registry.npmjs.org/

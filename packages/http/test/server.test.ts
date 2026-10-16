@@ -2,8 +2,8 @@ import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { type BeforeApplicationShutdown, inject, Module, type OnModuleInit } from '@hpmws/core';
-import { HpmwsFactory, redirectToHttps } from '../src/application.js';
+import { type BeforeApplicationShutdown, inject, Module, type OnModuleInit } from '@knead/core';
+import { KneadFactory, redirectToHttps } from '../src/application.js';
 import { Controller, type Ctx, Get, HttpConfigError, WsRegistry } from '../src/index.js';
 import { MemoryLogger } from '../src/logger.js';
 import { start } from './helpers.js';
@@ -37,7 +37,7 @@ function makeCert(name: string) {
 }
 
 beforeAll(() => {
-  certDir = mkdtempSync(join(tmpdir(), 'hpmws-tls-'));
+  certDir = mkdtempSync(join(tmpdir(), 'knead-tls-'));
 });
 afterAll(() => {
   Bun.spawnSync(['rm', '-rf', certDir]);
@@ -170,7 +170,7 @@ describe.skipIf(!hasOpenssl)('TLS', () => {
     const probe = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response('x') });
     const freePort = probe.port as number;
     probe.stop(true);
-    const app = await HpmwsFactory.create(M, { logger: new MemoryLogger(), development: false });
+    const app = await KneadFactory.create(M, { logger: new MemoryLogger(), development: false });
     await expect(
       app.listen({
         port: freePort,
@@ -213,7 +213,7 @@ test('reloadTls without TLS is a configuration error', async () => {
 test('redirectHttp without tls is a configuration error', async () => {
   @Module({})
   class M {}
-  const app = await HpmwsFactory.create(M, { logger: new MemoryLogger(), development: false });
+  const app = await KneadFactory.create(M, { logger: new MemoryLogger(), development: false });
   await expect(
     app.listen({ port: 0, hostname: '127.0.0.1', redirectHttp: { port: 0 } }),
   ).rejects.toThrow('redirectHttp requires tls.');
@@ -265,7 +265,7 @@ describe('trustProxy hop count on a wildcard address', () => {
 test('port throws before listen', async () => {
   @Module({})
   class M {}
-  const app = await HpmwsFactory.create(M, { logger: new MemoryLogger(), development: false });
+  const app = await KneadFactory.create(M, { logger: new MemoryLogger(), development: false });
   expect(() => app.port).toThrow(HttpConfigError);
   await app.close();
 });
@@ -376,7 +376,7 @@ describe('redirectToHttps hardening', () => {
     ];
     const tls = makeCert('bad-host'); // one certificate for every case: RSA keygen is slow
     for (const host of bad) {
-      const app = await HpmwsFactory.create(M, { logger: new MemoryLogger(), development: false });
+      const app = await KneadFactory.create(M, { logger: new MemoryLogger(), development: false });
       await expect(
         app.listen({
           port: 0,

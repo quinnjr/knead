@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { inject, type OnModuleInit } from '@hpmws/core';
-import { Controller, type Ctx, Get, UseGuards, WsRegistry } from '@hpmws/http';
-import { Test, type TestApp } from '@hpmws/testing';
+import { inject, type OnModuleInit } from '@knead/core';
+import { Controller, type Ctx, Get, UseGuards, WsRegistry } from '@knead/http';
+import { Test, type TestApp } from '@knead/testing';
 import { CorsConfigError, CorsModule, type CorsOptions } from '../src/index.js';
 
 @Controller('/api')

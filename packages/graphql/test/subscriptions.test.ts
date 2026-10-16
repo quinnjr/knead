@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { inject, Module } from '@hpmws/core';
+import { inject, Module } from '@knead/core';
 import {
   Field,
   ID,
