@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { Module } from '@hpmws/core';
 import type { HttpApplication } from '../src/application.js';
 import { Controller, createRouteDecorator, Get, Post, UseGuards } from '../src/decorators.js';
+import { BadRequestException, ServiceUnavailableException } from '../src/exceptions.js';
 import type { Ctx } from '../src/types.js';
 import { makeCtx, start } from './helpers.js';
 
@@ -87,5 +88,48 @@ describe('guards', () => {
     const bare = makeCtx('/nowhere');
     expect(bare.meta).toEqual({});
     expect(Object.isFrozen(bare.meta)).toBe(true);
+  });
+});
+
+describe('5xx problem responses', () => {
+  @Controller('/fail')
+  class Fail {
+    @Get('/5xx')
+    server() {
+      throw new ServiceUnavailableException('database at 10.0.0.7 is down', {
+        extensions: { host: '10.0.0.7' },
+        headers: { 'retry-after': '5' },
+      });
+    }
+    @Get('/4xx')
+    client() {
+      throw new BadRequestException('bad input', { extensions: { field: 'name' } });
+    }
+  }
+  @Module({ controllers: [Fail] })
+  class M {}
+
+  test('production strips detail and extensions from 5xx, keeping headers', async () => {
+    app = await start(M);
+    const res = await fetch(new URL('/fail/5xx', app.url));
+    expect(res.status).toBe(503);
+    expect(res.headers.get('retry-after')).toBe('5');
+    expect(await res.json()).toEqual({
+      type: 'about:blank',
+      title: 'Service Unavailable',
+      status: 503,
+      instance: '/fail/5xx',
+    });
+    const client = await fetch(new URL('/fail/4xx', app.url));
+    expect(await client.json()).toMatchObject({ detail: 'bad input', field: 'name' });
+  });
+
+  test('development keeps 5xx detail and extensions', async () => {
+    app = await start(M, {}, { development: true });
+    const res = await fetch(new URL('/fail/5xx', app.url));
+    expect(await res.json()).toMatchObject({
+      detail: 'database at 10.0.0.7 is down',
+      host: '10.0.0.7',
+    });
   });
 });

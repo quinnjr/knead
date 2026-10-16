@@ -69,9 +69,13 @@ export function defaultErrorResponse(
 ): Response {
   const instance = new URL(ctx.req.url).pathname;
   if (error instanceof HttpException) {
-    if (error.status >= 500)
-      logger.error(`${error.status} on ${ctx.req.method} ${instance}`, error);
-    return problemResponse(error.toProblem(instance), error.headers);
+    if (error.status < 500) return problemResponse(error.toProblem(instance), error.headers);
+    logger.error(`${error.status} on ${ctx.req.method} ${instance}`, error);
+    // Outside development a 5xx carries no detail or extensions: they tend to leak internals.
+    const problem: ProblemDetails = development
+      ? error.toProblem(instance)
+      : { type: error.type, title: error.title, status: error.status, instance };
+    return problemResponse(problem, error.headers);
   }
   logger.error(`Unhandled error on ${ctx.req.method} ${instance}`, error);
   const problem: ProblemDetails = {
