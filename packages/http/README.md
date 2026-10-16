@@ -19,6 +19,8 @@ const RolesGuard = (ctx: Ctx) => {
 };
 ```
 
+Route schemas (`params`, `query`, `headers`, `body`; any Standard Schema) replace the matching `ctx` field with the schema output, and once a `body` schema has passed, `ctx.json()` resolves to the validated value too, so unvalidated fields cannot slip in through it. Failures are a 400 listing every issue with its `source` and `path`; issues from the `headers` source always carry the generic message `Invalid header value`, so header values (tokens, cookies) are never echoed back.
+
 Errors are RFC 9457 `application/problem+json`. Outside development (`HpmwsFactory.create(root, { development })`, default `NODE_ENV === 'development'`), a 5xx `HttpException` is sent with only `type`, `title`, `status` and `instance`: its `detail` and extensions are dropped (headers such as `Retry-After` are kept), and unknown errors are a bare 500. 4xx problems keep their detail and extensions.
 
 Request bodies are capped at 1 MiB by default; larger bodies are answered with 413. Raise or lower the cap with `listen({ maxRequestBodySize })` (bytes).

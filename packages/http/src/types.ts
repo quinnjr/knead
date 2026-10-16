@@ -58,7 +58,10 @@ export interface Ctx<I extends CtxInput = {}> {
   readonly state: CtxState & Record<PropertyKey, unknown>;
   readonly res: ResponseDraft;
   readonly server: Server<any>;
-  /** Parses the body by Content-Type (memoized). */
+  /**
+   * Parses the body by Content-Type (memoized). On a route with a `body` schema, resolves to the
+   * validated (schema output) value once validation has passed.
+   */
   json<T = unknown>(): Promise<T>;
 }
 

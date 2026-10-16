@@ -76,6 +76,11 @@ export class RequestContext implements Ctx<any> {
     return this.#secure;
   }
 
+  /** @internal After body validation, ctx.json() resolves to the validated value. */
+  setValidatedBody(value: unknown): void {
+    this.#body = Promise.resolve(value);
+  }
+
   json<T = unknown>(): Promise<T> {
     this.#body ??= parseBody(this.req);
     return this.#body as Promise<T>;
