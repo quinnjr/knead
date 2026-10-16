@@ -115,7 +115,8 @@ function resolveGuard(ref: GuardRef<any>, injector: ModuleInjector): Guard<any> 
 
 async function runGuards(guards: readonly Guard<any>[], ctx: ResolverCtx<any, any>): Promise<void> {
   for (const guard of guards) {
-    if (!(await guard.canActivate(ctx))) throw new ForbiddenException();
+    // Only `true` passes: a truthy object, string or number is a denial, as in the http pipeline.
+    if ((await guard.canActivate(ctx)) !== true) throw new ForbiddenException();
   }
 }
 
