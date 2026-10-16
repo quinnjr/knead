@@ -227,6 +227,53 @@ test('redirectToHttps omits the default port', () => {
   expect(res.headers.get('location')).toBe('https://example.com/a?b=1');
 });
 
+describe('redirectToHttps hardening', () => {
+  test('the redirect is not cacheable', () => {
+    const res = redirectToHttps(new Request('http://example.com/a'), 443);
+    expect(res.headers.get('cache-control')).toBe('no-store');
+  });
+
+  test('a canonical host replaces the request Host', () => {
+    const req = new Request('http://evil.example/a?b=1', { headers: { host: 'evil.example' } });
+    expect(redirectToHttps(req, 8443, 'example.com').headers.get('location')).toBe(
+      'https://example.com:8443/a?b=1',
+    );
+    expect(redirectToHttps(req, 8443, 'example.com:443').headers.get('location')).toBe(
+      'https://example.com/a?b=1',
+    );
+  });
+
+  test.skipIf(!hasOpenssl)('redirectHttp.host is used by the redirect listener', async () => {
+    @Module({ controllers: [InfoController] })
+    class M {}
+    const app = await start(M, {
+      tls: makeCert('canonical'),
+      redirectHttp: { port: 0, host: 'example.com' },
+    });
+    const res = await fetch(new URL('/secure', app.redirectUrl), { redirect: 'manual' });
+    expect(res.headers.get('location')).toBe(`https://example.com:${app.server.port}/secure`);
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    await app.close();
+  });
+
+  test.skipIf(!hasOpenssl)('an invalid redirectHttp.host is a configuration error', async () => {
+    @Module({})
+    class M {}
+    for (const host of ['https://example.com', 'example.com/path', 'a b', 'user@example.com', '']) {
+      const app = await HpmwsFactory.create(M, { logger: new MemoryLogger(), development: false });
+      await expect(
+        app.listen({
+          port: 0,
+          hostname: '127.0.0.1',
+          tls: makeCert('bad-host'),
+          redirectHttp: { port: 0, host },
+        }),
+      ).rejects.toThrow(HttpConfigError);
+      await app.close();
+    }
+  });
+});
+
 describe('graceful shutdown', () => {
   test('in-flight requests finish, then shutdown hooks run; new connections are refused', async () => {
     const log: string[] = [];

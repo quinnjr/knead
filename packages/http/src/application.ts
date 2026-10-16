@@ -33,8 +33,12 @@ export interface ListenOptions {
   port?: number;
   hostname?: string;
   tls?: TLSOptions | TLSOptions[];
-  /** Starts a second plain-HTTP listener that 308-redirects to the HTTPS listener. */
-  redirectHttp?: { port: number; hostname?: string };
+  /**
+   * Starts a second plain-HTTP listener that 308-redirects to the HTTPS listener. `host` is the
+   * canonical host (`example.com`, or `example.com:8443` to override the port) used in the
+   * Location header; when set, the request's Host header is ignored.
+   */
+  redirectHttp?: { port: number; hostname?: string; host?: string };
   trustProxy?: TrustProxy;
   /** Largest accepted request body in bytes; larger bodies get 413. Default 1 MiB. */
   maxRequestBodySize?: number;
@@ -68,12 +72,32 @@ export class HpmwsFactory {
   }
 }
 
-/** 308 redirect to the same URL on the HTTPS listener. */
-export function redirectToHttps(req: Request, httpsPort: number): Response {
+/** A host name or IP literal with an optional port, and nothing else. */
+const CANONICAL_HOST =
+  /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*|\[[0-9a-f:.]+\])(?::\d{1,5})?$/i;
+
+/**
+ * 308 redirect to the same URL on the HTTPS listener. With `host` (a canonical `host[:port]`),
+ * the request's Host is ignored; a port in `host` overrides `httpsPort`.
+ */
+export function redirectToHttps(req: Request, httpsPort: number, host?: string): Response {
   const url = new URL(req.url);
   url.protocol = 'https:';
-  url.port = httpsPort === 443 ? '' : String(httpsPort);
-  return new Response(null, { status: 308, headers: { location: url.toString() } });
+  let port = String(httpsPort);
+  if (host !== undefined) {
+    const [, name, explicitPort] = /^(.+?)(?::(\d+))?$/.exec(host) ?? [];
+    url.hostname = name ?? host;
+    if (explicitPort !== undefined) port = explicitPort;
+  }
+  url.port = port === '443' ? '' : port;
+  return new Response(null, {
+    status: 308,
+    headers: {
+      location: url.toString(),
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+    },
+  });
 }
 
 export class HttpApplication {
@@ -279,6 +303,12 @@ export class HttpApplication {
     if (options.redirectHttp && options.tls === undefined) {
       throw new HttpConfigError('redirectHttp requires tls.');
     }
+    const canonicalHost = options.redirectHttp?.host;
+    if (canonicalHost !== undefined && !CANONICAL_HOST.test(canonicalHost)) {
+      throw new HttpConfigError(
+        `redirectHttp.host must be a plain host[:port], got ${JSON.stringify(canonicalHost)}.`,
+      );
+    }
     const root = this.context.root.injector;
     const entries = [
       ...this.context
@@ -362,7 +392,7 @@ export class HttpApplication {
     return Bun.serve({
       port: options.redirectHttp.port,
       hostname: options.redirectHttp.hostname ?? options.hostname ?? '0.0.0.0',
-      fetch: (req) => redirectToHttps(req, httpsPort),
+      fetch: (req) => redirectToHttps(req, httpsPort, options.redirectHttp?.host),
     });
   }
 
