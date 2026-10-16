@@ -1,3 +1,5 @@
+export { Config } from './config.js';
+export { ConfigHandle, type ConfigSchema, defineConfig } from './define.js';
 export {
   ConfigDefinitionError,
   ConfigError,
