@@ -90,12 +90,13 @@ function upgradeChain(
 }
 
 async function runUpgrade(
+  path: string,
   handler: Handler,
   req: Request,
   server: Server<any>,
   net: NetConfig,
 ): Promise<Response | undefined> {
-  const ctx = new RequestContext(req, server, null, net);
+  const ctx = new RequestContext(req, server, null, net, Object.freeze({ path }));
   const res = await handler(ctx);
   return upgraded.has(ctx) ? undefined : res;
 }
@@ -214,7 +215,7 @@ export function compileApplication(input: CompileInput): CompiledApp {
             routes[path] = byMethod;
           }
           byMethod[method] = async (req, server) => {
-            if (ws && isUpgrade(req)) return runUpgrade(ws, req, server, net);
+            if (ws && isUpgrade(req)) return runUpgrade(path, ws, req, server, net);
             return handle(new RequestContext(req, server, info, net));
           };
           const entry = allowed.get(path) ?? {
@@ -251,8 +252,9 @@ export function compileApplication(input: CompileInput): CompiledApp {
 
   const fetch: BunHandler = async (req, server) => {
     if (isUpgrade(req)) {
-      const ws = wsHandlers.get(new URL(req.url).pathname);
-      if (ws) return runUpgrade(ws, req, server, net);
+      const pathname = new URL(req.url).pathname;
+      const ws = wsHandlers.get(pathname);
+      if (ws) return runUpgrade(pathname, ws, req, server, net);
     }
     return fallback(new RequestContext(req, server, null, net));
   };

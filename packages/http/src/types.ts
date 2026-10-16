@@ -19,6 +19,11 @@ export interface RouteInfo {
   readonly meta: Readonly<Record<PropertyKey, unknown>>;
 }
 
+export interface UpgradeInfo {
+  /** The WsRegistry endpoint path being upgraded to. */
+  readonly path: string;
+}
+
 export interface ResponseDraft {
   status: number | undefined;
   readonly headers: Headers;
@@ -41,8 +46,10 @@ export interface Ctx<I extends CtxInput = {}> {
   readonly ip: string | undefined;
   /** TLS listener, or a trusted proxy reported `X-Forwarded-Proto: https`. */
   readonly secure: boolean;
-  /** Matched route; `null` for unmatched requests handled by the fallback. */
+  /** Matched route; `null` for unmatched requests handled by the fallback and for upgrades. */
   readonly route: RouteInfo | null;
+  /** Set on WebSocket upgrade requests to a registered endpoint; `null` otherwise. */
+  readonly upgrade: UpgradeInfo | null;
   readonly state: CtxState & Record<PropertyKey, unknown>;
   readonly res: ResponseDraft;
   readonly server: Server<any>;

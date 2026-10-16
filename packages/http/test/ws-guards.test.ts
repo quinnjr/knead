@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { inject, Module, type OnModuleInit } from '@hpmws/core';
 import type { HttpApplication } from '../src/application.js';
+import { Controller, Get } from '../src/decorators.js';
 import { APP_GUARD } from '../src/tokens.js';
 import type { Ctx } from '../src/types.js';
 import { WsRegistry } from '../src/ws.js';
@@ -45,6 +46,7 @@ function upgradeStatus(app: HttpApplication, headers: string[] = []): Promise<st
 }
 
 const seen: (string | null)[] = [];
+const upgrades: unknown[] = [];
 
 class Gateway implements OnModuleInit {
   readonly ws = inject(WsRegistry);
@@ -55,6 +57,7 @@ class Gateway implements OnModuleInit {
 
 const requireKey = (ctx: Ctx) => {
   seen.push(ctx.route === null ? null : 'route');
+  upgrades.push(ctx.upgrade);
   return ctx.req.headers.get('x-key') === 'ok';
 };
 
@@ -63,6 +66,7 @@ afterEach(async () => {
   await app?.close();
   app = undefined;
   seen.length = 0;
+  upgrades.length = 0;
 });
 
 describe('global guards on WebSocket upgrades', () => {
@@ -75,6 +79,29 @@ describe('global guards on WebSocket upgrades', () => {
     expect(await upgradeStatus(app)).toContain('403');
     expect(await upgradeStatus(app, ['X-Key: ok'])).toContain('101');
     expect(seen).toEqual([null, null]);
+    expect(upgrades).toEqual([{ path: '/live' }, { path: '/live' }]);
+  });
+
+  test('ctx.upgrade lets a guard tell upgrades from ordinary requests', async () => {
+    const guard = (ctx: Ctx) => {
+      upgrades.push(ctx.upgrade);
+      return ctx.upgrade !== null || ctx.req.headers.get('x-key') === 'ok';
+    };
+    @Controller('/plain')
+    class Plain {
+      @Get('/') get() {
+        return 'ok';
+      }
+    }
+    @Module({
+      controllers: [Plain],
+      providers: [Gateway, { provide: APP_GUARD, multi: true, useValue: guard }],
+    })
+    class M {}
+    app = await start(M);
+    expect(await upgradeStatus(app)).toContain('101');
+    expect((await fetch(new URL('/plain', app.url))).status).toBe(403);
+    expect(upgrades).toEqual([{ path: '/live' }, null]);
   });
 
   test('useGlobalGuards guards run on the upgrade request too', async () => {

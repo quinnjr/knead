@@ -1,7 +1,7 @@
 import type { BunRequest, Server } from 'bun';
 import { type CompiledTrust, resolveClientIp, resolveSecure } from './net.js';
 import { headersToObject, parseBody, parseQuery } from './request.js';
-import type { Ctx, ResponseDraft, RouteInfo } from './types.js';
+import type { Ctx, ResponseDraft, RouteInfo, UpgradeInfo } from './types.js';
 
 export interface NetConfig {
   trust: CompiledTrust;
@@ -26,6 +26,7 @@ export class RequestContext implements Ctx<any> {
     readonly server: Server<any>,
     readonly route: RouteInfo | null,
     private readonly net: NetConfig,
+    readonly upgrade: UpgradeInfo | null = null,
   ) {
     this.params = (req as BunRequest).params ?? {};
   }
