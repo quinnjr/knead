@@ -171,6 +171,22 @@ describe('RedisPubSub hardening', () => {
     }
   });
 
+  test('publishTimeout: a client that never answers fails publishOrThrow, publish logs', async () => {
+    const never = {
+      publish: () => new Promise(() => {}),
+      close: () => {},
+    } as unknown as RedisClient;
+    const logger = new MemoryLogger();
+    const pubsub = new RedisPubSub({ client: never, logger, publishTimeout: 20 });
+    await expect(pubsub.publishOrThrow('t', 1)).rejects.toThrow('within 20ms');
+    await expect(pubsub.publish('t', 1)).resolves.toBeUndefined();
+    expect(
+      logger.entries.some((e) => e.level === 'error' && e.message.includes('within 20ms')),
+    ).toBe(true);
+    await pubsub.close();
+    expect(() => new RedisPubSub({ client: never, publishTimeout: 0 })).toThrow(HttpConfigError);
+  });
+
   test('requireTls: a plaintext remote URL throws at construction', () => {
     expect(() => new RedisPubSub({ url: 'redis://cache.internal', requireTls: true })).toThrow(
       HttpConfigError,

@@ -41,3 +41,25 @@ describe('RedisStore plaintext guardrails', () => {
     expect(logger.entries).toEqual([]);
   });
 });
+
+describe('RedisStore commandTimeout', () => {
+  const never = { send: () => new Promise(() => {}) } as unknown as RedisClient;
+  const rule = { limit: 1, windowMs: 1000, algorithm: 'sliding-window' as const };
+
+  test('a client that never answers fails after commandTimeout (default 250 ms)', async () => {
+    const started = performance.now();
+    await expect(new RedisStore({ client: never }).consume('k', rule)).rejects.toThrow(
+      'did not answer within 250ms',
+    );
+    expect(performance.now() - started).toBeGreaterThanOrEqual(240);
+    await expect(
+      new RedisStore({ client: never, commandTimeout: 20 }).consume('k', rule),
+    ).rejects.toThrow('within 20ms');
+  });
+
+  test('invalid commandTimeout values are rejected', () => {
+    for (const commandTimeout of [0, -1, 1.5]) {
+      expect(() => new RedisStore({ client: never, commandTimeout })).toThrow(RangeError);
+    }
+  });
+});

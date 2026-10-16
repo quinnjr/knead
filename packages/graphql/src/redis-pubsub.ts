@@ -37,6 +37,13 @@ export interface RedisPubSubOptions {
   signingKey?: string | Uint8Array;
   /** Oldest signed message accepted, in milliseconds. Default 60000. */
   maxSignatureAge?: number;
+  /**
+   * Milliseconds a publish waits for Redis: past it, publish() logs and resolves, and
+   * publishOrThrow() rejects. Default 2000. A supplied client should also set
+   * `enableOfflineQueue: false` and a `connectionTimeout`, so commands fail fast while Redis is
+   * unreachable instead of queueing.
+   */
+  publishTimeout?: number;
 }
 
 /**
@@ -81,6 +88,7 @@ export class RedisPubSub implements PubSubEngine {
   #closed = false;
   readonly #signingKey: Uint8Array | undefined;
   readonly #maxSignatureAge: number;
+  readonly #publishTimeout: number;
 
   constructor(options: RedisPubSubOptions = {}) {
     if (options.signingKey !== undefined) {
@@ -100,6 +108,13 @@ export class RedisPubSub implements PubSubEngine {
       );
     }
     this.#maxSignatureAge = maxAge;
+    const publishTimeout = options.publishTimeout ?? 2000;
+    if (!Number.isInteger(publishTimeout) || publishTimeout < 1) {
+      throw new HttpConfigError(
+        `RedisPubSub publishTimeout must be a positive integer (ms); got ${String(publishTimeout)}.`,
+      );
+    }
+    this.#publishTimeout = publishTimeout;
     this.#prefix = options.prefix ?? 'hpmws:gql:';
     this.#explicitLogger = options.logger !== undefined;
     this.#logger = options.logger ?? new ConsoleLogger('hpmws:graphql');
@@ -166,7 +181,7 @@ export class RedisPubSub implements PubSubEngine {
     }
   }
 
-  /** Like publish(), but rejects when Redis did not accept the message. */
+  /** Like publish(), but rejects when Redis did not accept the message within publishTimeout. */
   async publishOrThrow(topic: string, payload: unknown): Promise<void> {
     const json = JSON.stringify(payload);
     let message = json;
@@ -174,7 +189,20 @@ export class RedisPubSub implements PubSubEngine {
       const ts = String(Date.now());
       message = `${this.#sign(topic, ts, json)}.${ts}.${json}`;
     }
-    await this.#publisher.publish(this.#prefix + topic, message);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        this.#publisher.publish(this.#prefix + topic, message),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error(`Redis did not answer within ${this.#publishTimeout}ms`)),
+            this.#publishTimeout,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   #sign(topic: string, ts: string, json: string): string {

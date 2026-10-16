@@ -104,6 +104,13 @@ export interface RedisStoreOptions {
   requireTls?: boolean;
   /** Where warnings go. Default: a ConsoleLogger. */
   logger?: Logger;
+  /**
+   * Milliseconds a consume() waits for Redis before failing; the failure is a store error, so
+   * `onStoreError` decides. Default 250. A supplied client should also set
+   * `enableOfflineQueue: false` and a `connectionTimeout`, so commands fail fast while Redis is
+   * unreachable instead of queueing.
+   */
+  commandTimeout?: number;
 }
 
 /**
@@ -121,8 +128,14 @@ export class RedisStore implements RateLimitStore {
   readonly #hashKeys: boolean;
 
   readonly #logger: Logger;
+  readonly #commandTimeout: number;
 
   constructor(options: RedisStoreOptions = {}) {
+    const timeout = options.commandTimeout ?? 250;
+    if (!Number.isInteger(timeout) || timeout < 1) {
+      throw new RangeError(`commandTimeout must be an integer >= 1 (ms), got ${String(timeout)}.`);
+    }
+    this.#commandTimeout = timeout;
     this.#logger = options.logger ?? new ConsoleLogger('hpmws:rate-limit');
     const remote = plaintextRedisHost(
       options.client === undefined ? (options.url ?? defaultRedisUrl()) : undefined,
@@ -157,13 +170,7 @@ export class RedisStore implements RateLimitStore {
       String(rule.limit),
       String(rule.windowMs),
     ];
-    let reply: unknown;
-    try {
-      reply = await this.#client.send('EVALSHA', [SHAS[algorithm], ...args]);
-    } catch (error) {
-      if (!String((error as Error | undefined)?.message).includes('NOSCRIPT')) throw error;
-      reply = await this.#client.send('EVAL', [SCRIPTS[algorithm], ...args]);
-    }
+    const reply = await withTimeout(this.#run(algorithm, args), this.#commandTimeout);
     const [allowed, remaining, resetAt] = reply as [number, number, number];
     return {
       allowed: Number(allowed) === 1,
@@ -172,7 +179,31 @@ export class RedisStore implements RateLimitStore {
     };
   }
 
+  async #run(algorithm: Algorithm, args: string[]): Promise<unknown> {
+    try {
+      return await this.#client.send('EVALSHA', [SHAS[algorithm], ...args]);
+    } catch (error) {
+      if (!String((error as Error | undefined)?.message).includes('NOSCRIPT')) throw error;
+      return this.#client.send('EVAL', [SCRIPTS[algorithm], ...args]);
+    }
+  }
+
   async close(): Promise<void> {
     if (this.#owned) this.#client.close();
+  }
+}
+
+/** Rejects with a timeout error when `promise` has not settled within `ms`. */
+async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`Redis did not answer within ${ms}ms`)), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
   }
 }

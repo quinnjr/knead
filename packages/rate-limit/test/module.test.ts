@@ -3,12 +3,14 @@ import type { ModuleImport } from '@hpmws/core';
 import { CorsModule } from '@hpmws/cors';
 import { Controller, type Ctx, Get } from '@hpmws/http';
 import { Test, type TestApp, type TestingModule } from '@hpmws/testing';
+import type { RedisClient } from 'bun';
 import {
   MemoryStore,
   RateLimit,
   RateLimitModule,
   type RateLimitModuleOptions,
   type RateLimitStore,
+  RedisStore,
   SkipRateLimit,
 } from '../src/index.js';
 
@@ -106,6 +108,16 @@ describe('RateLimitModule', () => {
     expect(mod!.logs.some((e) => e.level === 'warn' && e.message.includes('store'))).toBe(true);
     await mod!.close();
     const closed = await serve({ store: broken, onStoreError: 'deny' });
+    expect((await closed.request('GET', '/r/global')).status).toBe(503);
+  });
+
+  test('a Redis client that never answers is a store error (onStoreError applies)', async () => {
+    const never = { send: () => new Promise(() => {}) } as unknown as RedisClient;
+    const store = new RedisStore({ client: never, commandTimeout: 20 });
+    const open = await serve({ store });
+    expect((await open.request('GET', '/r/global')).status).toBe(200);
+    await mod!.close();
+    const closed = await serve({ store, onStoreError: 'deny' });
     expect((await closed.request('GET', '/r/global')).status).toBe(503);
   });
 
