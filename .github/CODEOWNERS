@@ -1,0 +1,4 @@
+# Changes to CI, release tooling and the published packages need the owner's review.
+/.github/   @quinnjr
+/scripts/   @quinnjr
+/packages/  @quinnjr
