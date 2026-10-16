@@ -89,7 +89,17 @@ export class RedisPubSub implements PubSubEngine {
     this.#topics.clear();
     const subscriber = this.#subscriber;
     this.#subscriber = undefined;
-    if (subscriber) (await subscriber.catch(() => undefined))?.close();
+    const client = await subscriber?.catch(() => undefined);
+    if (client) {
+      // Bun keeps the process alive after closing a client that is still in subscriber mode.
+      // unsubscribe() throws synchronously when the client is not in subscriber mode.
+      try {
+        if (client.connected) await client.unsubscribe();
+      } catch {
+        // Nothing was subscribed, or the connection is gone: close() below is enough.
+      }
+      client.close();
+    }
     if (this.#owned) this.#publisher.close();
   }
 

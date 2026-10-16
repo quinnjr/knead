@@ -55,6 +55,22 @@ describe.skipIf(!url)('RedisPubSub', () => {
     await pubsub.close();
   });
 
+  test('close() with active subscriptions lets the process exit', async () => {
+    const source = new URL('../src/redis-pubsub.ts', import.meta.url).pathname;
+    const script = `
+      import { RedisPubSub } from ${JSON.stringify(source)};
+      const pubsub = new RedisPubSub({ url: ${JSON.stringify(url)}, prefix: ${JSON.stringify(prefix)} });
+      pubsub.subscribe('exit', () => {});
+      await Bun.sleep(300);
+      await pubsub.close();
+    `;
+    const child = Bun.spawn(['bun', '-e', script], { stdout: 'ignore', stderr: 'inherit' });
+    await until(async () => (await channelSubscribers('exit')) === 1, 3000);
+    const exited = await Promise.race([child.exited, Bun.sleep(3000).then(() => 'still running')]);
+    if (exited !== 0) child.kill('SIGKILL');
+    expect(exited).toBe(0);
+  }, 10_000);
+
   test('a subscription on one app instance receives events published by another', async () => {
     @Resolver()
     class R {
