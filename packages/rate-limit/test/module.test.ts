@@ -71,8 +71,8 @@ describe('RateLimitModule', () => {
     for (let i = 0; i < 5; i++) expect((await app.request('GET', '/r/free')).status).toBe(200);
   });
 
-  test('custom keys; requests without a key are not limited and warn once', async () => {
-    const app = await serve();
+  test("custom keys; with onMissingKey: 'skip', keyless requests are not limited and warn once", async () => {
+    const app = await serve({ onMissingKey: 'skip' });
     const withKey = (k: string) => app.request('GET', '/r/by-key', { headers: { 'x-api-key': k } });
     expect((await withKey('a')).status).toBe(200);
     expect((await withKey('a')).status).toBe(429);
