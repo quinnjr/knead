@@ -67,6 +67,7 @@ import {
   type ResolvedGraphQLOptions,
   resolveOptions,
 } from './options.js';
+import { PlaygroundGate } from './playground.js';
 import { eventIterator, PUBSUB } from './pubsub.js';
 import { argNames, type FieldSpec, printSortedSchema, SchemaBuilder } from './schema.js';
 import { createSubscriptionEndpoint } from './subscriptions.js';
@@ -298,6 +299,7 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
   readonly #ws = inject(WsRegistry);
   #schema: GraphQLSchema | undefined;
   #executor: LeavenExecutor | undefined;
+  #playground: PlaygroundGate | undefined;
 
   get schema(): GraphQLSchema {
     if (!this.#schema)
@@ -309,6 +311,12 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
     if (!this.#executor)
       throw new SchemaBuildError('The GraphQL executor is built during onModuleInit.');
     return this.#executor;
+  }
+
+  /** Present when `playground` is enabled; its asset hashes were checked at bootstrap. */
+  get playground(): PlaygroundGate {
+    if (!this.#playground) throw new SchemaBuildError('The GraphQL playground is not enabled.');
+    return this.#playground;
   }
 
   get masking(): ErrorMaskingOptions {
@@ -337,6 +345,7 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
       this.masking,
     );
     (this.pubsub as { useLogger?: (logger: unknown) => void }).useLogger?.(this.logger);
+    if (this.options.playground) this.#playground = new PlaygroundGate(this.logger);
     if (this.options.emitSchemaFile !== false) {
       await Bun.write(this.options.emitSchemaFile, printSortedSchema(this.#schema));
     }

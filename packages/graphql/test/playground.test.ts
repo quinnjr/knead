@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { MemoryLogger } from '@hpmws/http';
 import { renderPlayground } from '@leaven-graphql/playground';
-import { PLAYGROUND_ASSETS, playgroundPage, servePlayground } from '../src/playground.js';
+import { PLAYGROUND_ASSETS, PlaygroundGate, playgroundPage } from '../src/playground.js';
 
 describe('playground subresource integrity', () => {
   test("every external asset in Leaven's playground HTML has a pinned hash", () => {
@@ -26,14 +26,26 @@ describe('playground subresource integrity', () => {
     expect(sheet).toContain('crossorigin="anonymous"');
   });
 
-  test('an asset without a pinned hash refuses to serve the playground and logs why', async () => {
+  test('an asset without a pinned hash is reported once; every request gets 503', async () => {
     const logger = new MemoryLogger();
-    const res = servePlayground('/graphql', undefined, logger, {});
-    expect(res.status).toBe(503);
-    expect(await res.text()).not.toContain('<script');
-    const entry = logger.entries.find((e) => e.level === 'error');
-    expect(entry?.message).toContain(
+    const gate = new PlaygroundGate(logger, {});
+    const errors = () => logger.entries.filter((e) => e.level === 'error');
+    expect(errors().length).toBe(1);
+    expect(errors()[0]?.message).toContain(
       'graphql-playground-react@1.7.26/build/static/js/middleware.js',
     );
+    for (let i = 0; i < 3; i++) {
+      const res = gate.serve('/graphql');
+      expect(res.status).toBe(503);
+      expect(await res.text()).not.toContain('<script');
+    }
+    expect(errors().length).toBe(1);
+  });
+
+  test('with every hash pinned the gate serves the page and logs nothing', () => {
+    const logger = new MemoryLogger();
+    const gate = new PlaygroundGate(logger);
+    expect(gate.serve('/graphql', 'ws://localhost/graphql').status).toBe(200);
+    expect(logger.entries).toEqual([]);
   });
 });

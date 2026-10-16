@@ -99,21 +99,38 @@ export function playgroundResponse(page: PlaygroundPage): Response {
   });
 }
 
-/** The playground response, or 503 (logged) when an asset has no pinned integrity hash. */
-export function servePlayground(
-  endpoint: string,
-  subscriptionEndpoint: string | undefined,
-  logger: Logger,
-  assets: Readonly<Record<string, string>> = PLAYGROUND_ASSETS,
-): Response {
-  try {
-    return playgroundResponse(playgroundPage(endpoint, subscriptionEndpoint, assets));
-  } catch (error) {
-    if (!(error instanceof PlaygroundAssetError)) throw error;
-    logger.error(`${error.message}. Not serving the playground; add them to PLAYGROUND_ASSETS.`);
-    return new Response('GraphQL playground unavailable', {
-      status: 503,
-      headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' },
-    });
+/**
+ * Serves the playground. The pinned asset hashes are checked once, when the gate is created at
+ * bootstrap: if Leaven's page references an asset without one, that is logged once and every
+ * request gets 503.
+ */
+export class PlaygroundGate {
+  readonly #assets: Readonly<Record<string, string>>;
+  readonly #available: boolean;
+
+  constructor(logger: Logger, assets: Readonly<Record<string, string>> = PLAYGROUND_ASSETS) {
+    this.#assets = assets;
+    try {
+      playgroundPage('/graphql', undefined, assets);
+      this.#available = true;
+    } catch (error) {
+      if (!(error instanceof PlaygroundAssetError)) throw error;
+      logger.error(`${error.message}. The playground is disabled; add them to PLAYGROUND_ASSETS.`);
+      this.#available = false;
+    }
+  }
+
+  get available(): boolean {
+    return this.#available;
+  }
+
+  serve(endpoint: string, subscriptionEndpoint?: string): Response {
+    if (!this.#available) {
+      return new Response('GraphQL playground unavailable', {
+        status: 503,
+        headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' },
+      });
+    }
+    return playgroundResponse(playgroundPage(endpoint, subscriptionEndpoint, this.#assets));
   }
 }

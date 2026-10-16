@@ -17,7 +17,12 @@ export {
   resolveOptions,
   type SubscriptionOptions as GraphQLSubscriptionOptions,
 } from './options.js';
-export { PLAYGROUND_ASSETS, PlaygroundAssetError, playgroundPage } from './playground.js';
+export {
+  PLAYGROUND_ASSETS,
+  PlaygroundAssetError,
+  PlaygroundGate,
+  playgroundPage,
+} from './playground.js';
 export { eventIterator, PUBSUB } from './pubsub.js';
 export { RedisPubSub, type RedisPubSubOptions } from './redis-pubsub.js';
 export {
