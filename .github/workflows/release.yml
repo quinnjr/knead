@@ -12,7 +12,9 @@ concurrency:
 
 env:
   NODE_VERSION: 24.21.0
-  BUN_VERSION: 1.4.2
+  BUN_VERSION: 1.4.3
+  # `bun --revision` of the official BUN_VERSION release, checked after setup-bun.
+  BUN_REVISION: 1.4.3+c6da4a4d3
 
 jobs:
   # Runs every repo script (install, lint, tests, build, pack) with a read-only token and no
@@ -48,7 +50,15 @@ jobs:
             echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) is not on main; refusing to release"
             exit 1
           fi
+      # Installs the version in package.json `packageManager`. The action ignores the +sha512
+      # suffix (corepack verifies it), so check at least that the expected version arrived.
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - name: Check pnpm version
+        run: |
+          want="$(jq -r .packageManager package.json | sed -E 's/^pnpm@([^+]+).*/\1/')"
+          if [ "$(pnpm --version)" != "$want" ]; then
+            echo "::error::pnpm is $(pnpm --version), expected $want"; exit 1
+          fi
       # No dependency cache: a poisoned cache must not reach a release build.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -56,9 +66,19 @@ jobs:
           # cannot silently turn on its automatic package-manager cache.
           package-manager-cache: false
           node-version: ${{ env.NODE_VERSION }}
+      - name: Check Node version
+        run: |
+          if [ "$(node --version)" != "v$NODE_VERSION" ]; then
+            echo "::error::node is $(node --version), expected v$NODE_VERSION"; exit 1
+          fi
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: ${{ env.BUN_VERSION }}
+      - name: Check Bun revision
+        run: |
+          if [ "$(bun --revision)" != "$BUN_REVISION" ]; then
+            echo "::error::bun is $(bun --revision), expected $BUN_REVISION"; exit 1
+          fi
       # Imports only node: builtins, so it runs before any dependency is installed. Also requires
       # the tag's version to equal the version at origin/main HEAD, so an old main commit
       # cannot be released.
@@ -122,6 +142,11 @@ jobs:
           # cannot silently turn on its automatic package-manager cache.
           package-manager-cache: false
           node-version: ${{ env.NODE_VERSION }}
+      - name: Check Node version
+        run: |
+          if [ "$(node --version)" != "v$NODE_VERSION" ]; then
+            echo "::error::node is $(node --version), expected v$NODE_VERSION"; exit 1
+          fi
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: npm-tarballs
