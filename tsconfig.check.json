@@ -12,6 +12,7 @@
     "packages/*/test",
     "examples/*/src",
     "examples/*/test",
-    "examples/*/scripts"
+    "examples/*/scripts",
+    "scripts"
   ]
 }

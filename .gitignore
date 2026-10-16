@@ -6,3 +6,13 @@ coverage/
 packages/*/LICENSE-MIT
 packages/*/LICENSE-APACHE
 .DS_Store
+
+# Secrets and credentials
+.env
+.env.*
+!.env.example
+.npmrc
+*.pem
+*.key
+*.p12
+*.pfx

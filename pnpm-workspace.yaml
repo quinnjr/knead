@@ -1,9 +1,23 @@
 packages:
   - packages/*
   - examples/*
+
+# Supply-chain policy, set explicitly rather than relying on pnpm defaults.
+# Only install versions published at least one day ago (pnpm 12's default,
+# written down so it cannot silently change).
+minimumReleaseAge: 1440
+# Exact versions exempt from the age gate (first-party Leaven releases);
+# remove each once it is older than minimumReleaseAge.
 minimumReleaseAgeExclude:
   - '@leaven-graphql/context@0.2.1'
   - '@leaven-graphql/core@0.2.2'
   - '@leaven-graphql/errors@0.2.1'
   - '@leaven-graphql/playground@0.2.2'
   - '@leaven-graphql/ws@0.2.2'
+# Refuse a version whose publish trust evidence (provenance / trusted
+# publisher) is weaker than an earlier version of the same package.
+trustPolicy: no-downgrade
+# Fail the install when a dependency has build scripts nobody has reviewed.
+strictDepBuilds: true
+# Transitive dependencies may only come from the registry (no git/tarball URLs).
+blockExoticSubdeps: true

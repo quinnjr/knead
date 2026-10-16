@@ -9,14 +9,13 @@
   "scripts": {
     "build": "tsc -b tsconfig.json",
     "typecheck": "tsc -p tsconfig.check.json",
-    "test": "pnpm -r test",
+    "test": "pnpm -r test && bun test scripts",
     "lint": "biome check .",
     "format": "biome check --write .",
     "clean": "rm -rf packages/*/dist packages/*/.tsbuildinfo",
     "changeset": "changeset",
     "version-packages": "changeset version",
     "check:pack": "bun scripts/check-pack.ts",
-    "release": "pnpm build && changeset publish --no-git-tag",
     "trust:npm": "bash scripts/trust-npm-publishers.sh"
   },
   "devDependencies": {

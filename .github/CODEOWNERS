@@ -1,0 +1,6 @@
+# Changes to CI, release tooling and the published packages need the owner's review.
+# Enforced only once branch protection ("Require review from Code Owners") is available
+# and enabled for main and develop; until then this file only requests reviews.
+/.github/   @quinnjr
+/scripts/   @quinnjr
+/packages/  @quinnjr
