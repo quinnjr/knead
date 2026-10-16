@@ -19,11 +19,14 @@ export * from './exceptions.js';
 export * from './logger.js';
 export * from './metadata.js';
 export {
+  defaultRedisUrl,
   formatIp,
   isIpv6Prefix,
+  isLoopbackHostname,
   maskIp,
   normalizeIp,
   parseIp,
+  plaintextRedisHost,
   type TrustProxy,
 } from './net.js';
 export { DEFAULT_MAX_PARAMS, requestUrl } from './request.js';

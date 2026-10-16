@@ -7,6 +7,7 @@ import {
   maskIp,
   normalizeIp,
   parseIp,
+  plaintextRedisHost,
   resolveClientIp,
   resolveSecure,
 } from '../src/net.js';
@@ -186,6 +187,33 @@ describe('maskIp', () => {
     for (const bad of [-1, 129, 1.5, Number.NaN, Infinity]) {
       expect(() => maskIp('2001:db8::1', bad)).toThrow(RangeError);
       expect(() => maskIp('1.2.3.4', bad)).toThrow(RangeError);
+    }
+  });
+});
+
+describe('plaintextRedisHost', () => {
+  test('plain redis:// and valkey:// to a remote host', () => {
+    expect(plaintextRedisHost('redis://cache.internal:6379')).toBe('cache.internal:6379');
+    expect(plaintextRedisHost('valkey://u:p@10.0.0.5')).toBe('10.0.0.5');
+    expect(plaintextRedisHost('redis://[2001:db8::1]:6379')).toBe('[2001:db8::1]:6379');
+  });
+
+  test('TLS, Unix sockets, loopback and garbage are not plaintext remote', () => {
+    for (const url of [
+      'rediss://cache.internal',
+      'valkeys://cache.internal',
+      'redis+unix:///tmp/redis.sock',
+      'redis://localhost:6379',
+      'redis://LOCALHOST.:6379',
+      'redis://127.0.0.1',
+      'redis://127.9.9.9',
+      'redis://[::1]:6379',
+      'redis://[::ffff:127.0.0.1]:6379',
+      'not a url',
+      '',
+      undefined,
+    ]) {
+      expect(plaintextRedisHost(url)).toBeUndefined();
     }
   });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { createHmac } from 'node:crypto';
-import { MemoryLogger } from '@hpmws/http';
+import { HttpConfigError, MemoryLogger } from '@hpmws/http';
 import type { RedisClient } from 'bun';
 import { RedisPubSub } from '../src/index.js';
 import { until } from './helpers.js';
@@ -155,6 +155,8 @@ describe('RedisPubSub hardening', () => {
       ['redis://localhost:6379', false],
       ['redis://127.0.0.1:6379', false],
       ['redis://[::1]:6379', false],
+      ['redis://[::ffff:127.0.0.1]:6379', false],
+      ['valkey://cache.internal:6379', true],
       ['rediss://cache.internal:6379', false],
     ];
     for (const [url, warns] of cases) {
@@ -167,6 +169,15 @@ describe('RedisPubSub hardening', () => {
       expect(logger.entries.some((e) => e.message.includes('pw@'))).toBe(false);
       await pubsub.close();
     }
+  });
+
+  test('requireTls: a plaintext remote URL throws at construction', () => {
+    expect(() => new RedisPubSub({ url: 'redis://cache.internal', requireTls: true })).toThrow(
+      HttpConfigError,
+    );
+    expect(() => new RedisPubSub({ url: 'valkey://10.0.0.5', requireTls: true })).toThrow(
+      HttpConfigError,
+    );
   });
 
   test('signingKey: signed messages are delivered; unsigned and forged ones are dropped', async () => {

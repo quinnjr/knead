@@ -2,6 +2,8 @@
 
 `RateLimitModule.forRoot({ limit, window })` with sliding-window or token-bucket algorithms, `@RateLimit()` (validated at decoration time) / `@SkipRateLimit()`, standard `RateLimit-*` headers and `Retry-After` computed from the earliest admission time, and `MemoryStore` or `RedisStore` (atomic Lua on `Bun.redis`) for multi-instance deployments. Windows are integer milliseconds (durations are rounded up). `RedisStore` is not compatible with Redis Cluster.
 
+In production, connect `RedisStore` with `rediss://` (TLS) as a least-privilege ACL user limited to the store's keys and the commands it runs, for example `ACL SETUSER ratelimit on >secret resetkeys ~hpmws:rl:* -@all +evalsha +eval +get +incr +pexpire +hmget +hset +time +script|load`. A plaintext `redis://` or `valkey://` URL (from `url`, `REDIS_URL` or `VALKEY_URL`) to a non-loopback host logs a warning at construction; `new RedisStore({ requireTls: true })` throws instead. A caller-supplied `client` bypasses this check, so configure TLS on it yourself.
+
 Windows are capped at one year (`365d`); a longer one is a `RangeError` at decoration or `forRoot()` time.
 
 The default key is the client IP (`ctx.ip`). IPv6 addresses are masked to a /64 (`ipv6Subnet`, an integer from 0 to 128, default 64; 128 keys each address; IPv4-mapped addresses are keyed as IPv4), because one client usually controls a whole /64 and could otherwise rotate addresses to reset its bucket. Both stores hash keys with SHA-256 (32 hex characters) before storing them (`new MemoryStore({ hashKeys: false })` / `new RedisStore({ hashKeys: false })` to keep raw keys), so client IPs and API keys are not readable in memory dumps or Redis.

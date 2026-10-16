@@ -1,11 +1,26 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { ConsoleLogger, HttpConfigError, type Logger, logError } from '@hpmws/http';
+import {
+  ConsoleLogger,
+  defaultRedisUrl,
+  HttpConfigError,
+  type Logger,
+  logError,
+  plaintextRedisHost,
+} from '@hpmws/http';
 import type { PubSubEngine } from '@leaven-graphql/ws';
 import { RedisClient } from 'bun';
 
 export interface RedisPubSubOptions {
-  /** Publisher connection (not closed by close()). The subscriber is always a dedicated duplicate. */
+  /**
+   * Publisher connection (not closed by close()). The subscriber is always a dedicated duplicate.
+   * A supplied client bypasses the plaintext (`requireTls`) check: configure TLS on it yourself.
+   */
   client?: RedisClient;
+  /**
+   * Throw at construction when `url` (or REDIS_URL/VALKEY_URL) is a plaintext `redis://` or
+   * `valkey://` URL to a non-loopback host. Without it, that only logs a warning. Default false.
+   */
+  requireTls?: boolean;
   /** Connection URL when no client is given (default: Bun's REDIS_URL / localhost). */
   url?: string;
   /** Channel prefix. Default 'hpmws:gql:'. */
@@ -31,30 +46,6 @@ export interface RedisPubSubOptions {
 const SIGNATURE_LENGTH = 64;
 /** Clock skew tolerated for messages dated in the future. */
 const MAX_FUTURE_SKEW = 60_000;
-
-function isLoopbackHost(hostname: string): boolean {
-  const host = hostname.replace(/^\[(.*)\]$/, '$1').toLowerCase();
-  return (
-    host === 'localhost' ||
-    host.endsWith('.localhost') ||
-    /^127(?:\.\d{1,3}){3}$/.test(host) ||
-    host === '::1' ||
-    host === '0:0:0:0:0:0:0:1'
-  );
-}
-
-/** The host of a plain redis:// URL to a non-loopback host, or undefined. */
-function plaintextRemoteHost(url: string | undefined): string | undefined {
-  if (url === undefined) return undefined;
-  try {
-    const parsed = new URL(url);
-    return parsed.protocol === 'redis:' && !isLoopbackHost(parsed.hostname)
-      ? parsed.host
-      : undefined;
-  } catch {
-    return undefined;
-  }
-}
 
 interface Listener {
   callback: (payload: unknown) => void;
@@ -109,23 +100,21 @@ export class RedisPubSub implements PubSubEngine {
       );
     }
     this.#maxSignatureAge = maxAge;
-    this.#owned = options.client === undefined;
-    this.#publisher = options.client ?? new RedisClient(options.url);
     this.#prefix = options.prefix ?? 'hpmws:gql:';
     this.#explicitLogger = options.logger !== undefined;
     this.#logger = options.logger ?? new ConsoleLogger('hpmws:graphql');
-    const url =
-      options.url ??
-      (options.client === undefined
-        ? process.env.REDIS_URL || process.env.VALKEY_URL || undefined
-        : undefined);
-    const remote = plaintextRemoteHost(url);
+    const remote = plaintextRedisHost(
+      options.client === undefined ? (options.url ?? defaultRedisUrl()) : undefined,
+    );
     if (remote !== undefined) {
-      this.#logger.warn(
-        `RedisPubSub connects to ${remote} over plain redis://, so events and credentials ` +
-          'cross the network unencrypted. Use rediss:// (TLS) with an ACL user.',
-      );
+      const problem =
+        `RedisPubSub connects to ${remote} over plaintext redis://, so events and credentials ` +
+        'cross the network unencrypted. Use rediss:// (TLS) with an ACL user.';
+      if (options.requireTls) throw new HttpConfigError(problem);
+      this.#logger.warn(problem);
     }
+    this.#owned = options.client === undefined;
+    this.#publisher = options.client ?? new RedisClient(options.url);
   }
 
   /**

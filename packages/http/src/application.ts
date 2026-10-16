@@ -19,7 +19,7 @@ import {
   compileAllowedHosts,
   compileTrust,
   type HostMatcher,
-  parseIp,
+  isLoopbackHostname,
   type TrustProxy,
 } from './net.js';
 import { DEFAULT_MAX_PARAMS, requestUrl } from './request.js';
@@ -109,12 +109,10 @@ export class HpmwsFactory {
   }
 }
 
+/** Loopback, including `*.localhost`. */
 function isLoopback(hostname: string): boolean {
   const host = hostname.replace(/^\[(.*)\]$/, '$1').toLowerCase();
-  if (host === 'localhost' || host.endsWith('.localhost')) return true;
-  const bytes = parseIp(host);
-  if (bytes?.length === 4) return bytes[0] === 127;
-  return bytes?.every((b, i) => b === (i === 15 ? 1 : 0)) === true;
+  return host.endsWith('.localhost') || isLoopbackHostname(host);
 }
 
 /** Whether a listen hostname binds every interface. */

@@ -1,3 +1,10 @@
+import {
+  ConsoleLogger,
+  defaultRedisUrl,
+  HttpConfigError,
+  type Logger,
+  plaintextRedisHost,
+} from '@hpmws/http';
 import { RedisClient } from 'bun';
 import { hashKey } from './keys.js';
 import type { Algorithm, ConsumeResult, RateLimitRule, RateLimitStore } from './store.js';
@@ -76,7 +83,10 @@ const SHAS: Record<Algorithm, string> = {
 };
 
 export interface RedisStoreOptions {
-  /** An existing client (not closed by close()). */
+  /**
+   * An existing client (not closed by close()). A supplied client bypasses the plaintext
+   * (`requireTls`) check: configure TLS on it yourself.
+   */
   client?: RedisClient;
   /** Connection URL when no client is given (default: Bun's REDIS_URL / localhost). */
   url?: string;
@@ -87,6 +97,13 @@ export interface RedisStoreOptions {
    * not readable in Redis and key length is fixed. Default true.
    */
   hashKeys?: boolean;
+  /**
+   * Throw at construction when `url` (or REDIS_URL/VALKEY_URL) is a plaintext `redis://` or
+   * `valkey://` URL to a non-loopback host. Without it, that only logs a warning. Default false.
+   */
+  requireTls?: boolean;
+  /** Where warnings go. Default: a ConsoleLogger. */
+  logger?: Logger;
 }
 
 /**
@@ -103,7 +120,20 @@ export class RedisStore implements RateLimitStore {
   readonly #prefix: string;
   readonly #hashKeys: boolean;
 
+  readonly #logger: Logger;
+
   constructor(options: RedisStoreOptions = {}) {
+    this.#logger = options.logger ?? new ConsoleLogger('hpmws:rate-limit');
+    const remote = plaintextRedisHost(
+      options.client === undefined ? (options.url ?? defaultRedisUrl()) : undefined,
+    );
+    if (remote !== undefined) {
+      const problem =
+        `RedisStore connects to ${remote} over plaintext redis://, so rate-limit keys and ` +
+        'credentials cross the network unencrypted. Use rediss:// (TLS) with an ACL user.';
+      if (options.requireTls) throw new HttpConfigError(problem);
+      this.#logger.warn(problem);
+    }
     this.#hashKeys = options.hashKeys ?? true;
     this.#owned = options.client === undefined;
     this.#client = options.client ?? new RedisClient(options.url);

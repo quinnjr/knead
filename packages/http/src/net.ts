@@ -261,3 +261,34 @@ export function compileAllowedHosts(list: readonly string[]): HostMatcher {
     return name !== undefined && allowed.has(name);
   };
 }
+
+/** Whether a URL hostname is loopback: `localhost`, `localhost.`, 127.0.0.0/8 or ::1 (also mapped). */
+export function isLoopbackHostname(hostname: string): boolean {
+  const host = hostname.replace(/^\[(.*)\]$/, '$1').toLowerCase();
+  if (host === 'localhost' || host === 'localhost.') return true;
+  const bytes = parseIp(host);
+  if (bytes?.length === 4) return bytes[0] === 127;
+  return bytes?.every((b, i) => b === (i === 15 ? 1 : 0)) === true;
+}
+
+/**
+ * The `host[:port]` of a plaintext Redis/Valkey URL (`redis://`, `valkey://`) to a host that is
+ * not loopback, or undefined: TLS URLs (`rediss://`, `valkeys://`), Unix sockets, loopback hosts
+ * and unparseable URLs are not plaintext remote connections.
+ */
+export function plaintextRedisHost(url: string | undefined): string | undefined {
+  if (url === undefined || url === '') return undefined;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return undefined;
+  }
+  if (parsed.protocol !== 'redis:' && parsed.protocol !== 'valkey:') return undefined;
+  return isLoopbackHostname(parsed.hostname) ? undefined : parsed.host;
+}
+
+/** The URL Bun.redis connects to without an explicit one: REDIS_URL, VALKEY_URL or localhost. */
+export function defaultRedisUrl(): string | undefined {
+  return process.env.REDIS_URL || process.env.VALKEY_URL || undefined;
+}
