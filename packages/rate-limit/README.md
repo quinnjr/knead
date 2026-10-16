@@ -18,6 +18,19 @@ Behind a reverse proxy or load balancer, configure `app.listen({ trustProxy })` 
 
 Each `@RateLimit()` route has its own counter, keyed by its method and path. A handler reachable through several routes (several decorators, `@All()`, or the same controller mounted under two prefixes) therefore gets one budget per alias, multiplying the effective limit; put the limit on a single route, or lower it accordingly. `RedisStore` waits at most `commandTimeout` (default 250 ms) for Redis; a timeout is a store error like any other. Give a caller-supplied `client` `enableOfflineQueue: false` and a `connectionTimeout`, so commands fail fast while Redis is unreachable instead of queueing. `onStoreError` (default `'allow'`, fail open with a warning) decides what happens when the store throws: use `'deny'` (503) when the limit protects authentication (login, password reset, OTP checks), where failing open would let an attacker brute-force during a Redis outage.
 
+Ordering: `RateLimitModule` installs a global middleware (priority 900), and middleware runs before guards, so its key function sees the raw request but nothing a guard set (such as `ctx.state.user`). A key that should follow the authenticated user either verifies the credential itself and falls back to the IP, or runs in the guard phase:
+
+```ts
+// Middleware phase: verify the credential in the key, fall back to the IP.
+const key = (ctx: Ctx) => auth.verify(ctx.req.headers.get('authorization'))?.id ?? ctx.ip;
+
+// Guard phase: RateLimitGuard runs after the guards before it, so it can key on ctx.state.
+RateLimitModule.forRoot({ limit: 100, window: '1m', middleware: false, key: (ctx) => ctx.state.user?.id ?? ctx.ip });
+@UseGuards(AuthGuard, RateLimitGuard) // or provide it as APP_GUARD
+```
+
+`RateLimitGuard` uses the same module options and `@RateLimit()` overrides, sets the same `RateLimit-*` headers on the handler's response and keeps counters separate from the middleware's; `middleware: false` turns the global middleware off when only the guard should count.
+
 Browsers on other origins can only read the `RateLimit-*` and `Retry-After` headers if CORS exposes them:
 
 ```ts

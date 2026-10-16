@@ -2,6 +2,7 @@ import { InjectionToken, inject, type OnModuleDestroy } from '@hpmws/core';
 import {
   type Ctx,
   ForbiddenException,
+  type Guard,
   HTTP_DEVELOPMENT,
   isIpv6Prefix,
   LOGGER,
@@ -46,6 +47,11 @@ export interface RateLimitModuleOptions {
    * the limit protects authentication, where failing open would allow brute forcing.
    */
   onStoreError?: 'allow' | 'deny';
+  /**
+   * Install the global RateLimitMiddleware. Default true. Set false when the limit is applied
+   * only through RateLimitGuard (for example to key on `ctx.state.user`).
+   */
+  middleware?: boolean;
 }
 
 const MISSING_KEY_MODES = new Set(['skip', 'shared', 'deny']);
@@ -71,7 +77,11 @@ export function validateRateLimitOptions(options: RateLimitModuleOptions): void 
 export const RATE_LIMIT_OPTIONS = new InjectionToken<RateLimitModuleOptions>('RATE_LIMIT_OPTIONS');
 export const RATE_LIMIT_STORE = new InjectionToken<RateLimitStore>('RATE_LIMIT_STORE');
 
-export class RateLimitMiddleware implements Middleware, OnModuleDestroy {
+/**
+ * The limit check shared by RateLimitMiddleware and RateLimitGuard. Returns the RateLimit-*
+ * headers to send, `undefined` when the request is not limited, or throws 429 (or 403/503).
+ */
+export class RateLimiter implements OnModuleDestroy {
   readonly #options = inject(RATE_LIMIT_OPTIONS);
   readonly #store = inject(RATE_LIMIT_STORE);
   readonly #logger = inject(LOGGER);
@@ -82,15 +92,20 @@ export class RateLimitMiddleware implements Middleware, OnModuleDestroy {
     ctx.ip === undefined ? undefined : maskIp(ctx.ip, this.#ipv6Subnet);
   #warnedNoKey = false;
 
-  async use(ctx: Ctx, next: Next): Promise<Response> {
+  /** `phase` separates the guard's counters from the middleware's. */
+  async check(
+    ctx: Ctx,
+    phase: 'middleware' | 'guard',
+  ): Promise<Record<string, string> | undefined> {
     const meta = ctx.route?.meta;
-    if (meta?.[SKIP_RATE_LIMIT_META]) return next();
+    if (meta?.[SKIP_RATE_LIMIT_META]) return undefined;
     const override = meta?.[RATE_LIMIT_META] as RateLimitRouteMeta | undefined;
     const limit = override?.limit ?? this.#options.limit;
     const windowMs = override?.windowMs ?? this.#windowMs;
     const keyFn: KeyFn = override?.key ?? this.#options.key ?? this.#defaultKey;
     const key = await keyFn(ctx);
-    const scope = override && ctx.route ? `${ctx.route.method} ${ctx.route.path}` : 'global';
+    const route = override && ctx.route ? `${ctx.route.method} ${ctx.route.path}` : 'global';
+    const scope = phase === 'guard' ? `guard:${route}` : route;
     let storeKey = `${scope}|${key}`;
     if (!key) {
       const mode = this.#options.onMissingKey ?? 'shared';
@@ -100,7 +115,7 @@ export class RateLimitMiddleware implements Middleware, OnModuleDestroy {
           `The rate limit key function returned no key; onMissingKey is '${mode}'.`,
         );
       }
-      if (mode === 'skip') return next();
+      if (mode === 'skip') return undefined;
       if (mode === 'deny') throw new ForbiddenException('Rate limiting requires a client key');
       // A different separator than `${scope}|${key}`, so it never collides with a real key.
       storeKey = `${scope}#anonymous`;
@@ -121,7 +136,7 @@ export class RateLimitMiddleware implements Middleware, OnModuleDestroy {
       );
       if (this.#options.onStoreError === 'deny')
         throw new ServiceUnavailableException('Rate limiting is unavailable');
-      return next();
+      return undefined;
     }
     const resetSeconds = Math.max(0, Math.ceil((result.resetAt - Date.now()) / 1000));
     const headers = {
@@ -134,10 +149,41 @@ export class RateLimitMiddleware implements Middleware, OnModuleDestroy {
         headers: { ...headers, 'retry-after': String(Math.max(1, resetSeconds)) },
       });
     }
-    return withHeaders(await next(), headers);
+    return headers;
   }
 
   async onModuleDestroy(): Promise<void> {
     await this.#store.close?.();
+  }
+}
+
+/**
+ * Global middleware (priority 900): it runs before guards, so its key function sees the
+ * request but not what guards set (`ctx.state.user`). Use RateLimitGuard for that.
+ */
+export class RateLimitMiddleware implements Middleware {
+  readonly #limiter = inject(RateLimiter);
+
+  async use(ctx: Ctx, next: Next): Promise<Response> {
+    const headers = await this.#limiter.check(ctx, 'middleware');
+    if (!headers) return next();
+    return withHeaders(await next(), headers);
+  }
+}
+
+/**
+ * The same limit (module options and `@RateLimit()` overrides) applied in the guard phase:
+ * `@UseGuards(AuthGuard, RateLimitGuard)` or `APP_GUARD`. Guards run in order, so its key
+ * function can read `ctx.state.user` set by an earlier guard, for per-user limits. Its counters
+ * are separate from RateLimitMiddleware's; set `middleware: false` in forRoot() to use only
+ * the guard.
+ */
+export class RateLimitGuard implements Guard {
+  readonly #limiter = inject(RateLimiter);
+
+  async canActivate(ctx: Ctx): Promise<boolean> {
+    const headers = await this.#limiter.check(ctx, 'guard');
+    for (const [name, value] of Object.entries(headers ?? {})) ctx.res.headers.set(name, value);
+    return true;
   }
 }
