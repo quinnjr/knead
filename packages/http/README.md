@@ -73,6 +73,8 @@ ws.closeWhere((socket) => (socket.data.data as { userId: string }).userId === us
 
 `reloadTls()` hot-swaps certificates via `SO_REUSEPORT` and is Linux-only.
 
+TLS is terminated by Bun (BoringSSL), and hpmws sets no protocol or cipher options of its own: the TLS floor (minimum protocol version and cipher suites) is Bun's own default, which comes from BoringSSL. Pass Bun `TLSOptions` in `listen({ tls })` to restrict it further, terminate TLS at a proxy with a policy you control, and keep Bun up to date (see the `engines` field).
+
 A `listen()` that failed to bind (for example, the port is taken) binds nothing and can be retried, but the application context stays open. If you give up instead, call `await app.close()` so shutdown hooks run and resources are released. A `listen()` that failed because a lifecycle hook threw (such as `onModuleInit` of a middleware, guard or filter, which runs at `listen()`) has already closed the application and cannot be retried. `listen()` always rejects once `close()` has started, including a `close()` issued while `listen()` is still initializing:
 
 ```ts
