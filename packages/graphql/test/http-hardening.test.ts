@@ -181,3 +181,28 @@ describe('Accept negotiation', () => {
     expect(res.headers.get('content-type')).toBe('application/json; charset=utf-8');
   });
 });
+
+describe('response headers', () => {
+  test('cache-control: no-store and nosniff by default, over POST and GET', async () => {
+    s = await startGraphQL([M]);
+    const post = await s.app.graphql('{ n }');
+    expect(post.headers.get('cache-control')).toBe('no-store');
+    expect(post.headers.get('x-content-type-options')).toBe('nosniff');
+    const get = await s.app.request('GET', '/graphql', {
+      headers: csrf,
+      query: { query: '{ n }' },
+    });
+    expect(get.headers.get('cache-control')).toBe('no-store');
+    expect(get.headers.get('x-content-type-options')).toBe('nosniff');
+  });
+
+  test('cacheControl overrides the header; false omits it', async () => {
+    s = await startGraphQL([M], { cacheControl: 'private, max-age=60' });
+    expect((await s.app.graphql('{ n }')).headers.get('cache-control')).toBe('private, max-age=60');
+    await s.mod.close();
+    s = await startGraphQL([M], { cacheControl: false });
+    const res = await s.app.graphql('{ n }');
+    expect(res.headers.get('cache-control')).toBeNull();
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+  });
+});

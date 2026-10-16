@@ -86,6 +86,11 @@ export interface GraphQLModuleOptions {
   parseOptions?: ParseOptions;
   /** Leaven execution hooks (Leaven has no plugin system; these are its extension point). */
   hooks?: ExecutionHooks;
+  /**
+   * Cache-Control of GraphQL responses. Default 'no-store' (responses often carry per-user
+   * data); `false` sends none.
+   */
+  cacheControl?: string | false;
   /** GET requests must carry one of `requiredHeaders` (default ['x-graphql-request']). */
   csrf?: { requiredHeaders?: readonly string[] } | false;
   /** Default: NODE_ENV !== 'development'. */
@@ -119,6 +124,7 @@ export interface ResolvedGraphQLOptions {
   readonly maskErrors: boolean;
   readonly emitSchemaFile: string | false;
   readonly csrf: { readonly requiredHeaders: readonly string[] } | false;
+  readonly cacheControl: string | false;
   readonly subscriptions: SubscriptionOptions | false;
   readonly orphanedTypes: readonly Class[];
   readonly guards: readonly GuardRef<ResolverCtx<any, any>>[];
@@ -205,6 +211,7 @@ export function resolveOptions(
     introspection: options.introspection ?? (dev || options.playground === true),
     maskErrors: options.maskErrors ?? !dev,
     emitSchemaFile: options.emitSchemaFile ?? (dev ? 'schema.graphql' : false),
+    cacheControl: options.cacheControl ?? 'no-store',
     csrf:
       options.csrf === false
         ? false

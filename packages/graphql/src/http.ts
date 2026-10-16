@@ -120,12 +120,13 @@ async function execute(
     const internal = response.errors?.some((e) => e.extensions?.code === 'INTERNAL_SERVER_ERROR');
     status = internal ? 500 : 400;
   }
-  return new Response(JSON.stringify(response), {
-    status,
-    headers: {
-      'content-type': `${graphqlJson ? GRAPHQL_RESPONSE_JSON : 'application/json'}; charset=utf-8`,
-    },
-  });
+  const headers: Record<string, string> = {
+    'content-type': `${graphqlJson ? GRAPHQL_RESPONSE_JSON : 'application/json'}; charset=utf-8`,
+    'x-content-type-options': 'nosniff',
+  };
+  const cacheControl = runtime.options.cacheControl;
+  if (cacheControl !== false) headers['cache-control'] = cacheControl;
+  return new Response(JSON.stringify(response), { status, headers });
 }
 
 export async function handlePost(runtime: GraphQLRuntime, ctx: Ctx): Promise<Response> {
