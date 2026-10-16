@@ -3,7 +3,9 @@ import {
   BadRequestException,
   ForbiddenException,
   HttpException,
+  LOGGED_MESSAGE_LENGTH,
   type Logger,
+  logError,
   NotFoundException,
   TooManyRequestsException,
   UnauthorizedException,
@@ -62,47 +64,31 @@ export interface ErrorMaskingOptions {
   maskErrors: boolean;
   logger: Logger;
   /**
-   * Development logs the full error object; otherwise only its name, its message truncated to
-   * 500 characters and a correlation id are logged. Default false.
+   * Development logs the full error, redacted; otherwise only its name, its redacted message
+   * truncated to 500 characters and a correlation id are logged. Default false.
    */
   development?: boolean;
 }
 
 /** Longest error message logged outside development. */
-export const LOGGED_MESSAGE_LENGTH = 500;
-
-function summarize(error: unknown): string {
-  const record =
-    typeof error === 'object' && error !== null
-      ? (error as { name?: unknown; message?: unknown })
-      : undefined;
-  const name = typeof record?.name === 'string' ? record.name : record ? 'Error' : typeof error;
-  let message: string;
-  try {
-    message = typeof record?.message === 'string' ? record.message : String(error);
-  } catch {
-    message = '(unprintable)';
-  }
-  if (message.length > LOGGED_MESSAGE_LENGTH) {
-    message = `${message.slice(0, LOGGED_MESSAGE_LENGTH)}…`;
-  }
-  return `${name}: ${message}`;
-}
+export { LOGGED_MESSAGE_LENGTH };
 
 /**
  * Logs an unexpected error under a new correlation id and returns the id (sent to the client as
- * `extensions.correlationId`). Outside development the error object itself (its stack, cause and
- * properties, which may hold data) is not logged.
+ * `extensions.correlationId`), through `@hpmws/http`'s logError(): outside development only its
+ * name and its redacted, truncated message are logged, never the error object (its stack, cause
+ * and properties, which may hold data); in development the full error, redacted.
  */
 export function logInternalError(
   options: ErrorMaskingOptions,
   message: string,
   error: unknown,
 ): string {
-  const id = crypto.randomUUID();
-  if (options.development) options.logger.error(`${message} (correlation id ${id})`, error);
-  else options.logger.error(`${message} (correlation id ${id}): ${summarize(error)}`);
-  return id;
+  return logError(
+    { logger: options.logger, development: options.development ?? false },
+    message,
+    error,
+  );
 }
 
 /**

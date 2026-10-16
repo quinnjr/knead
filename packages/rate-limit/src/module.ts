@@ -4,6 +4,8 @@ import { MemoryStore } from './memory-store.js';
 import {
   RATE_LIMIT_OPTIONS,
   RATE_LIMIT_STORE,
+  RateLimiter,
+  RateLimitGuard,
   RateLimitMiddleware,
   type RateLimitModuleOptions,
   validateRateLimitOptions,
@@ -19,14 +21,20 @@ export class RateLimitModule {
       providers: [
         { provide: RATE_LIMIT_OPTIONS, useValue: options },
         { provide: RATE_LIMIT_STORE, useFactory: () => options.store ?? new MemoryStore() },
+        RateLimiter,
         RateLimitMiddleware,
-        {
-          provide: APP_MIDDLEWARE,
-          multi: true,
-          useFactory: () => ({ middleware: inject(RateLimitMiddleware), priority: 900 }),
-        },
+        RateLimitGuard,
+        ...(options.middleware === false
+          ? []
+          : [
+              {
+                provide: APP_MIDDLEWARE,
+                multi: true as const,
+                useFactory: () => ({ middleware: inject(RateLimitMiddleware), priority: 900 }),
+              },
+            ]),
       ],
-      exports: [RATE_LIMIT_STORE],
+      exports: [RATE_LIMIT_STORE, RATE_LIMIT_OPTIONS, RateLimiter, RateLimitGuard],
     };
   }
 }

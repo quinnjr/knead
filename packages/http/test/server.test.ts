@@ -43,6 +43,9 @@ afterAll(() => {
   Bun.spawnSync(['rm', '-rf', certDir]);
 });
 
+/** Server-side events, in the order they happened. */
+const serverEvents: string[] = [];
+
 @Controller('/')
 class InfoController {
   @Get('/secure') secure(ctx: Ctx) {
@@ -50,6 +53,7 @@ class InfoController {
   }
   @Get('/slow') async slow() {
     await Bun.sleep(200);
+    serverEvents.push('handled');
     return 'done';
   }
   @Get('/forever') async forever() {
@@ -192,6 +196,8 @@ describe.skipIf(!hasOpenssl)('TLS', () => {
     const res = await fetch(new URL('/secure?x=1', app.redirectUrl), { redirect: 'manual' });
     expect(res.status).toBe(308);
     expect(res.headers.get('location')).toBe(`https://127.0.0.1:${app.server.port}/secure?x=1`);
+    const warnings = (app.logger as MemoryLogger).entries.filter((e) => e.level === 'warn');
+    expect(warnings.some((e) => e.message.includes('redirectHttp has no host'))).toBe(true);
     await app.close();
   });
 });
@@ -212,6 +218,48 @@ test('redirectHttp without tls is a configuration error', async () => {
     app.listen({ port: 0, hostname: '127.0.0.1', redirectHttp: { port: 0 } }),
   ).rejects.toThrow('redirectHttp requires tls.');
   await app.close();
+});
+
+test('a listener whose graceful stop rejects is logged, and close() still completes', async () => {
+  @Module({})
+  class M {}
+  const app = await start(M);
+  const server = app.server;
+  const stop = server.stop.bind(server);
+  (server as { stop: (force?: boolean) => Promise<void> }).stop = (force?: boolean) =>
+    force ? stop(true) : Promise.reject(new Error('stop failed'));
+  await app.close();
+  await Bun.sleep(5);
+  const logged = (app.logger as MemoryLogger).entries.some(
+    (e) => e.level === 'error' && e.message.includes('Stopping a listener failed'),
+  );
+  expect(logged).toBe(true);
+});
+
+describe('trustProxy hop count on a wildcard address', () => {
+  const warned = (app: { logger: unknown }) =>
+    (app.logger as MemoryLogger).entries.some(
+      (e) => e.level === 'warn' && e.message.includes('trustProxy is a hop count'),
+    );
+
+  test('warns on 0.0.0.0', async () => {
+    @Module({})
+    class M {}
+    const app = await start(M, { hostname: '0.0.0.0', trustProxy: 1 });
+    expect(warned(app)).toBe(true);
+    await app.close();
+  });
+
+  test('does not warn on a specific address or with CIDRs', async () => {
+    @Module({})
+    class M {}
+    const a = await start(M, { trustProxy: 1 });
+    expect(warned(a)).toBe(false);
+    await a.close();
+    const b = await start(M, { hostname: '0.0.0.0', trustProxy: ['10.0.0.0/8'] });
+    expect(warned(b)).toBe(false);
+    await b.close();
+  });
 });
 
 test('port throws before listen', async () => {
@@ -243,6 +291,30 @@ describe('redirectToHttps hardening', () => {
     );
   });
 
+  test.skipIf(!hasOpenssl)(
+    'without redirectHttp.host, allowedHosts applies to redirects',
+    async () => {
+      @Module({ controllers: [InfoController] })
+      class M {}
+      const app = await start(
+        M,
+        { tls: makeCert('allowed'), redirectHttp: { port: 0 }, allowedHosts: ['app.example'] },
+        { development: false },
+      );
+      const evil = await fetch(new URL('/secure', app.redirectUrl), {
+        redirect: 'manual',
+        headers: { host: 'evil.example' },
+      });
+      expect(evil.status).toBe(421);
+      const good = await fetch(new URL('/secure', app.redirectUrl), {
+        redirect: 'manual',
+        headers: { host: 'app.example' },
+      });
+      expect(good.headers.get('location')).toBe(`https://app.example:${app.server.port}/secure`);
+      await app.close();
+    },
+  );
+
   test.skipIf(!hasOpenssl)('redirectHttp.host is used by the redirect listener', async () => {
     @Module({ controllers: [InfoController] })
     class M {}
@@ -256,16 +328,60 @@ describe('redirectToHttps hardening', () => {
     await app.close();
   });
 
+  test('redirectToHttps rejects a canonical host that does not round-trip', () => {
+    const req = new Request('http://evil.example/a', { headers: { host: 'evil.example' } });
+    for (const host of ['1.2.3.256', '[1.2.3.4]', '[.]', '[:::]', 'xn--a', 'a:99999']) {
+      expect(() => redirectToHttps(req, 443, host)).toThrow(HttpConfigError);
+    }
+  });
+
+  test('good canonical hosts produce the exact Location', () => {
+    const req = new Request('http://evil.example/p/q?x=1&y=%20', {
+      headers: { host: 'evil.example' },
+    });
+    const cases: [string, number, string][] = [
+      ['Example.COM', 443, 'https://example.com/p/q?x=1&y=%20'],
+      ['example.com', 8443, 'https://example.com:8443/p/q?x=1&y=%20'],
+      ['example.com:9443', 8443, 'https://example.com:9443/p/q?x=1&y=%20'],
+      ['example.com:443', 8443, 'https://example.com/p/q?x=1&y=%20'],
+      ['10.0.0.1:8443', 443, 'https://10.0.0.1:8443/p/q?x=1&y=%20'],
+      ['[2001:DB8::1]', 443, 'https://[2001:db8::1]/p/q?x=1&y=%20'],
+      ['[::1]:8443', 443, 'https://[::1]:8443/p/q?x=1&y=%20'],
+    ];
+    for (const [host, port, location] of cases) {
+      expect(redirectToHttps(req, port, host).headers.get('location')).toBe(location);
+    }
+  });
+
   test.skipIf(!hasOpenssl)('an invalid redirectHttp.host is a configuration error', async () => {
     @Module({})
     class M {}
-    for (const host of ['https://example.com', 'example.com/path', 'a b', 'user@example.com', '']) {
+    const bad = [
+      'https://example.com',
+      'example.com/path',
+      'a b',
+      'user@example.com',
+      '',
+      // Values a host pattern accepts but the URL parser rejects or rewrites.
+      '1.2.3.256',
+      '[1.2.3.4]',
+      '[.]',
+      '[:::]',
+      'xn--a',
+      'example.com:99999',
+      'example.com:0',
+      'example.com:08443',
+      '0x7f.1',
+      '[::0001]',
+    ];
+    const tls = makeCert('bad-host'); // one certificate for every case: RSA keygen is slow
+    for (const host of bad) {
       const app = await HpmwsFactory.create(M, { logger: new MemoryLogger(), development: false });
       await expect(
         app.listen({
           port: 0,
           hostname: '127.0.0.1',
-          tls: makeCert('bad-host'),
+          tls,
           redirectHttp: { port: 0, host },
         }),
       ).rejects.toThrow(HttpConfigError);
@@ -276,10 +392,11 @@ describe('redirectToHttps hardening', () => {
 
 describe('graceful shutdown', () => {
   test('in-flight requests finish, then shutdown hooks run; new connections are refused', async () => {
-    const log: string[] = [];
+    serverEvents.length = 0;
+    let body = '';
     class Hooks implements BeforeApplicationShutdown {
       beforeApplicationShutdown(signal?: string) {
-        log.push(`shutdown:${signal}`);
+        serverEvents.push(`shutdown:${signal}`);
       }
     }
     @Module({ controllers: [InfoController], providers: [Hooks] })
@@ -287,12 +404,15 @@ describe('graceful shutdown', () => {
     const app = await start(M);
     const base = app.url;
     const inflight = fetch(new URL('/slow', base)).then(async (r) => {
-      log.push(`response:${await r.text()}`);
+      body = await r.text();
     });
-    await Bun.sleep(30);
+    // Wait until the request is in flight (a fixed sleep raced on a loaded machine).
+    for (let i = 0; i < 200 && app.server.pendingRequests === 0; i++) await Bun.sleep(5);
     await Promise.all([app.close('SIGTERM'), app.close('SIGTERM')]);
     await inflight;
-    expect(log).toEqual(['response:done', 'shutdown:SIGTERM']);
+    // The in-flight request completed before the shutdown hooks ran.
+    expect(serverEvents).toEqual(['handled', 'shutdown:SIGTERM']);
+    expect(body).toBe('done');
     await expect(fetch(new URL('/slow', base))).rejects.toThrow();
   });
 

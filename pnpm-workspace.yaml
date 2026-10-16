@@ -10,10 +10,10 @@ minimumReleaseAge: 1440
 # remove each once it is older than minimumReleaseAge.
 minimumReleaseAgeExclude:
   - '@leaven-graphql/context@0.2.1'
-  - '@leaven-graphql/core@0.2.2'
+  - '@leaven-graphql/core@0.2.3'
   - '@leaven-graphql/errors@0.2.1'
   - '@leaven-graphql/playground@0.2.2'
-  - '@leaven-graphql/ws@0.2.2'
+  - '@leaven-graphql/ws@0.2.3'
 # Refuse a version whose publish trust evidence (provenance / trusted
 # publisher) is weaker than an earlier version of the same package.
 trustPolicy: no-downgrade

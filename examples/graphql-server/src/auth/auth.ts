@@ -12,6 +12,8 @@ export interface CurrentUser {
 declare module '@hpmws/graphql' {
   interface GraphQLContext {
     currentUser?: CurrentUser;
+    /** Subscriptions: the connection's token, re-verified by subscriptions.refreshContext. */
+    sessionToken?: string;
   }
 }
 
@@ -34,6 +36,11 @@ export class AuthService {
     ['ada-token', { id: 'a1', name: 'Ada Lovelace', roles: ['admin'] }],
     ['grace-token', { id: 'a2', name: 'Grace Hopper', roles: [] }],
   ]);
+
+  /** Signs a token out: it stops verifying at once (live subscriptions end at their next event). */
+  revoke(token: string): boolean {
+    return this.#tokens.delete(token);
+  }
 
   verify(token: unknown): CurrentUser | undefined {
     return typeof token === 'string' ? this.#tokens.get(token) : undefined;

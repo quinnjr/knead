@@ -20,19 +20,19 @@
   ],
   "sideEffects": false,
   "engines": {
-    "bun": ">=1.4.0"
+    "bun": ">=1.4.3"
   },
   "scripts": {
     "test": "bun test",
     "prepack": "bun ../../scripts/copy-licenses.ts"
   },
   "dependencies": {
-    "@leaven-graphql/core": "0.2.2",
+    "@leaven-graphql/core": "0.2.3",
     "@leaven-graphql/errors": "0.2.1",
     "@leaven-graphql/playground": "0.2.2",
-    "@leaven-graphql/ws": "0.2.2",
+    "@leaven-graphql/ws": "0.2.3",
     "@standard-schema/spec": "^1.1.0",
-    "dataloader": "^2.2.3"
+    "dataloader": "2.2.3"
   },
   "peerDependencies": {
     "@hpmws/core": "workspace:^",

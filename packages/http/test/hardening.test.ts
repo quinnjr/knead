@@ -120,12 +120,18 @@ describe('5xx problem responses', () => {
     const res = await fetch(new URL('/fail/5xx', app.url));
     expect(res.status).toBe(503);
     expect(res.headers.get('retry-after')).toBe('5');
-    expect(await res.json()).toEqual({
+    const body = (await res.json()) as { correlationId: string };
+    expect(body as unknown).toEqual({
       type: 'about:blank',
       title: 'Service Unavailable',
       status: 503,
       instance: '/fail/5xx',
+      correlationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
     });
+    const logged = (app.logger as MemoryLogger).entries.find((e) => e.level === 'error')!;
+    expect(logged.message).toContain(body.correlationId);
+    expect(logged.message).toContain('ServiceUnavailableException: database at 10.0.0.7 is down');
+    expect(logged.meta).toEqual([]);
     const client = await fetch(new URL('/fail/4xx', app.url));
     expect(await client.json()).toMatchObject({ detail: 'bad input', field: 'name' });
   });
@@ -229,5 +235,226 @@ describe('development mode', () => {
     }
     app = await start(M, { hostname: '0.0.0.0' }, { development: false });
     expect(devWarnings(app)).toEqual([]);
+  });
+});
+
+describe('listen({ maxParams })', () => {
+  @Controller('/params')
+  class Params {
+    @Get('/')
+    query(ctx: Ctx) {
+      return { keys: Object.keys(ctx.query) };
+    }
+    @Post('/')
+    async form(ctx: Ctx) {
+      return { keys: Object.keys((await ctx.json()) as object) };
+    }
+  }
+  @Module({ controllers: [Params] })
+  class ParamsModule {}
+
+  test('caps query parameters (400) and form fields (413)', async () => {
+    app = await start(ParamsModule, { maxParams: 2 });
+    expect((await fetch(new URL('/params?a=1&b=2', app.url))).status).toBe(200);
+    expect((await fetch(new URL('/params?a=1&b=2&c=3', app.url))).status).toBe(400);
+    const res = await fetch(new URL('/params', app.url), {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: 'a=1&b=2&c=3',
+    });
+    expect(res.status).toBe(413);
+  });
+
+  test('an invalid maxParams is a configuration error', async () => {
+    for (const maxParams of [0, -1, 1.5]) {
+      await expect(start(ParamsModule, { maxParams })).rejects.toThrow(HttpConfigError);
+    }
+  });
+});
+
+describe('listen({ validation: { redactIssueMessages } })', () => {
+  const echo = {
+    '~standard': {
+      version: 1 as const,
+      vendor: 'test',
+      validate: (value: unknown) => ({
+        issues: [{ message: `bad ${JSON.stringify(value)}`, path: ['name'] }],
+      }),
+    },
+  };
+  @Controller('/v')
+  class V {
+    @Post('/', { body: echo }) create() {
+      return 'ok';
+    }
+  }
+  @Module({ controllers: [V] })
+  class VModule {}
+
+  test('the 400 does not echo the body', async () => {
+    app = await start(VModule, { validation: { redactIssueMessages: true } });
+    const res = await fetch(new URL('/v', app.url), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{"name":"s3cret"}',
+    });
+    expect(res.status).toBe(400);
+    const text = await res.text();
+    expect(text).not.toContain('s3cret');
+    expect(text).toContain('Invalid value');
+  });
+});
+
+describe('listen({ defaultCacheControl })', () => {
+  @Controller('/c')
+  class C {
+    @Get('/plain') plain() {
+      return { a: 1 };
+    }
+    @Get('/own') own(ctx: Ctx) {
+      ctx.res.headers.set('cache-control', 'public, max-age=60');
+      return 'cached';
+    }
+    @Get('/raw') raw() {
+      return new Response('raw', { headers: { 'cache-control': 'max-age=5' } });
+    }
+  }
+  @Module({ controllers: [C] })
+  class CModule {}
+
+  test('applies to responses without Cache-Control, including errors and 404s', async () => {
+    app = await start(CModule, { defaultCacheControl: 'no-store' });
+    const get = async (path: string) =>
+      (await fetch(new URL(path, app!.url))).headers.get('cache-control');
+    expect(await get('/c/plain')).toBe('no-store');
+    expect(await get('/c/own')).toBe('public, max-age=60');
+    expect(await get('/c/raw')).toBe('max-age=5');
+    expect(await get('/missing')).toBe('no-store');
+  });
+
+  test('off by default; invalid values are a configuration error', async () => {
+    app = await start(CModule);
+    expect((await fetch(new URL('/c/plain', app.url))).headers.get('cache-control')).toBeNull();
+    await app.close();
+    app = undefined;
+    for (const defaultCacheControl of ['', 'no-store\r\nx: 1']) {
+      await expect(start(CModule, { defaultCacheControl })).rejects.toThrow(HttpConfigError);
+    }
+  });
+});
+
+describe('guard references are validated at listen()', () => {
+  class ArrowGuard {
+    canActivate = () => true;
+  }
+  class ProtoGuard {
+    canActivate() {
+      return true;
+    }
+  }
+
+  test('undefined, arrow-field classes and plain objects are an HttpConfigError naming the route', async () => {
+    for (const bad of [undefined, ArrowGuard, {}, null, 42]) {
+      @Controller('/g')
+      class G {
+        @Get('/', { guards: [bad as never] }) get() {
+          return 'x';
+        }
+      }
+      @Module({ controllers: [G] })
+      class GM {}
+      const failure = await start(GM).catch((e) => e);
+      expect(failure).toBeInstanceOf(HttpConfigError);
+      expect((failure as Error).message).toContain('G.get');
+    }
+  });
+
+  test('controller guards name the controller; valid refs pass', async () => {
+    @Controller('/c', { guards: [undefined as never] })
+    class Ctrl {
+      @Get('/') get() {
+        return 'x';
+      }
+    }
+    @Module({ controllers: [Ctrl] })
+    class CM {}
+    await expect(start(CM)).rejects.toThrow('the guards of Ctrl');
+    @Controller('/ok', { guards: [ProtoGuard, () => true, { canActivate: () => true }] })
+    class Ok {
+      @Get('/') get() {
+        return 'ok';
+      }
+    }
+    @Module({ controllers: [Ok] })
+    class OkModule {}
+    app = await start(OkModule);
+    expect((await fetch(new URL('/ok', app.url))).status).toBe(200);
+  });
+});
+
+describe('route authorize guards run after validation', () => {
+  /** Trims and lowercases `email`. */
+  const canonicalEmail = {
+    '~standard': {
+      version: 1 as const,
+      vendor: 'test',
+      validate: (value: unknown) => {
+        const email = (value as { email?: unknown } | undefined)?.email;
+        return typeof email === 'string'
+          ? { value: { email: email.trim().toLowerCase() } }
+          : { issues: [{ message: 'email required', path: ['email'] }] };
+      },
+    },
+  };
+  const seenByGuard: unknown[] = [];
+  const seenByAuthorize: unknown[] = [];
+
+  @Controller('/admins')
+  class Admins {
+    @Post('/', {
+      body: canonicalEmail,
+      guards: [
+        async (ctx: Ctx) => {
+          seenByGuard.push(await ctx.json());
+          return true;
+        },
+      ],
+      authorize: [
+        (ctx: Ctx) => {
+          seenByAuthorize.push(ctx.body);
+          return (ctx.body as { email: string }).email === 'admin@example.com';
+        },
+      ],
+    })
+    invite(ctx: Ctx) {
+      return ctx.body;
+    }
+  }
+  @Module({ controllers: [Admins] })
+  class AdminsModule {}
+
+  const post = (email: string) =>
+    fetch(new URL('/admins', app!.url), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+
+  test('authorize sees the canonical value; guards see the raw one', async () => {
+    app = await start(AdminsModule);
+    const res = await post('  ADMIN@Example.com ');
+    expect(res.status).toBe(200);
+    expect(seenByGuard).toEqual([{ email: '  ADMIN@Example.com ' }]);
+    expect(seenByAuthorize).toEqual([{ email: 'admin@example.com' }]);
+    expect((await post('eve@example.com')).status).toBe(403);
+    // Invalid input is a 400 before authorize runs.
+    seenByAuthorize.length = 0;
+    const bad = await fetch(new URL('/admins', app.url), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    expect(bad.status).toBe(400);
+    expect(seenByAuthorize).toEqual([]);
   });
 });

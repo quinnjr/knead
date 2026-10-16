@@ -16,6 +16,9 @@ pnpm --filter @hpmws/example-graphql-server start   # production defaults
 | `PORT` | `3000` | Listening port |
 | `NODE_ENV` | | `development` turns on the playground, introspection and unmasked errors, and writes `schema.graphql`. `production` refuses to start: the demo tokens are public |
 | `REDIS_URL` | | Use `RedisPubSub` for subscriptions, so several instances share events |
+| `REDIS_PUBSUB_SIGNING_KEY` | | `RedisPubSub` `signingKey` (generate with `openssl rand -base64 32`): events are signed, and unsigned or forged ones are dropped. Required with `REDIS_URL` under `NODE_ENV=production` (the server refuses to start without it) |
+| `REDIS_PUBSUB_ENCRYPTION_KEY` | | `RedisPubSub` `encryptionKey` (generate with `openssl rand -base64 32`): event payloads are AES-256-GCM encrypted in Redis |
+| `RATE_LIMIT_HASH_SECRET` | | With `REDIS_URL`, share rate limits through `RedisStore`, with keys HMAC-hashed under this secret (`openssl rand -base64 32`, the same on every instance) so client IPs cannot be recovered from Redis |
 | `RATE_LIMIT` | `100` | Requests per client IP per minute (`/health` is exempt) |
 | `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated browser origins for CORS and subscription sockets |
 
@@ -66,7 +69,7 @@ curl localhost:3000/graphql -H 'content-type: application/json' -H 'authorizatio
 
 ## Subscriptions
 
-`postPublished(authorId: ID)` and `commentAdded(postId: ID!)` run over a `graphql-transport-ws` WebSocket on `/graphql`. Browsers cannot send an `Authorization` header on a WebSocket, so the token goes in `connectionParams`; a missing or unknown token closes the socket with `4403`.
+`postPublished(authorId: ID)` and `commentAdded(postId: ID!)` run over a `graphql-transport-ws` WebSocket on `/graphql`. Browsers cannot send an `Authorization` header on a WebSocket, so the token goes in `connectionParams`; a missing or unknown token closes the socket with `4403`. `commentAdded` rechecks its guards before every comment, and `subscriptions.refreshContext` re-verifies the connection's token with a live `AuthService` lookup first, so revoking a token (`AuthService.revoke`) ends the subscription with `FORBIDDEN` at its next event.
 
 In the playground (development), set the connection params to `{ "token": "grace-token" }` and run:
 
@@ -76,7 +79,7 @@ subscription {
 }
 ```
 
-Then publish a post as Grace with the `createPost` curl above (with `"publish": true`). Posts by other authors are filtered out.
+Then publish a post as Grace with the `createPost` curl above (with `"publish": true`). Posts by other authors are filtered out. Events may come through Redis, a trust boundary, so the subscriptions drop malformed events (for example a post whose `status` is not a `PostStatus`) in their `filter`, and `revivePost`/`reviveComment` sanitize the body again before it is sent.
 
 From a terminal, with [`websocat`](https://github.com/vi/websocat):
 

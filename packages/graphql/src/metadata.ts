@@ -57,6 +57,12 @@ export interface ResolverMethodOptions {
   complexity?: number;
   /** Guards receiving the ResolverCtx; run after class-level @UseGuards guards. */
   guards?: readonly GuardRef<any>[];
+  /**
+   * Guards that run after `validate`, so they see the validated (and transformed) `ctx.args`.
+   * `guards` run before validation and see the coerced but unvalidated arguments. Anything but
+   * `true` is FORBIDDEN.
+   */
+  authorize?: readonly GuardRef<any>[];
   meta?: Readonly<Record<PropertyKey, unknown>>;
 }
 
@@ -65,7 +71,7 @@ export interface SubscriptionMethodOptions extends ResolverMethodOptions {
   filter?: (event: { payload: any; args: any; ctx: any }) => boolean | Promise<boolean>;
   resolve?: (payload: any) => unknown;
   /**
-   * Re-run the root guards (module, class and method guards) before every event. An event whose
+   * Re-run the root guards (module, class and method guards), then `authorize`, before every event. An event whose
    * guards deny is delivered as a FORBIDDEN error (or the guard's own error) and ends the
    * subscription. Default false: guards run once, when the operation subscribes.
    */
