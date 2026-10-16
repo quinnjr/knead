@@ -374,13 +374,14 @@ describe('redirectToHttps hardening', () => {
       '0x7f.1',
       '[::0001]',
     ];
+    const tls = makeCert('bad-host'); // one certificate for every case: RSA keygen is slow
     for (const host of bad) {
       const app = await HpmwsFactory.create(M, { logger: new MemoryLogger(), development: false });
       await expect(
         app.listen({
           port: 0,
           hostname: '127.0.0.1',
-          tls: makeCert('bad-host'),
+          tls,
           redirectHttp: { port: 0, host },
         }),
       ).rejects.toThrow(HttpConfigError);
