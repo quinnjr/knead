@@ -66,7 +66,12 @@ function redactSecretPairs(text: string): string {
 }
 
 /** HTTP Authorization credentials. */
-const AUTH_SCHEMES = /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi;
+/**
+ * A credential-shaped value only (8+ token characters, or a `:`/`=` as in base64 padding or
+ * `user:pass`), so prose such as "a basic mistake" stays readable.
+ */
+const AUTH_SCHEMES =
+  /\b(Bearer|Basic)\s+(?:[A-Za-z0-9._~+/=-]{8,}|[A-Za-z0-9._~+/-]*[:=][A-Za-z0-9._~+/=:-]*)/gi;
 const AUTH_HINT = /bearer|basic/i;
 
 /** Whitespace, quotes and angle brackets end a URL token. */

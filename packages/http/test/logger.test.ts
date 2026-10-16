@@ -131,7 +131,11 @@ describe('redactCredentials', () => {
     ],
     ['authorization: Bearer eyJhbGciOi.J9.x-_~+/=', 'authorization: Bearer ***'],
     ['Authorization: Basic dXNlcjpwYXNz', 'Authorization: Basic ***'],
-    ['authorization: bearer abc.def', 'authorization: bearer ***'],
+    ['authorization: bearer abc.def.ghi', 'authorization: bearer ***'],
+    ['Authorization: Basic dXNlcjpw', 'Authorization: Basic ***'],
+    ['basic user:pw', 'basic ***'],
+    ['Invalid basic auth header; a basic mistake', 'Invalid basic auth header; a basic mistake'],
+    ['Bearer of bad news', 'Bearer of bad news'],
     ['AUTHORIZATION: BASIC dXNlcg==', 'AUTHORIZATION: BASIC ***'],
     // Prefixed and suffixed keys, any case.
     ['?access_token=at1&x=1', '?access_token=***&x=1'],
