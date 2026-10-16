@@ -222,6 +222,15 @@ describe('playground and CSP', () => {
     expect(csp).not.toMatch(/script-src[^;]*https:\/\/cdn\.jsdelivr\.net[ ;]/);
     expect(csp).not.toContain("script-src 'self' 'unsafe-inline'");
     expect(res.headers.get('x-frame-options')).toBe('DENY');
+    // No third-party font hosts: Google Fonts is blocked and the page uses system fonts.
+    expect(csp).not.toContain('fonts.googleapis.com');
+    expect(csp).not.toContain('fonts.gstatic.com');
+    expect(csp).toContain("font-src 'self' data:;");
+    expect(res.headers.get('referrer-policy')).toBe('no-referrer');
+    // The page still renders: the playground bundle and stylesheet load with their SRI hashes.
+    expect(html).toContain('GraphQLPlayground.init');
+    expect(html).toMatch(/<script src="[^"]+middleware\.js" integrity="sha384-[^"]+"/);
+    expect(html).toMatch(/<link\s+rel="stylesheet"\s+href="[^"]+index\.css" integrity="sha384-/);
   });
 
   test('JSON responses keep the strict default CSP', async () => {

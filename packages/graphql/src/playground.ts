@@ -103,14 +103,9 @@ export function playgroundPage(
     "default-src 'self'",
     ['script-src', "'self'", ...urls(html, SCRIPT_SRC), ...hashes].join(' '),
     // The playground bundle injects styles at runtime, so inline styles cannot be hashed.
-    [
-      'style-src',
-      "'self'",
-      "'unsafe-inline'",
-      ...urls(html, STYLESHEET, 2),
-      'https://fonts.googleapis.com',
-    ].join(' '),
-    "font-src 'self' data: https://fonts.gstatic.com",
+    ['style-src', "'self'", "'unsafe-inline'", ...urls(html, STYLESHEET, 2)].join(' '),
+    // No third-party font hosts (Google Fonts would learn of every visit): system fonts.
+    "font-src 'self' data:",
     ['img-src', "'self'", 'data:', ...urls(html, ICON)].join(' '),
     "connect-src 'self'",
     "base-uri 'self'",
@@ -129,6 +124,7 @@ export function playgroundResponse(page: PlaygroundPage): Response {
       'cache-control': 'no-store',
       'x-content-type-options': 'nosniff',
       'content-security-policy': page.csp,
+      'referrer-policy': 'no-referrer',
     },
   });
 }
