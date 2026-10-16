@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import {
   BadRequestException,
   type HttpException,
@@ -198,6 +198,36 @@ describe('parseBody (Review Focus 1)', () => {
       2,
     ).catch((e) => e)) as HttpException;
     expect(multipart.status).toBe(413);
+  });
+
+  test('a multipart body with too many parts is rejected before it is parsed', async () => {
+    const boundary = 'XyZ';
+    const part = `--${boundary}\r\ncontent-disposition: form-data; name="f"\r\n\r\nv\r\n`;
+    const body = `${part.repeat(20_000)}--${boundary}--\r\n`;
+    expect(body.length).toBeLessThanOrEqual(1024 * 1024 * 2);
+    const request = () =>
+      new Request('http://localhost/', {
+        method: 'POST',
+        body,
+        headers: { 'content-type': `multipart/form-data; boundary=${boundary}` },
+      });
+    // The multipart parser never runs for an over-limit body.
+    const requestParser = spyOn(Request.prototype, 'formData');
+    const responseParser = spyOn(Response.prototype, 'formData');
+    try {
+      const t0 = performance.now();
+      const error = (await parseBody(request()).catch((e) => e)) as HttpException;
+      expect(error.status).toBe(413);
+      expect(performance.now() - t0).toBeLessThan(50);
+      expect(requestParser).not.toHaveBeenCalled();
+      expect(responseParser).not.toHaveBeenCalled();
+    } finally {
+      requestParser.mockRestore();
+      responseParser.mockRestore();
+    }
+    // Under the cap the parts are parsed as usual.
+    const ok = (await parseBody(request(), 20_000)) as Record<string, unknown>;
+    expect((ok.f as string[]).length).toBe(20_000);
   });
 
   test('100k repeated keys in a 1 MiB body are rejected quickly', async () => {

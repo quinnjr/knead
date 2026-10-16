@@ -59,6 +59,17 @@ function exceedsFields(text: string, max: number): boolean {
   return false;
 }
 
+/** Occurrences of `needle` in `bytes`, counting no further than `limit`. Linear (indexOf). */
+function countOccurrences(bytes: Buffer, needle: string, limit: number): number {
+  const pattern = Buffer.from(needle, 'latin1');
+  let count = 0;
+  for (let at = bytes.indexOf(pattern); at !== -1 && count < limit; ) {
+    count++;
+    at = bytes.indexOf(pattern, at + pattern.length);
+  }
+  return count;
+}
+
 /** Collects a request body's fields; more than `maxParams` is a 413. */
 function collectBody<V>(entries: Iterable<[string, V]>, maxParams: number): Fields<V> {
   try {
@@ -143,9 +154,20 @@ export async function parseBody(req: Request, maxParams = DEFAULT_MAX_PARAMS): P
     return collectBody(new URLSearchParams(text), maxParams);
   }
   if (type === 'multipart/form-data') {
+    const contentType = req.headers.get('content-type') ?? '';
+    // The body is already capped at maxRequestBodySize: buffer it and count its parts before
+    // the multipart parser builds them all.
+    const bytes = Buffer.from(await readBody(() => req.arrayBuffer()));
+    const boundary = /;\s*boundary=(?:"([^"]+)"|([^;\s]+))/i.exec(contentType);
+    const delimiter = boundary ? `--${boundary[1] ?? boundary[2]}` : undefined;
+    if (delimiter && countOccurrences(bytes, delimiter, maxParams + 2) - 1 > maxParams) {
+      throw new HttpException(413, `The request body has more than ${maxParams} fields.`);
+    }
     let form: Iterable<[string, string | File]>;
     try {
-      form = (await req.formData()) as unknown as Iterable<[string, string | File]>;
+      form = (await new Response(bytes, {
+        headers: { 'content-type': contentType },
+      }).formData()) as unknown as Iterable<[string, string | File]>;
     } catch {
       throw new BadRequestException('Malformed multipart body');
     }
