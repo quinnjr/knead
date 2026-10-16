@@ -14,9 +14,6 @@ import type { GraphQLRuntime } from './runtime.js';
 
 export const GRAPHQL_TRANSPORT_WS = 'graphql-transport-ws';
 
-/** closeWhere predicates kept per socket until its init completes; more fail closed. */
-const MAX_DEFERRED_REVOCATIONS = 100;
-
 /** Accepted subscribe/complete message ids. */
 const MESSAGE_ID = /^[A-Za-z0-9_.:-]{1,64}$/;
 
@@ -218,6 +215,11 @@ export function createSubscriptionEndpoint(
   const facades = new WeakMap<WsSocket, SocketFacade>();
   /** Revocations recorded for sockets that had not opened yet, keyed by their socket data. */
   const early = new WeakMap<object, DeferredRevocation[]>();
+  /**
+   * closeWhere predicates kept per socket until its init completes (the registry's
+   * `maxPendingRevocations`, default 10000); more fail closed.
+   */
+  const maxDeferred = () => runtime.maxPendingRevocations ?? 10_000;
   const states = new WeakMap<object, SocketState>();
   const stateOf = (socket: object): SocketState => {
     const state = states.get(socket);
@@ -361,13 +363,14 @@ export function createSubscriptionEndpoint(
         // the connection that open() creates.
         if (ws.data.endpoint !== runtime.options.path) return false;
         const list = early.get(ws.data) ?? [];
-        list.push({ predicate, code, reason });
+        // Past the cap the list only needs to show that it overflowed (open() then fails closed).
+        if (list.length <= maxDeferred()) list.push({ predicate, code, reason });
         early.set(ws.data, list);
         return true;
       }
       const state = states.get(facade);
       if (!state || state.initDone || state.closed) return false;
-      if (state.deferred.length >= MAX_DEFERRED_REVOCATIONS) {
+      if (state.deferred.length >= maxDeferred()) {
         // Too many to keep: fail closed rather than let one escape.
         ws.close(1008, 'Revocation state unavailable');
         return true;
@@ -396,7 +399,7 @@ export function createSubscriptionEndpoint(
       };
       const deferred = early.get(ws.data) ?? [];
       early.delete(ws.data);
-      if (deferred.length > MAX_DEFERRED_REVOCATIONS) {
+      if (deferred.length > maxDeferred()) {
         ws.close(1008, 'Revocation state unavailable');
         return;
       }

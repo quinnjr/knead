@@ -356,6 +356,11 @@ export class WsRegistry {
     this.#withData.delete(key);
   }
 
+  /** The `websocket.maxPendingRevocations` limit in effect. */
+  get maxPendingRevocations(): number {
+    return this.#server.maxPendingRevocations;
+  }
+
   /** @internal Upgrades currently in progress (for tests). */
   get upgradesInProgress(): number {
     this.#sweep(Date.now(), true);

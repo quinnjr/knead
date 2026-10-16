@@ -35,7 +35,7 @@ function fakeIterator() {
   return it;
 }
 
-function setup() {
+function setup(extra: { maxPendingRevocations?: number } = {}) {
   let config!: Config;
   let socket!: Socket;
   const reached: string[] = [];
@@ -54,6 +54,7 @@ function setup() {
       execute: async () => ({ response: {} }),
     },
     createOperationContext: async () => new OperationContext({} as never, {}, ['subscription']),
+    ...extra,
   } as unknown as GraphQLRuntime;
   const endpoint = createSubscriptionEndpoint(runtime, {}, (c) => {
     config = c;
@@ -138,11 +139,19 @@ describe('createSubscriptionEndpoint defences (Leaven stubbed)', () => {
     expect(ok.closes).toEqual([]);
   });
 
-  test('more than 100 deferred revocations before init fail closed with 1008', () => {
-    const t = setup();
+  test('deferred revocations past maxPendingRevocations before init fail closed with 1008', () => {
+    const t = setup({ maxPendingRevocations: 100 });
     for (let i = 0; i < 100; i++) {
       expect(t.endpoint.deferRevocation(t.ws, () => false, 1008, 'x')).toBe(true);
     }
+    expect(t.closes).toEqual([]);
+    t.endpoint.deferRevocation(t.ws, () => false, 1008, 'x');
+    expect(t.closes).toEqual([1008]);
+  });
+
+  test('the default cap is the registry default, 10000', () => {
+    const t = setup();
+    for (let i = 0; i < 10_000; i++) t.endpoint.deferRevocation(t.ws, () => false, 1008, 'x');
     expect(t.closes).toEqual([]);
     t.endpoint.deferRevocation(t.ws, () => false, 1008, 'x');
     expect(t.closes).toEqual([1008]);

@@ -682,6 +682,11 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
     };
   }
 
+  /** `listen({ websocket: { maxPendingRevocations } })`, also the per-socket deferral cap. */
+  get maxPendingRevocations(): number {
+    return this.#ws.maxPendingRevocations;
+  }
+
   /** The GraphQL connection of a subscription socket, or undefined for any other socket. */
   connection(ws: WsSocket): GraphQLConnection | undefined {
     return this.#endpoint?.connection(ws);
