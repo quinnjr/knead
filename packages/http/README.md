@@ -56,4 +56,6 @@ try {
 
 If `close()` runs while `listen()` is still initializing and that wait exceeds `shutdownTimeout`, the listen is abandoned and classes whose `onModuleInit` was still running do not receive `onModuleDestroy`.
 
+The default `ConsoleLogger` masks URL credentials before printing: `redis://user:pass@host` is logged as `redis://***@host`, in the message, in string arguments and in Error messages, stacks and causes (an Error that needed masking is printed as its masked stack text and `Caused by:` chain; the original is not modified). `redactCredentials()` is exported for custom loggers.
+
 `bun add @hpmws/core @hpmws/http` (`@hpmws/core` is a peer dependency). Licensed MIT OR Apache-2.0.
