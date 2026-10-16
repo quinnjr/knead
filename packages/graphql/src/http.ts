@@ -10,7 +10,7 @@ import {
 } from '@hpmws/http';
 import type { GraphQLRequest } from '@leaven-graphql/core';
 import type { OperationKind } from './context.js';
-import { playgroundPage, playgroundResponse } from './playground.js';
+import { servePlayground } from './playground.js';
 import { GraphQLRuntime, rejectionMessage } from './runtime.js';
 
 export const GRAPHQL_RESPONSE_JSON = 'application/graphql-response+json';
@@ -142,7 +142,7 @@ export async function handleGet(runtime: GraphQLRuntime, ctx: Ctx): Promise<Resp
       url.protocol = ctx.secure ? 'wss:' : 'ws:';
       ws = url.toString();
     }
-    return playgroundResponse(playgroundPage(options.path, ws));
+    return servePlayground(options.path, ws, runtime.logger);
   }
   if (options.csrf !== false) {
     const required = options.csrf.requiredHeaders;

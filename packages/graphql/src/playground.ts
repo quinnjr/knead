@@ -1,4 +1,20 @@
+import type { Logger } from '@hpmws/http';
 import { renderPlayground } from '@leaven-graphql/playground';
+
+/**
+ * Subresource Integrity hashes of the CDN assets Leaven's playground page loads. Exact jsdelivr
+ * npm versions are immutable. When Leaven changes these URLs the playground refuses to render
+ * until the new URLs are added here (test/playground.test.ts fails first).
+ * Computed with: curl -sSfL <url> | openssl dgst -sha384 -binary | base64
+ */
+export const PLAYGROUND_ASSETS: Readonly<Record<string, string>> = Object.freeze({
+  'https://cdn.jsdelivr.net/npm/graphql-playground-react@1.7.26/build/static/js/middleware.js':
+    'sha384-8ZBpoKWpyI6F5F1R0ijmRe6NtB5mkl47ax+KcynJ79OAeWCPQMuQNOOBl6ArLPGn',
+  'https://cdn.jsdelivr.net/npm/graphql-playground-react@1.7.26/build/static/css/index.css':
+    'sha384-xb+UHILNN4fV3NgQMTjXk0x9A80U0hmkraTFvucUYTILJymGT8E1Aq2278NSi5+3',
+  'https://cdn.jsdelivr.net/npm/graphql-playground-react@1.7.26/build/favicon.png':
+    'sha384-VLp5/okq5I2SPX4Uw0U/e4NV26ySLulHMNoG1Tql7c51MjUKtgTFKFTuVd3fjR2q',
+});
 
 export interface PlaygroundPage {
   readonly html: string;
@@ -6,20 +22,48 @@ export interface PlaygroundPage {
   readonly csp: string;
 }
 
+/** Leaven's page references an external asset that has no pinned integrity hash. */
+export class PlaygroundAssetError extends Error {
+  constructor(readonly urls: readonly string[]) {
+    super(`GraphQL playground assets have no pinned integrity hash: ${urls.join(', ')}`);
+    this.name = 'PlaygroundAssetError';
+  }
+}
+
 const INLINE_SCRIPT = /<script>([\s\S]*?)<\/script>/g;
 const SCRIPT_SRC = /<script src="([^"]+)"/g;
-const STYLESHEET = /<link\s+rel="stylesheet"\s+href="([^"]+)"/g;
+const STYLESHEET = /(<link\s+rel="stylesheet"\s+href="([^"]+)")/g;
 const ICON = /<link\s+rel="shortcut icon"\s+href="([^"]+)"/g;
+const EXTERNAL = /(?:src|href)="(https:\/\/[^"]+)"/g;
 
-const urls = (html: string, pattern: RegExp) =>
-  [...html.matchAll(pattern)].map((m) => m[1] ?? '').filter((u) => u.startsWith('https://'));
+const urls = (html: string, pattern: RegExp, group = 1) =>
+  [...html.matchAll(pattern)].map((m) => m[group] ?? '').filter((u) => u.startsWith('https://'));
 
 function sha256(text: string): string {
   return new Bun.CryptoHasher('sha256').update(text).digest('base64');
 }
 
-export function playgroundPage(endpoint: string, subscriptionEndpoint?: string): PlaygroundPage {
-  const html = renderPlayground({ endpoint, subscriptionEndpoint, title: 'GraphQL Playground' });
+/** Adds integrity and crossorigin to script and stylesheet tags; throws if a hash is missing. */
+function withIntegrity(html: string, assets: Readonly<Record<string, string>>): string {
+  const missing = urls(html, EXTERNAL).filter((url) => !Object.hasOwn(assets, url));
+  if (missing.length > 0) throw new PlaygroundAssetError([...new Set(missing)]);
+  const attrs = (url: string) => ` integrity="${assets[url]}" crossorigin="anonymous"`;
+  return html
+    .replace(SCRIPT_SRC, (tag, url: string) => `${tag}${attrs(url)}`)
+    .replace(STYLESHEET, (tag, _all: string, url: string) => `${tag}${attrs(url)}`);
+}
+
+export function playgroundPage(
+  endpoint: string,
+  subscriptionEndpoint?: string,
+  assets: Readonly<Record<string, string>> = PLAYGROUND_ASSETS,
+): PlaygroundPage {
+  const rendered = renderPlayground({
+    endpoint,
+    subscriptionEndpoint,
+    title: 'GraphQL Playground',
+  });
+  const html = withIntegrity(rendered, assets);
   const hashes = [...html.matchAll(INLINE_SCRIPT)].map((m) => `'sha256-${sha256(m[1] ?? '')}'`);
   // CDN sources are the exact asset URLs the page loads, not the whole CDN host.
   const csp = [
@@ -30,7 +74,7 @@ export function playgroundPage(endpoint: string, subscriptionEndpoint?: string):
       'style-src',
       "'self'",
       "'unsafe-inline'",
-      ...urls(html, STYLESHEET),
+      ...urls(html, STYLESHEET, 2),
       'https://fonts.googleapis.com',
     ].join(' '),
     "font-src 'self' data: https://fonts.gstatic.com",
@@ -53,4 +97,23 @@ export function playgroundResponse(page: PlaygroundPage): Response {
       'content-security-policy': page.csp,
     },
   });
+}
+
+/** The playground response, or 503 (logged) when an asset has no pinned integrity hash. */
+export function servePlayground(
+  endpoint: string,
+  subscriptionEndpoint: string | undefined,
+  logger: Logger,
+  assets: Readonly<Record<string, string>> = PLAYGROUND_ASSETS,
+): Response {
+  try {
+    return playgroundResponse(playgroundPage(endpoint, subscriptionEndpoint, assets));
+  } catch (error) {
+    if (!(error instanceof PlaygroundAssetError)) throw error;
+    logger.error(`${error.message}. Not serving the playground; add them to PLAYGROUND_ASSETS.`);
+    return new Response('GraphQL playground unavailable', {
+      status: 503,
+      headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' },
+    });
+  }
 }
