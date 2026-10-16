@@ -183,6 +183,14 @@ describe('safe default limits', () => {
     expect(res.status).toBe(400);
   });
 
+  test('with the defaults, an over-long WebSocket query gets the error (the payload fits)', async () => {
+    s = await startGraphQL([M]);
+    const sub = await s.app.graphqlSubscribe(`subscription { t }${' '.repeat(100 * 1024)}`);
+    const first = await sub.next();
+    expect(first.value?.errors?.[0]?.message).toBe('The query is longer than 102400 characters.');
+    await sub.close();
+  });
+
   test('maxQueryLength over WebSocket: an error for that id, nothing executes', async () => {
     s = await startGraphQL([M], { maxQueryLength: 100 });
     const sub = await s.app.graphqlSubscribe(`subscription { t }${' '.repeat(100)}`);

@@ -44,7 +44,10 @@ export interface WsEndpointOptions {
 
 /** Server-wide WebSocket limits (`listen({ websocket })`). */
 export interface WsServerOptions {
-  /** Largest accepted message in bytes; a larger one drops the connection (1006). Default 64 KiB. */
+  /**
+   * Largest accepted message in bytes; a larger one drops the connection (1006). Default 256 KiB,
+   * above a 100 KiB GraphQL query plus its graphql-transport-ws envelope.
+   */
   maxPayloadLength?: number;
   /** Bytes buffered for a slow reader before backpressure applies. Default 1 MiB. */
   backpressureLimit?: number;
@@ -70,7 +73,7 @@ export interface WsServerOptions {
 }
 
 export const WS_DEFAULTS = Object.freeze({
-  maxPayloadLength: 64 * 1024,
+  maxPayloadLength: 256 * 1024,
   backpressureLimit: 1024 * 1024,
   closeOnBackpressureLimit: true,
   idleTimeout: 120,

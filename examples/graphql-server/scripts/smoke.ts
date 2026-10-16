@@ -304,7 +304,7 @@ try {
     return code;
   });
 
-  await check('an oversized WebSocket message (over 64 KiB) drops the connection', async () => {
+  await check('an oversized WebSocket message (over 256 KiB) drops the connection', async () => {
     const ws = new WebSocket(`${base.replace('http', 'ws')}/graphql`, 'graphql-transport-ws');
     let received = false;
     const code = await new Promise<number>((resolve, reject) => {
@@ -314,7 +314,7 @@ try {
       ws.onmessage = (message) => {
         const msg = JSON.parse(String(message.data)) as { type: string };
         if (msg.type === 'connection_ack') {
-          const query = `subscription { postPublished { id } }${' '.repeat(70_000)}`;
+          const query = `subscription { postPublished { id } }${' '.repeat(300_000)}`;
           ws.send(JSON.stringify({ id: '1', type: 'subscribe', payload: { query } }));
         } else if (msg.type !== 'ping') received = true;
       };

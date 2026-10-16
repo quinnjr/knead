@@ -195,11 +195,11 @@ const closed = (socket: WebSocket) =>
   });
 
 describe('Bun WebSocket limits', () => {
-  test('defaults: 64 KiB payloads, 1 MiB backpressure (closing), 120s idle timeout', async () => {
+  test('defaults: 256 KiB payloads, 1 MiB backpressure (closing), 120s idle timeout', async () => {
     const ws = await registry();
     ws.configure({});
     expect(ws.handler()).toMatchObject({
-      maxPayloadLength: 64 * 1024,
+      maxPayloadLength: 256 * 1024,
       backpressureLimit: 1024 * 1024,
       closeOnBackpressureLimit: true,
       idleTimeout: 120,
@@ -233,7 +233,7 @@ describe('Bun WebSocket limits', () => {
     });
     const socket = await connect(app, '/live');
     const code = closed(socket);
-    socket.send('x'.repeat(64 * 1024 + 1));
+    socket.send('x'.repeat(256 * 1024 + 1));
     // Bun drops the connection without a close frame, so both sides see 1006.
     expect(await code).toBe(1006);
     for (let i = 0; i < 50 && serverCode === undefined; i++) await Bun.sleep(5);
@@ -241,16 +241,28 @@ describe('Bun WebSocket limits', () => {
     expect(received).toEqual([]);
   });
 
+  test('the default accepts a 200 KiB message (above a 100 KiB GraphQL query)', async () => {
+    const received: number[] = [];
+    app = await startWith({
+      '/live': { endpoint: { message: (_ws, m) => void received.push(m.length) } },
+    });
+    const socket = await connect(app, '/live');
+    socket.send('x'.repeat(200 * 1024));
+    for (let i = 0; i < 50 && received.length === 0; i++) await Bun.sleep(10);
+    expect(received).toEqual([200 * 1024]);
+    socket.close();
+  });
+
   test('listen({ websocket }) raises the payload limit', async () => {
     const received: number[] = [];
     app = await startWith(
       { '/live': { endpoint: { message: (_ws, m) => void received.push(m.length) } } },
-      { websocket: { maxPayloadLength: 128 * 1024 } },
+      { websocket: { maxPayloadLength: 512 * 1024 } },
     );
     const socket = await connect(app, '/live');
-    socket.send('x'.repeat(100 * 1024));
+    socket.send('x'.repeat(300 * 1024));
     for (let i = 0; i < 50 && received.length === 0; i++) await Bun.sleep(10);
-    expect(received).toEqual([100 * 1024]);
+    expect(received).toEqual([300 * 1024]);
     socket.close();
   });
 

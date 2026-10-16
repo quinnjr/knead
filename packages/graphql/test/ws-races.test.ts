@@ -162,7 +162,7 @@ describe('http WebSocket limits apply to the subscription endpoint', () => {
     raw.send({
       id: '1',
       type: 'subscribe',
-      payload: { query: `subscription { t }${' '.repeat(70_000)}` },
+      payload: { query: `subscription { t }${' '.repeat(300_000)}` },
     });
     expect(await raw.closed).not.toBe(1000);
     expect(raw.messages.some((m) => m.id === '1')).toBe(false);

@@ -55,7 +55,7 @@ WebSockets are limited by default. `listen({ websocket })` sets the server-wide 
 
 | Option | Default | |
 | --- | --- | --- |
-| `maxPayloadLength` | 64 KiB | a larger message drops the connection |
+| `maxPayloadLength` | 256 KiB | a larger message drops the connection (the default sits above `@hpmws/graphql`'s 100 KiB `maxQueryLength` plus its message envelope) |
 | `backpressureLimit` / `closeOnBackpressureLimit` | 1 MiB / `true` | a reader that falls that far behind is closed |
 | `idleTimeout` | 120 (seconds) | |
 | `maxConnectionsPerIp` | 100 | open sockets per `ctx.ip`; further upgrades get 429 (`false` disables) |

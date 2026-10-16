@@ -42,7 +42,7 @@ export interface ListenOptions {
   redirectHttp?: { port: number; hostname?: string; host?: string };
   trustProxy?: TrustProxy;
   /**
-   * WebSocket limits: 64 KiB messages, 1 MiB backpressure (closing), 120s idle timeout,
+   * WebSocket limits: 256 KiB messages, 1 MiB backpressure (closing), 120s idle timeout,
    * 100 sockets per IP and 100 messages per 10s per socket by default.
    */
   websocket?: WsServerOptions;
