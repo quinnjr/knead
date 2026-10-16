@@ -679,6 +679,7 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
       maskErrors: this.options.maskErrors,
       logger: this.logger,
       development: this.development,
+      mapError: this.options.mapError,
     };
   }
 
