@@ -1,11 +1,11 @@
 {
-  "name": "@hpmws/http",
+  "name": "@knead/http",
   "version": "0.0.0",
-  "description": "HTTP(S) server, REST controllers and request pipeline for the hpmws framework",
+  "description": "HTTP(S) server, REST controllers and request pipeline for the Knead framework",
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/quinnjr/high-performance-modular-web-server.git",
+    "url": "git+https://github.com/quinnjr/knead.git",
     "directory": "packages/http"
   },
   "type": "module",
@@ -20,7 +20,7 @@
   ],
   "sideEffects": false,
   "engines": {
-    "bun": ">=1.4.0"
+    "bun": ">=1.4.3"
   },
   "scripts": {
     "test": "bun test",
@@ -30,10 +30,10 @@
     "@standard-schema/spec": "^1.1.0"
   },
   "peerDependencies": {
-    "@hpmws/core": "workspace:^"
+    "@knead/core": "workspace:^"
   },
   "devDependencies": {
-    "@hpmws/core": "workspace:^"
+    "@knead/core": "workspace:^"
   },
   "publishConfig": {
     "access": "public",

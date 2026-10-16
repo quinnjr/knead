@@ -1,4 +1,4 @@
-import type { Logger } from '@hpmws/http';
+import type { Logger } from '@knead/http';
 import { renderPlayground } from '@leaven-graphql/playground';
 
 /**
@@ -19,6 +19,20 @@ export const PLAYGROUND_ASSETS: Readonly<Record<string, string>> = Object.freeze
     'sha384-VLp5/okq5I2SPX4Uw0U/e4NV26ySLulHMNoG1Tql7c51MjUKtgTFKFTuVd3fjR2q',
 });
 
+/**
+ * sha256 (base64) of each inline script in Leaven's playground page rendered for the reference
+ * endpoint `/graphql` with no subscription endpoint (PLAYGROUND_REFERENCE). The gate renders that
+ * page at bootstrap and refuses to serve the playground when the hashes differ, so a changed
+ * Leaven template (or a tampered install) is noticed before it reaches a browser. Recompute with
+ * `playgroundScriptHashes()` whenever the playground dependency changes.
+ */
+export const PLAYGROUND_SCRIPT_HASHES: readonly string[] = Object.freeze([
+  'KXClm84BZMGQwvs58xNH4U6eMcSJLu9b0rCfFTanBU0=',
+]);
+
+/** The endpoint the pinned script hashes are computed for. */
+export const PLAYGROUND_REFERENCE = '/graphql';
+
 export interface PlaygroundPage {
   readonly html: string;
   /** A CSP allowing exactly this page: its inline script by hash, its CDN assets by full URL. */
@@ -34,6 +48,22 @@ export class PlaygroundAssetError extends Error {
 }
 
 const INLINE_SCRIPT = /<script>([\s\S]*?)<\/script>/g;
+
+/** Leaven's inline scripts do not match PLAYGROUND_SCRIPT_HASHES. */
+export class PlaygroundScriptError extends Error {
+  constructor(readonly hashes: readonly string[]) {
+    super(
+      `GraphQL playground inline scripts do not match the pinned hashes (got ${hashes.join(', ') || 'none'})`,
+    );
+    this.name = 'PlaygroundScriptError';
+  }
+}
+
+/** The sha256 (base64) of each inline script of Leaven's reference playground page. */
+export function playgroundScriptHashes(): string[] {
+  const html = renderPlayground({ endpoint: PLAYGROUND_REFERENCE, title: 'GraphQL Playground' });
+  return [...html.matchAll(INLINE_SCRIPT)].map((m) => sha256(m[1] ?? ''));
+}
 const SCRIPT_SRC = /<script src="([^"]+)"/g;
 const STYLESHEET = /(<link\s+rel="stylesheet"\s+href="([^"]+)")/g;
 const ICON = /<link\s+rel="shortcut icon"\s+href="([^"]+)"/g;
@@ -73,14 +103,9 @@ export function playgroundPage(
     "default-src 'self'",
     ['script-src', "'self'", ...urls(html, SCRIPT_SRC), ...hashes].join(' '),
     // The playground bundle injects styles at runtime, so inline styles cannot be hashed.
-    [
-      'style-src',
-      "'self'",
-      "'unsafe-inline'",
-      ...urls(html, STYLESHEET, 2),
-      'https://fonts.googleapis.com',
-    ].join(' '),
-    "font-src 'self' data: https://fonts.gstatic.com",
+    ['style-src', "'self'", "'unsafe-inline'", ...urls(html, STYLESHEET, 2)].join(' '),
+    // No third-party font hosts (Google Fonts would learn of every visit): system fonts.
+    "font-src 'self' data:",
     ['img-src', "'self'", 'data:', ...urls(html, ICON)].join(' '),
     "connect-src 'self'",
     "base-uri 'self'",
@@ -99,27 +124,44 @@ export function playgroundResponse(page: PlaygroundPage): Response {
       'cache-control': 'no-store',
       'x-content-type-options': 'nosniff',
       'content-security-policy': page.csp,
+      'referrer-policy': 'no-referrer',
     },
   });
 }
 
 /**
- * Serves the playground. The pinned asset hashes are checked once, when the gate is created at
- * bootstrap: if Leaven's page references an asset without one, that is logged once and every
- * request gets 503.
+ * Serves the playground. The pinned asset and inline-script hashes are checked once, when the
+ * gate is created at bootstrap: if Leaven's page references an asset without one, or its inline
+ * scripts differ from PLAYGROUND_SCRIPT_HASHES, that is logged once and every request gets 503.
  */
 export class PlaygroundGate {
   readonly #assets: Readonly<Record<string, string>>;
   readonly #available: boolean;
 
-  constructor(logger: Logger, assets: Readonly<Record<string, string>> = PLAYGROUND_ASSETS) {
+  constructor(
+    logger: Logger,
+    assets: Readonly<Record<string, string>> = PLAYGROUND_ASSETS,
+    scriptHashes: readonly string[] = PLAYGROUND_SCRIPT_HASHES,
+  ) {
     this.#assets = assets;
     try {
-      playgroundPage('/graphql', undefined, assets);
+      playgroundPage(PLAYGROUND_REFERENCE, undefined, assets);
+      const actual = playgroundScriptHashes();
+      if (actual.length !== scriptHashes.length || actual.some((h, i) => h !== scriptHashes[i])) {
+        throw new PlaygroundScriptError(actual);
+      }
       this.#available = true;
     } catch (error) {
-      if (!(error instanceof PlaygroundAssetError)) throw error;
-      logger.error(`${error.message}. The playground is disabled; add them to PLAYGROUND_ASSETS.`);
+      if (error instanceof PlaygroundAssetError) {
+        logger.error(
+          `${error.message}. The playground is disabled; add them to PLAYGROUND_ASSETS.`,
+        );
+      } else if (error instanceof PlaygroundScriptError) {
+        logger.error(
+          `${error.message}. The playground is disabled; review Leaven's page and update ` +
+            'PLAYGROUND_SCRIPT_HASHES.',
+        );
+      } else throw error;
       this.#available = false;
     }
   }

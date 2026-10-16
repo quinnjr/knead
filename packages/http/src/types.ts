@@ -1,4 +1,4 @@
-import type { AbstractType, Type } from '@hpmws/core';
+import type { AbstractType, Type } from '@knead/core';
 import type { StandardSchemaV1 } from '@standard-schema/spec';
 import type { Server } from 'bun';
 
@@ -6,7 +6,7 @@ export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 
 
 /**
  * Augment to type `ctx.state`:
- * `declare module '@hpmws/http' { interface CtxState { user?: User } }`
+ * `declare module '@knead/http' { interface CtxState { user?: User } }`
  */
 // biome-ignore lint/suspicious/noEmptyInterface: augmentation point
 export interface CtxState {}
@@ -109,6 +109,12 @@ export interface ControllerOptions {
 }
 
 export interface RouteOptions extends ControllerOptions {
+  /**
+   * Guards that run after the route's schemas validated the request, so they see the validated
+   * (and transformed) `ctx.params`, `ctx.query`, `ctx.headers` and `ctx.body`. `guards` run
+   * before validation and see the raw request. Anything but `true` is a 403.
+   */
+  authorize?: GuardRef<any>[];
   params?: StandardSchemaV1;
   query?: StandardSchemaV1;
   body?: StandardSchemaV1;

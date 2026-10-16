@@ -11,9 +11,13 @@
 #
 # A package must already exist on the registry before a trusted publisher can
 # be attached to it, so a brand-new package needs one manual first publish.
+#
+# The script logs out of npm when it exits (also on failure or Ctrl-C), so the
+# long-lived npm session token does not stay in ~/.npmrc. That also ends a
+# session you had before running it; run `npm login` again if you need one.
 set -euo pipefail
 
-REPO="quinnjr/high-performance-modular-web-server"
+REPO="quinnjr/knead"
 WORKFLOW="release.yml"
 # Exact npm version, so the trust call is reproducible.
 NPM_VERSION="11.21.0"
@@ -48,7 +52,7 @@ done
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck disable=SC2016 # JavaScript template literal, not a shell expansion
-packages=$(cd "$root" && node -e '
+package_list=$(cd "$root" && node -e '
   const fs = require("node:fs");
   for (const dir of fs.readdirSync("packages")) {
     const file = `packages/${dir}/package.json`;
@@ -56,6 +60,12 @@ packages=$(cd "$root" && node -e '
     const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
     if (!pkg.private) console.log(pkg.name);
   }')
+packages=()
+if [ -n "$package_list" ]; then mapfile -t packages <<<"$package_list"; fi
+if [ "${#packages[@]}" -eq 0 ]; then
+  echo "error: no public workspace packages found" >&2
+  exit 1
+fi
 
 # Run npm outside pnpm's configuration: `pnpm run` exports its settings as
 # npm_config_* variables (including a globalconfig pointing at pnpm's config),
@@ -64,14 +74,21 @@ packages=$(cd "$root" && node -e '
 # in ~/.npmrc is still read.
 while IFS= read -r var; do unset "$var"; done < <(env | grep -io '^npm_config_[^=]*' || true)
 workdir="$(mktemp -d)"
-trap 'rm -rf "$workdir"' EXIT
 npm11() { (cd "$workdir" && pnpm dlx "npm@$NPM_VERSION" "$@"); }
+cleanup() {
+  # Revoke the npm session token rather than leave it in ~/.npmrc.
+  if npm11 logout >/dev/null 2>&1; then echo "logged out of npm" >&2; fi
+  rm -rf "$workdir"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 if ! npm11 whoami >/dev/null 2>&1; then
   npm11 login
 fi
 
-for pkg in $packages; do
+for pkg in "${packages[@]}"; do
   echo "==> $pkg"
   npm11 trust github "$pkg" --file "$WORKFLOW" --repo "$REPO" --allow-publish --yes \
     ${env_args[@]+"${env_args[@]}"} ${passthrough[@]+"${passthrough[@]}"}

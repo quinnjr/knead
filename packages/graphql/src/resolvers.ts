@@ -1,5 +1,5 @@
-import { appendMetadata, INJECTABLE, setMetadata } from '@hpmws/core';
-import { createRouteDecorator, type GuardRef } from '@hpmws/http';
+import { appendMetadata, INJECTABLE, setMetadata } from '@knead/core';
+import { createRouteDecorator, type GuardRef } from '@knead/http';
 import type {
   ResolverCtx,
   ResolverCtxKey,
@@ -224,7 +224,7 @@ export function Subscription<
 }
 
 /** The `ctx.meta` key set by `@Public()`. */
-export const IS_PUBLIC: unique symbol = Symbol('hpmws:graphql:public');
+export const IS_PUBLIC: unique symbol = Symbol('knead:graphql:public');
 
 const publicMeta = createRouteDecorator<true>(IS_PUBLIC);
 

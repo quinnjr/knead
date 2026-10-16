@@ -6,7 +6,7 @@ export interface InjectableOptions {
   scope?: Scope;
 }
 
-export const INJECTABLE = new MetadataKey<{ scope: Scope }>('hpmws:injectable');
+export const INJECTABLE = new MetadataKey<{ scope: Scope }>('knead:injectable');
 
 /** Optional: classes are injectable without it. Use it to set a scope. */
 export function Injectable(options: InjectableOptions = {}) {
@@ -30,7 +30,7 @@ export interface DynamicModule extends ModuleOptions {
 export type ModuleImport = Type | DynamicModule;
 export type ModuleExport = Token | ModuleImport;
 
-export const MODULE_METADATA = new MetadataKey<ModuleOptions>('hpmws:module');
+export const MODULE_METADATA = new MetadataKey<ModuleOptions>('knead:module');
 
 export function Module(options: ModuleOptions = {}) {
   return (_target: Function, context: ClassDecoratorContext): void => {

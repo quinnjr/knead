@@ -1,4 +1,4 @@
-import { getMetadata, getOwnMetadata } from '@hpmws/core';
+import { getMetadata, getOwnMetadata } from '@knead/core';
 import {
   type GraphQLArgumentConfig,
   type GraphQLFieldConfig,

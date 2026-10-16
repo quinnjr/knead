@@ -1,12 +1,13 @@
-import { getMetadata } from '@hpmws/core';
+import { getMetadata } from '@knead/core';
 import type { RequestContext } from './context.js';
+import { logError } from './error-log.js';
 import {
   ForbiddenException,
   HttpException,
   type ProblemDetails,
   problemResponse,
 } from './exceptions.js';
-import type { Logger } from './logger.js';
+import { type Logger, logValue, redactCredentials, redactValue } from './logger.js';
 import { CATCH } from './metadata.js';
 import { requestUrl } from './request.js';
 import type { ExceptionFilter, Guard, Middleware } from './types.js';
@@ -69,27 +70,36 @@ export function defaultErrorResponse(
   development: boolean,
 ): Response {
   const instance = requestUrl(ctx.req).pathname;
+  const where = `${logValue(ctx.req.method)} ${logValue(instance)}`;
+  const log = { logger, development };
   if (error instanceof HttpException) {
     if (error.status < 500) return problemResponse(error.toProblem(instance), error.headers);
-    logger.error(`${error.status} on ${ctx.req.method} ${instance}`, error);
+    const correlationId = logError(log, `${error.status} on ${where}`, error);
     // Outside development a 5xx carries no detail or extensions: they tend to leak internals.
     const problem: ProblemDetails = development
-      ? error.toProblem(instance)
+      ? redactProblem(error.toProblem(instance))
       : { type: error.type, title: error.title, status: error.status, instance };
+    problem.correlationId = correlationId;
     return problemResponse(problem, error.headers);
   }
-  logger.error(`Unhandled error on ${ctx.req.method} ${instance}`, error);
+  const correlationId = logError(log, `Unhandled error on ${where}`, error);
   const problem: ProblemDetails = {
     type: 'about:blank',
     title: 'Internal Server Error',
     status: 500,
     instance,
+    correlationId,
   };
   if (development && error instanceof Error) {
-    problem.detail = error.message;
-    problem.stack = error.stack;
+    problem.detail = redactCredentials(error.message);
+    problem.stack = error.stack === undefined ? undefined : redactCredentials(error.stack);
   }
   return problemResponse(problem);
+}
+
+/** A development 5xx problem with its detail and extensions redacted. */
+function redactProblem(problem: ProblemDetails): ProblemDetails {
+  return redactValue(problem) as ProblemDetails;
 }
 
 /** Filters are tried in order (route → controller → global); the first match wins. */
@@ -106,7 +116,7 @@ export function createErrorHandler(
         if (res instanceof Response) return res;
         logger.error(`Exception filter ${nameOf(filter)} did not return a Response`);
       } catch (filterError) {
-        logger.error(`Exception filter ${nameOf(filter)} threw`, filterError);
+        logError({ logger, development }, `Exception filter ${nameOf(filter)} threw`, filterError);
       }
       break;
     }

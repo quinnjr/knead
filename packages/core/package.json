@@ -1,11 +1,11 @@
 {
-  "name": "@hpmws/core",
+  "name": "@knead/core",
   "version": "0.0.0",
-  "description": "Dependency injection and module system for the hpmws framework",
+  "description": "Dependency injection and module system for the Knead framework",
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/quinnjr/high-performance-modular-web-server.git",
+    "url": "git+https://github.com/quinnjr/knead.git",
     "directory": "packages/core"
   },
   "type": "module",
@@ -25,7 +25,7 @@
     "./dist/copy-guard.js"
   ],
   "engines": {
-    "bun": ">=1.4.0"
+    "bun": ">=1.4.3"
   },
   "scripts": {
     "test": "bun test",

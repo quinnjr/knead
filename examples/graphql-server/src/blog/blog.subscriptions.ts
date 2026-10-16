@@ -1,8 +1,15 @@
-import { inject } from '@hpmws/core';
-import { ID, Resolver, type ResolverCtx, Subscription } from '@hpmws/graphql';
-import { type Guard, UseGuards } from '@hpmws/http';
+import { inject } from '@knead/core';
+import { ID, Resolver, type ResolverCtx, Subscription } from '@knead/graphql';
+import { type Guard, UseGuards } from '@knead/http';
 import { BlogService } from './blog.service.js';
-import { Comment, Post, reviveComment, revivePost } from './blog.types.js';
+import {
+  Comment,
+  isCommentEvent,
+  isPostEvent,
+  Post,
+  reviveComment,
+  revivePost,
+} from './blog.types.js';
 import { commentTopic, POST_PUBLISHED } from './topics.js';
 
 /** Subscribing to a post's comments requires being able to see the post (drafts: author or admin). */
@@ -21,7 +28,9 @@ export class BlogSubscriptions {
   @Subscription(() => Post, {
     args: { authorId: { type: () => ID, nullable: true } },
     topic: POST_PUBLISHED,
-    filter: ({ payload, args }) => args.authorId == null || payload.authorId === args.authorId,
+    // Malformed events (for example injected into Redis) are dropped before they resolve.
+    filter: ({ payload, args }) =>
+      isPostEvent(payload) && (args.authorId == null || payload.authorId === args.authorId),
     resolve: revivePost,
   })
   postPublished() {}
@@ -31,6 +40,7 @@ export class BlogSubscriptions {
   @Subscription(() => Comment, {
     args: { postId: ID },
     topic: (ctx) => commentTopic(ctx.args.postId),
+    filter: ({ payload }) => isCommentEvent(payload),
     resolve: reviveComment,
     recheckGuards: true,
   })

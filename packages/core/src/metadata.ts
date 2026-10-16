@@ -13,7 +13,7 @@ export class MetadataKey<T> {
 type Bag = Record<PropertyKey, unknown>;
 type MethodBags = Record<PropertyKey, Bag>;
 
-const METHODS = Symbol('hpmws:methods');
+const METHODS = Symbol('knead:methods');
 
 function bagOf(target: object): Bag | undefined {
   return (target as { [Symbol.metadata]?: Bag | null })[Symbol.metadata] ?? undefined;

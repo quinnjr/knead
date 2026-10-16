@@ -1,4 +1,4 @@
-import { HttpConfigError } from '@hpmws/http';
+import { HttpConfigError } from '@knead/http';
 
 /** Directive names must be lowercase (e.g. `script-src`); anything else is rejected at validation. */
 export type CspDirectives = Record<string, readonly string[] | string | boolean>;

@@ -1,15 +1,15 @@
-import type { ModuleOptions, Provider, Token, Type } from '@hpmws/core';
+import type { ModuleOptions, Provider, Token, Type } from '@knead/core';
 import {
   type ExceptionFilter,
   type Guard,
-  HpmwsFactory,
   type HttpApplication,
+  KneadFactory,
   type ListenOptions,
   type LogEntry,
   type Logger,
   MemoryLogger,
   type Middleware,
-} from '@hpmws/http';
+} from '@knead/http';
 import {
   type GraphQLRequestOptions,
   type GraphQLResult,
@@ -69,7 +69,7 @@ export class TestingModuleBuilder {
 
   async compile(options: CompileOptions = {}): Promise<TestingModule> {
     const logger = options.logger ?? new MemoryLogger();
-    const app = await HpmwsFactory.create(
+    const app = await KneadFactory.create(
       { module: class TestRootModule {}, ...this.metadata },
       { overrides: this.#overrides, logger, development: options.development ?? true },
     );
@@ -123,7 +123,14 @@ export interface TestRequestInit {
   /** Serialized with JSON.stringify; sets Content-Type: application/json unless provided. */
   json?: unknown;
   body?: Bun.BodyInit;
-  tls?: { rejectUnauthorized?: boolean };
+  /**
+   * TLS options for the test request. `rejectUnauthorized: false` accepts any certificate (for
+   * self-signed test certificates): tests only, never in application code.
+   */
+  tls?: {
+    /** `false` skips certificate verification. Tests only. */
+    rejectUnauthorized?: boolean;
+  };
 }
 
 export class TestApp {

@@ -1,7 +1,13 @@
 import { describe, expect, test } from 'bun:test';
-import { MemoryLogger } from '@hpmws/http';
+import { MemoryLogger } from '@knead/http';
 import { renderPlayground } from '@leaven-graphql/playground';
-import { PLAYGROUND_ASSETS, PlaygroundGate, playgroundPage } from '../src/playground.js';
+import {
+  PLAYGROUND_ASSETS,
+  PLAYGROUND_SCRIPT_HASHES,
+  PlaygroundGate,
+  playgroundPage,
+  playgroundScriptHashes,
+} from '../src/playground.js';
 
 describe('playground subresource integrity', () => {
   test("every external asset in Leaven's playground HTML has a pinned hash", () => {
@@ -40,6 +46,26 @@ describe('playground subresource integrity', () => {
       expect(await res.text()).not.toContain('<script');
     }
     expect(errors().length).toBe(1);
+  });
+
+  test("Leaven's inline script matches the pinned sha256", () => {
+    // Fails when Leaven changes its inline script: review it, then update the pinned hash.
+    expect(playgroundScriptHashes()).toEqual([...PLAYGROUND_SCRIPT_HASHES]);
+  });
+
+  test('an inline script that does not match the pinned hash is reported once; 503', async () => {
+    const logger = new MemoryLogger();
+    const gate = new PlaygroundGate(logger, PLAYGROUND_ASSETS, ['AAAA']);
+    const errors = () => logger.entries.filter((e) => e.level === 'error');
+    expect(errors().length).toBe(1);
+    expect(errors()[0]?.message).toContain('inline scripts do not match the pinned hashes');
+    for (let i = 0; i < 3; i++) {
+      const res = gate.serve('/graphql');
+      expect(res.status).toBe(503);
+      expect(await res.text()).not.toContain('<script');
+    }
+    expect(errors().length).toBe(1);
+    expect(gate.available).toBe(false);
   });
 
   test('with every hash pinned the gate serves the page and logs nothing', () => {

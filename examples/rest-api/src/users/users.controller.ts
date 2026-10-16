@@ -1,6 +1,6 @@
-import { inject } from '@hpmws/core';
-import { Controller, type Ctx, Delete, Get, Post, UseGuards } from '@hpmws/http';
-import { sanitize } from '@hpmws/sanitize';
+import { inject } from '@knead/core';
+import { Controller, type Ctx, Delete, Get, Post, UseGuards } from '@knead/http';
+import { sanitize } from '@knead/sanitize';
 import * as v from 'valibot';
 import { AuthGuard, Roles, RolesGuard } from '../auth/auth.js';
 import { UsersService } from './users.service.js';

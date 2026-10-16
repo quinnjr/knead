@@ -1,5 +1,5 @@
 // Tokens, module metadata and inject() rely on module-level identity. Two copies of
-// @hpmws/core (e.g. a nested install after a version mismatch) silently break them, so the
+// @knead/core (e.g. a nested install after a version mismatch) silently break them, so the
 // first copy records itself on globalThis and any later, different copy warns once.
 
 export interface CoreCopyMarker {
@@ -7,9 +7,9 @@ export interface CoreCopyMarker {
 }
 
 /** @internal */
-export const CORE_COPY_KEY: unique symbol = Symbol.for('hpmws.core');
+export const CORE_COPY_KEY: unique symbol = Symbol.for('knead.core');
 /** @internal */
-export const CORE_COPY_WARNED_KEY: unique symbol = Symbol.for('hpmws.core.duplicateWarned');
+export const CORE_COPY_WARNED_KEY: unique symbol = Symbol.for('knead.core.duplicateWarned');
 
 /** @internal Records this copy, or warns once if a different copy was loaded first. */
 export function registerCoreCopy(marker: CoreCopyMarker): void {
@@ -22,9 +22,9 @@ export function registerCoreCopy(marker: CoreCopyMarker): void {
   if (existing.url === marker.url || store[CORE_COPY_WARNED_KEY]) return;
   store[CORE_COPY_WARNED_KEY] = true;
   console.warn(
-    `[hpmws] Multiple copies of @hpmws/core are loaded (${existing.url} and ${marker.url}). ` +
+    `[knead] Multiple copies of @knead/core are loaded (${existing.url} and ${marker.url}). ` +
       'Injection tokens, module metadata and inject() will not work across them; ' +
-      'make sure every @hpmws/* package resolves the same @hpmws/core (it is a peer dependency).',
+      'make sure every @knead/* package resolves the same @knead/core (it is a peer dependency).',
   );
 }
 

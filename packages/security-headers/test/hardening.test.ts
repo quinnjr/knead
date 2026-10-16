@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { HttpConfigError } from '@hpmws/http';
+import { HttpConfigError } from '@knead/http';
 import {
   buildHeaders,
   DEFAULT_OPTIONS,

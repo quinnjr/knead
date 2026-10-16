@@ -5,8 +5,8 @@ export { ApplicationContext, type CreateContextOptions } from './application-con
 export * from './decorators.js';
 export {
   CircularDependencyError,
-  HpmwsError,
   InjectionContextError,
+  KneadError,
   ModuleDefinitionError,
   NoProviderError,
   ProviderConfigError,

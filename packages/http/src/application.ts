@@ -4,16 +4,30 @@ import {
   type ModuleImport,
   type Provider,
   type Token,
-} from '@hpmws/core';
+} from '@knead/core';
 import type { Serve, Server, TLSOptions } from 'bun';
-import { type CompiledApp, compileApplication, type RouteTableEntry } from './compiler.js';
+import {
+  type CompiledApp,
+  compileApplication,
+  misdirectedResponse,
+  type RouteTableEntry,
+} from './compiler.js';
+import { ErrorLog, logError } from './error-log.js';
 import { HttpConfigError } from './exceptions.js';
 import { ConsoleLogger, LOGGER, type Logger } from './logger.js';
-import { compileTrust, parseIp, type TrustProxy } from './net.js';
-import { requestUrl } from './request.js';
+import {
+  compileAllowedHosts,
+  compileTrust,
+  type HostMatcher,
+  isLoopbackHostname,
+  type TrustProxy,
+} from './net.js';
+import { DEFAULT_MAX_PARAMS, requestUrl } from './request.js';
 import { resolveFilter, resolveGuard, resolveMiddleware } from './resolve.js';
+import { checkBunVersion } from './runtime-version.js';
 import { APP_FILTER, APP_GUARD, APP_MIDDLEWARE, HTTP_DEVELOPMENT } from './tokens.js';
 import type { FilterRef, GlobalMiddleware, GuardRef, MiddlewareRef } from './types.js';
+import type { ValidationOptions } from './validation.js';
 import { type WsData, WsRegistry, type WsServerOptions } from './ws.js';
 
 /** Default `maxRequestBodySize`: 1 MiB. */
@@ -42,10 +56,32 @@ export interface ListenOptions {
   redirectHttp?: { port: number; hostname?: string; host?: string };
   trustProxy?: TrustProxy;
   /**
+   * Host names this server answers to (DNS rebinding protection): a request whose Host header
+   * names another host gets 421 Misdirected Request, before middleware, routes and WebSocket
+   * upgrades. Hostnames only, case-insensitive; ports are ignored. `false` disables the check.
+   * Default in development: `localhost`, `127.0.0.1`, `[::1]` and the bound hostname (unless it
+   * is `0.0.0.0` or `::`). Default in production: no check, since the public names are not
+   * known; set it to them.
+   */
+  allowedHosts?: readonly string[] | false;
+  /**
    * WebSocket limits: 256 KiB messages, 1 MiB backpressure (closing), 120s idle timeout,
    * 100 sockets per IP and 100 messages per 10s per socket by default.
    */
   websocket?: WsServerOptions;
+  /**
+   * Most query parameters (more is a 400) or urlencoded/multipart body fields (more is a 413)
+   * parsed per request. Default 1000.
+   */
+  maxParams?: number;
+  /**
+   * Cache-Control for responses that set none (for example `'no-store'` for an API serving
+   * per-user data). Default: none is added, so responses without one may be cached by browsers
+   * and shared caches according to their heuristics.
+   */
+  defaultCacheControl?: string;
+  /** Request validation: `redactIssueMessages` makes body and query issue messages generic. */
+  validation?: ValidationOptions;
   /** Largest accepted request body in bytes; larger bodies get 413. Default 1 MiB. */
   maxRequestBodySize?: number;
   idleTimeout?: number;
@@ -58,7 +94,7 @@ export interface ListenOptions {
   shutdownTimeout?: number;
 }
 
-export class HpmwsFactory {
+export class KneadFactory {
   static async create(
     root: ModuleImport,
     options: CreateApplicationOptions = {},
@@ -71,8 +107,9 @@ export class HpmwsFactory {
         { provide: LOGGER, useValue: options.logger ?? new ConsoleLogger() },
         { provide: HTTP_DEVELOPMENT, useValue: development },
         WsRegistry,
+        ErrorLog,
       ],
-      exports: [LOGGER, HTTP_DEVELOPMENT, WsRegistry],
+      exports: [LOGGER, HTTP_DEVELOPMENT, WsRegistry, ErrorLog],
     };
     const context = await ApplicationContext.create(root, {
       overrides: options.overrides,
@@ -82,51 +119,108 @@ export class HpmwsFactory {
   }
 }
 
+/** Loopback, including `*.localhost`. */
 function isLoopback(hostname: string): boolean {
   const host = hostname.replace(/^\[(.*)\]$/, '$1').toLowerCase();
-  if (host === 'localhost' || host.endsWith('.localhost')) return true;
-  const bytes = parseIp(host);
-  if (bytes?.length === 4) return bytes[0] === 127;
-  return bytes?.every((b, i) => b === (i === 15 ? 1 : 0)) === true;
+  return host.endsWith('.localhost') || isLoopbackHostname(host);
+}
+
+/** Whether a listen hostname binds every interface. */
+function isWildcard(hostname: string): boolean {
+  return hostname === '0.0.0.0' || hostname === '::' || hostname === '[::]';
 }
 
 /** A host name or IP literal with an optional port, and nothing else. */
 const CANONICAL_HOST =
   /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*|\[[0-9a-f:.]+\])(?::\d{1,5})?$/i;
 
+/** A `host[:port]` that the URL parser keeps exactly as written. */
+interface CanonicalHost {
+  /** Lowercased host name, or bracketed IPv6 literal. */
+  readonly hostname: string;
+  /** The explicit port (1-65535), if any. */
+  readonly port: string | undefined;
+}
+
 /**
- * 308 redirect to the same URL on the HTTPS listener. With `host` (a canonical `host[:port]`),
- * the request's Host is ignored; a port in `host` overrides `httpsPort`.
+ * Parses a plain `host[:port]`. The URL parser silently rejects or rewrites many values a
+ * pattern accepts (`1.2.3.256`, `[1.2.3.4]`, `xn--a`, `0x7f.1`, `[::0001]`, `:99999`), so the
+ * host must round-trip: the parsed hostname and port equal the ones written (after lowercasing),
+ * and an explicit port is 1-65535 without leading zeros. Anything else is undefined.
  */
-export function redirectToHttps(req: Request, httpsPort: number, host?: string): Response {
-  if (host === undefined && !URL.canParse(req.url)) {
-    // The Host header did not form a URL, and there is no canonical host to send the client to.
-    return new Response('Invalid Host header', {
-      status: 400,
-      headers: {
-        'content-type': 'text/plain; charset=utf-8',
-        'cache-control': 'no-store',
-        'x-content-type-options': 'nosniff',
-      },
-    });
+function parseCanonicalHost(host: string): CanonicalHost | undefined {
+  if (!CANONICAL_HOST.test(host)) return undefined;
+  const [, name = '', port] = /^(\[[^\]]*\]|[^:]+)(?::(\d+))?$/.exec(host) ?? [];
+  let url: URL;
+  try {
+    url = new URL(`https://${host}`);
+  } catch {
+    return undefined;
   }
+  const hostname = name.toLowerCase();
+  if (url.hostname !== hostname) return undefined;
+  if (port !== undefined) {
+    const n = Number(port);
+    if (String(n) !== port || n < 1 || n > 65535 || (url.port || '443') !== port) return undefined;
+  }
+  return { hostname, port };
+}
+
+/** `https://host[:port]`, omitting the default port 443. */
+function httpsOrigin(hostname: string, port: string): string {
+  return `https://${hostname}${port === '443' ? '' : `:${port}`}`;
+}
+
+const REDIRECT_HEADERS = {
+  'cache-control': 'no-store',
+  'x-content-type-options': 'nosniff',
+} as const;
+
+/** 308 to `origin` + the request's path and query; the request URL itself is never modified. */
+function redirectTo(req: Request, origin: string): Response {
   const url = requestUrl(req);
-  url.protocol = 'https:';
-  let port = String(httpsPort);
-  if (host !== undefined) {
-    const [, name, explicitPort] = /^(.+?)(?::(\d+))?$/.exec(host) ?? [];
-    url.hostname = name ?? host;
-    if (explicitPort !== undefined) port = explicitPort;
-  }
-  url.port = port === '443' ? '' : port;
   return new Response(null, {
     status: 308,
-    headers: {
-      location: url.toString(),
-      'cache-control': 'no-store',
-      'x-content-type-options': 'nosniff',
-    },
+    headers: { location: `${origin}${url.pathname}${url.search}`, ...REDIRECT_HEADERS },
   });
+}
+
+function badHost(): Response {
+  return new Response('Invalid Host header', {
+    status: 400,
+    headers: { 'content-type': 'text/plain; charset=utf-8', ...REDIRECT_HEADERS },
+  });
+}
+
+/**
+ * The redirect origin for a canonical `redirectHttp.host`: a port in `host` overrides
+ * `httpsPort`. Throws HttpConfigError unless `host` is a plain, round-tripping `host[:port]`.
+ */
+function canonicalOrigin(host: string, httpsPort: number): string {
+  const parsed = parseCanonicalHost(host);
+  if (!parsed) {
+    throw new HttpConfigError(
+      `redirectHttp.host must be a plain host[:port], got ${JSON.stringify(host)}.`,
+    );
+  }
+  return httpsOrigin(parsed.hostname, parsed.port ?? String(httpsPort));
+}
+
+/**
+ * 308 redirect to the same URL on the HTTPS listener. With `host` (a canonical `host[:port]`),
+ * the request's Host is ignored; a port in `host` overrides `httpsPort`. Without it, a request
+ * whose Host is not a plain, round-tripping `host[:port]` gets 400.
+ * @throws HttpConfigError for a `host` that is not a plain, round-tripping `host[:port]`.
+ */
+export function redirectToHttps(req: Request, httpsPort: number, host?: string): Response {
+  if (host !== undefined) return redirectTo(req, canonicalOrigin(host, httpsPort));
+  // Without a canonical host the request's Host is used, so it must pass the same strict
+  // host[:port] check as redirectHttp.host; its port is replaced by the HTTPS port.
+  const requested =
+    req.headers.get('host') ?? (URL.canParse(req.url) ? new URL(req.url).host : undefined);
+  const parsed = requested === undefined ? undefined : parseCanonicalHost(requested);
+  if (!parsed) return badHost();
+  return redirectTo(req, httpsOrigin(parsed.hostname, String(httpsPort)));
 }
 
 export class HttpApplication {
@@ -254,7 +348,7 @@ export class HttpApplication {
             if (exit) process.exit(0);
           },
           (error) => {
-            this.logger.error(`Graceful shutdown on ${signal} failed`, error);
+            logError(this, `Graceful shutdown on ${signal} failed`, error);
             if (exit) process.exit(1);
           },
         );
@@ -284,7 +378,11 @@ export class HttpApplication {
     try {
       const servers = [...this.#retired, ...(this.#server ? [this.#server] : [])];
       if (servers.length > 0) {
-        for (const server of servers) void server.stop(false);
+        for (const server of servers) {
+          server.stop(false).catch((error: unknown) => {
+            logError(this, 'Stopping a listener failed', error);
+          });
+        }
         this.#redirect?.stop(true);
         const deadline = Date.now() + this.shutdownTimeout;
         const pending = () => servers.reduce((n, server) => n + server.pendingRequests, 0);
@@ -332,12 +430,20 @@ export class HttpApplication {
     if (options.redirectHttp && options.tls === undefined) {
       throw new HttpConfigError('redirectHttp requires tls.');
     }
-    const canonicalHost = options.redirectHttp?.host;
-    if (canonicalHost !== undefined && !CANONICAL_HOST.test(canonicalHost)) {
+    const hosts = this.#allowedHosts(options);
+    const cc = options.defaultCacheControl;
+    if (cc !== undefined && (typeof cc !== 'string' || cc === '' || /[\r\n]/.test(cc))) {
       throw new HttpConfigError(
-        `redirectHttp.host must be a plain host[:port], got ${JSON.stringify(canonicalHost)}.`,
+        `defaultCacheControl must be a header value, got ${JSON.stringify(cc)}.`,
       );
     }
+    const maxParams = options.maxParams;
+    if (maxParams !== undefined && (!Number.isInteger(maxParams) || maxParams < 1)) {
+      throw new HttpConfigError(`maxParams must be an integer >= 1, got ${String(maxParams)}.`);
+    }
+    const canonicalHost = options.redirectHttp?.host;
+    // Validated before anything binds; the origin is computed once the HTTPS port is known.
+    if (canonicalHost !== undefined) canonicalOrigin(canonicalHost, 443);
     const root = this.context.root.injector;
     const entries = [
       ...this.context
@@ -357,8 +463,8 @@ export class HttpApplication {
       globalGuards: [
         ...this.context
           .collectEntries(APP_GUARD)
-          .map(({ value, injector }) => resolveGuard(value, injector)),
-        ...this.#extraGuards.map((g) => resolveGuard(g, root)),
+          .map(({ value, injector }) => resolveGuard(value, injector, 'APP_GUARD')),
+        ...this.#extraGuards.map((g) => resolveGuard(g, root, 'useGlobalGuards()')),
       ],
       globalFilters: [
         ...this.context
@@ -368,8 +474,15 @@ export class HttpApplication {
       ],
       logger: this.logger,
       development: this.development,
-      net: { trust: compileTrust(options.trustProxy ?? false), tls: options.tls !== undefined },
+      net: {
+        trust: compileTrust(options.trustProxy ?? false),
+        tls: options.tls !== undefined,
+        maxParams: options.maxParams ?? DEFAULT_MAX_PARAMS,
+      },
       ws,
+      hosts,
+      validation: options.validation,
+      defaultCacheControl: options.defaultCacheControl,
     });
     // Middleware, guards and filters constructed by the compiler get their init hooks now (and
     // shutdown hooks at close()); a failing hook rejects listen() before anything is bound.
@@ -395,12 +508,12 @@ export class HttpApplication {
     const server = Bun.serve(serveOptions as unknown as Serve.Options<WsData, string>);
     let redirect: Server<undefined> | undefined;
     try {
-      redirect = this.#startRedirect(options, server);
+      redirect = this.#startRedirect(options, server, hosts);
     } catch (error) {
       try {
         await server.stop(true);
       } catch (stopError) {
-        this.logger.error('Failed to release the HTTPS listener after a bind failure', stopError);
+        logError(this, 'Failed to release the HTTPS listener after a bind failure', stopError);
       }
       throw error;
     }
@@ -410,6 +523,15 @@ export class HttpApplication {
     this.#redirect = redirect;
     this.#server = server;
     this.logger.info(`Listening on ${server.url}`);
+    checkBunVersion(this.logger);
+    const hostname = serveOptions.hostname as string;
+    if (typeof options.trustProxy === 'number' && options.trustProxy > 0 && isWildcard(hostname)) {
+      this.logger.warn(
+        `trustProxy is a hop count (${options.trustProxy}) and the server listens on ${hostname}: ` +
+          'a client that reaches the port directly, bypassing the proxy, can choose its own ' +
+          'ctx.ip. Use the proxy CIDRs as trustProxy, or firewall the port to the proxy.',
+      );
+    }
     if (this.development && !isLoopback(serveOptions.hostname as string)) {
       this.logger.warn(
         `Running in development mode on ${serveOptions.hostname}, which is reachable from other ` +
@@ -419,16 +541,42 @@ export class HttpApplication {
     return server;
   }
 
-  #startRedirect(options: ListenOptions, server: Server<WsData>): Server<undefined> | undefined {
+  #allowedHosts(options: ListenOptions): HostMatcher | undefined {
+    if (options.allowedHosts === false) return undefined;
+    if (options.allowedHosts !== undefined) return compileAllowedHosts(options.allowedHosts);
+    if (!this.development) return undefined;
+    const bound = options.hostname ?? '0.0.0.0';
+    const defaults = ['localhost', '127.0.0.1', '[::1]'];
+    if (!isWildcard(bound)) defaults.push(bound);
+    return compileAllowedHosts(defaults);
+  }
+
+  #startRedirect(
+    options: ListenOptions,
+    server: Server<WsData>,
+    hosts: HostMatcher | undefined,
+  ): Server<undefined> | undefined {
     if (!options.redirectHttp) return undefined;
     const httpsPort = server.port;
     if (httpsPort === undefined) {
       throw new HttpConfigError('redirectHttp requires a TCP listener.');
     }
+    const host = options.redirectHttp.host;
+    if (host === undefined) {
+      this.logger.warn(
+        'redirectHttp has no host, so redirects follow the Host header the client sent. Set ' +
+          "redirectHttp: { host: 'example.com' } to always redirect to the canonical host.",
+      );
+    }
+    const origin = host === undefined ? undefined : canonicalOrigin(host, httpsPort);
     return Bun.serve({
       port: options.redirectHttp.port,
       hostname: options.redirectHttp.hostname ?? options.hostname ?? '0.0.0.0',
-      fetch: (req) => redirectToHttps(req, httpsPort, options.redirectHttp?.host),
+      fetch: (req) => {
+        if (origin !== undefined) return redirectTo(req, origin);
+        if (hosts !== undefined && !hosts(req.headers.get('host'))) return misdirectedResponse();
+        return redirectToHttps(req, httpsPort);
+      },
     });
   }
 

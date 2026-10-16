@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { Module } from '@hpmws/core';
-import { HttpConfigError } from '@hpmws/http';
+import { Module } from '@knead/core';
+import { HttpConfigError } from '@knead/http';
 import { getIntrospectionQuery } from 'graphql';
 import {
   Field,
@@ -11,6 +11,7 @@ import {
   resolveOptions,
   Subscription,
 } from '../src/index.js';
+import { GraphQLRuntime } from '../src/runtime.js';
 import { type Started, startGraphQL } from './helpers.js';
 
 @ObjectType()
@@ -55,11 +56,13 @@ const aliases = (count: number) =>
 describe('safe default limits', () => {
   test('resolveOptions applies the defaults', () => {
     const o = resolveOptions({}, '/graphql');
-    // hpmws checks depth itself (introspection excluded), so Leaven gets no maxDepth.
+    // Knead checks depth itself (introspection excluded), so Leaven gets no maxDepth.
     expect(o.maxDepth).toBe(10);
     expect(o.executor.maxDepth).toBeUndefined();
     expect(o.executor.maxComplexity).toBe(1000);
-    expect(o.executor.parseOptions?.maxTokens).toBe(10_000);
+    expect(o.executor.parseOptions?.maxTokens).toBe(3000);
+    expect(o.maxFields).toBe(1000);
+    expect(o.executor.cache).toEqual({ maxSize: 100 });
     expect(o.maxQueryLength).toBe(100 * 1024);
     expect(o.maxAliases).toBe(30);
   });
@@ -144,9 +147,9 @@ describe('safe default limits', () => {
     expect(res.errors?.[0]?.extensions?.code).toBe('COMPLEXITY_LIMIT');
   });
 
-  test('maxTokens 10000', async () => {
+  test('maxTokens 3000', async () => {
     s = await startGraphQL([M]);
-    const res = await s.app.graphql(`{ tree { ${'n '.repeat(10_001)}} }`);
+    const res = await s.app.graphql(`{ tree { ${'n '.repeat(3001)}} }`);
     expect(res.data).toBeUndefined();
     expect(res.errors?.[0]?.message).toContain('tokens');
   });
@@ -201,5 +204,117 @@ describe('safe default limits', () => {
     });
     expect((await sub.next()).done).toBe(true);
     await sub.close();
+  });
+});
+
+describe('maxFields (FIELD_LIMIT)', () => {
+  const cacheSize = async () =>
+    (await s!.mod.get(GraphQLRuntime).executor.getCacheStats()).document?.size ?? 0;
+
+  test('getIntrospectionQuery() passes every default', async () => {
+    s = await startGraphQL([M], { introspection: true });
+    const res = await s.app.graphql(getIntrospectionQuery());
+    expect(res.errors).toBeUndefined();
+  });
+
+  test('1000 fields run, 1001 are FIELD_LIMIT; fragments count where spread', async () => {
+    s = await startGraphQL([M], { maxComplexity: false });
+    expect((await s.app.graphql(`{ tree { ${'n '.repeat(999)}} }`)).errors).toBeUndefined();
+    const res = await s.app.graphql(`{ tree { ${'n '.repeat(1000)}} }`);
+    expect(res.errors?.[0]?.extensions?.code).toBe('FIELD_LIMIT');
+    // 4 fields in F, spread 300 times: 1200 fields from a short document.
+    const spread = await s.app.graphql(
+      `{ tree { ${'...F '.repeat(300)}} } fragment F on Tree { n child { n child { n } } }`,
+    );
+    expect(spread.errors?.[0]?.extensions?.code).toBe('FIELD_LIMIT');
+  });
+
+  test('fields in a fragment that is never spread count too (reviewer repro)', async () => {
+    s = await startGraphQL([M], { parseOptions: { maxTokens: Infinity } });
+    const query = `{ tree { n } } fragment Unused on Tree { ${'n '.repeat(2900)}}`;
+    const started = performance.now();
+    const res = await s.app.graphql(query);
+    expect(performance.now() - started).toBeLessThan(50);
+    expect(res.errors?.[0]?.extensions?.code).toBe('FIELD_LIMIT');
+  });
+
+  test('9,300 __typename are rejected quickly and not cached', async () => {
+    s = await startGraphQL([M], { parseOptions: { maxTokens: Infinity } });
+    const before = await cacheSize();
+    const started = performance.now();
+    const res = await s.app.graphql(`{ ${'__typename '.repeat(9300)}}`);
+    expect(performance.now() - started).toBeLessThan(50);
+    expect(res.errors?.[0]?.extensions?.code).toBe('FIELD_LIMIT');
+    expect(await cacheSize()).toBe(before);
+  });
+
+  test('10k repeated fields are rejected before validation in under 50 ms', async () => {
+    s = await startGraphQL([M], { parseOptions: { maxTokens: Infinity }, maxAliases: false });
+    const query = `{ tree { ${'n '.repeat(10_000)}} }`;
+    await s.app.graphql('{ tree { n } }'); // warm up
+    const started = performance.now();
+    const res = await s.app.graphql(query);
+    expect(performance.now() - started).toBeLessThan(50);
+    expect(res.errors?.[0]?.extensions?.code).toBe('FIELD_LIMIT');
+  });
+
+  test('maxFields can be raised or disabled, and is validated', async () => {
+    expect(resolveOptions({ maxFields: false }, '/graphql').maxFields).toBe(false);
+    expect(resolveOptions({ maxFields: 5000 }, '/graphql').maxFields).toBe(5000);
+    for (const bad of [0, -1, 1.5]) {
+      expect(() => resolveOptions({ maxFields: bad }, '/graphql')).toThrow(HttpConfigError);
+    }
+  });
+
+  test('a custom cache is kept', () => {
+    expect(resolveOptions({ cache: false }, '/graphql').executor.cache).toBe(false);
+    expect(resolveOptions({ cache: { maxSize: 5 } }, '/graphql').executor.cache).toEqual({
+      maxSize: 5,
+    });
+  });
+});
+
+describe('maxIntrospectionDepth', () => {
+  /** `{ __schema { types { fields { type { ofType { ofType ... { name } } } } } } }` */
+  const bomb = (levels: number) =>
+    `{ __schema { types { fields { type { ${'ofType { '.repeat(levels)}name${' }'.repeat(levels)} } } } } }`;
+
+  test('the standard introspection query (depth 15) passes the default of 20', async () => {
+    s = await startGraphQL([M], { introspection: true });
+    expect((await s.app.graphql(getIntrospectionQuery())).errors).toBeUndefined();
+    expect(resolveOptions({}, '/graphql').maxIntrospectionDepth).toBe(20);
+  });
+
+  test('a deeper introspection bomb is DEPTH_LIMIT', async () => {
+    s = await startGraphQL([M], { introspection: true });
+    // __schema(1) types(2) fields(3) type(4) + levels ofType + name.
+    expect((await s.app.graphql(bomb(15))).errors).toBeUndefined(); // depth 20
+    const res = await s.app.graphql(bomb(16)); // depth 21
+    expect(res.data).toBeUndefined();
+    expect(res.errors?.[0]).toMatchObject({
+      message: 'Introspection depth of 21 exceeds maximum allowed depth of 20',
+      extensions: { code: 'DEPTH_LIMIT' },
+    });
+  });
+
+  test('a bomb through fragments and __type is caught too', async () => {
+    s = await startGraphQL([M], { introspection: true });
+    const res = await s.app.graphql(
+      `{ __type(name: "Tree") { ...T } } fragment T on __Type { fields { type { ${'ofType { '.repeat(25)}name${' }'.repeat(25)} } } }`,
+    );
+    expect(res.errors?.[0]?.extensions?.code).toBe('DEPTH_LIMIT');
+  });
+
+  test("Leaven's complexity counts introspection fields", async () => {
+    s = await startGraphQL([M], { introspection: true, maxComplexity: 5 });
+    const res = await s.app.graphql('{ __schema { types { name kind description } } }');
+    expect(res.errors?.[0]?.extensions?.code).toBe('COMPLEXITY_LIMIT');
+  });
+
+  test('configurable and validated', () => {
+    expect(resolveOptions({ maxIntrospectionDepth: false }, '/graphql').maxIntrospectionDepth).toBe(
+      false,
+    );
+    expect(() => resolveOptions({ maxIntrospectionDepth: 0 }, '/graphql')).toThrow(HttpConfigError);
   });
 });

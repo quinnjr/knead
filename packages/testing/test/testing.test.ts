@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { inject, Module } from '@hpmws/core';
+import { inject, Module } from '@knead/core';
 import {
   Controller,
   type Ctx,
@@ -11,7 +11,7 @@ import {
   UseFilters,
   UseGuards,
   UseMiddleware,
-} from '@hpmws/http';
+} from '@knead/http';
 import { Test, type TestingModule } from '../src/index.js';
 
 class Greeter {

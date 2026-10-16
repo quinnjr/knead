@@ -1,14 +1,16 @@
-import { inject } from '@hpmws/core';
+import { inject } from '@knead/core';
 import type { ServerWebSocket, WebSocketHandler } from 'bun';
+import { logError } from './error-log.js';
 import {
   ForbiddenException,
   HttpConfigError,
   ServiceUnavailableException,
   TooManyRequestsException,
 } from './exceptions.js';
-import { LOGGER } from './logger.js';
+import { LOGGER, logValue } from './logger.js';
 import { isIpv6Prefix, maskIp } from './net.js';
 import { joinPaths } from './path.js';
+import { HTTP_DEVELOPMENT } from './tokens.js';
 import type { Ctx } from './types.js';
 
 export interface WsData {
@@ -63,13 +65,20 @@ export interface WsServerOptions {
   maxConnectionsPerIp?: number | false;
   /**
    * IPv6 prefix length the per-IP limit groups clients by (one client usually controls a whole
-   * /64). An integer from 0 to 128; 128 counts full addresses. Default 64.
+   * /64). An integer from 1 to 128; 128 counts full addresses. Default 64.
    */
   ipv6Subnet?: number;
   /** Open sockets in total; more upgrades get 503. Default: no limit. */
   maxConnections?: number;
   /** Default per-socket message rate for every endpoint. Default 100 messages per 10s. */
   messageRate?: WsMessageRate | false;
+  /**
+   * closeWhere() predicates kept (for up to 30s) for sockets that are still upgrading. A
+   * predicate pushed out of this list is first checked against every upgrade that already has
+   * its socket data; only upgrades still in their guards, which it could not be checked against,
+   * then fail closed. Default 10000.
+   */
+  maxPendingRevocations?: number;
 }
 
 export const WS_DEFAULTS = Object.freeze({
@@ -80,6 +89,7 @@ export const WS_DEFAULTS = Object.freeze({
   maxConnectionsPerIp: 100,
   ipv6Subnet: 64,
   messageRate: Object.freeze({ limit: 100, windowMs: 10_000 }),
+  maxPendingRevocations: 10_000,
 });
 
 interface ResolvedServerOptions {
@@ -91,6 +101,38 @@ interface ResolvedServerOptions {
   ipv6Subnet: number;
   maxConnections: number | undefined;
   messageRate: WsMessageRate | false;
+  maxPendingRevocations: number;
+}
+
+interface PendingRevocation {
+  readonly seq: number;
+  readonly at: number;
+  readonly predicate: (ws: WsSocket) => boolean;
+  readonly code: number;
+  readonly reason: string;
+}
+
+/** How long, and how many, closeWhere() predicates are kept for sockets still upgrading. */
+const REVOCATION_TTL = 30_000;
+/** An upgrade whose socket has not opened after this long no longer counts as pending. */
+const UPGRADE_TTL = 30_000;
+/** Expired upgrades are swept at most this often (amortized, never on every call). */
+const SWEEP_INTERVAL = 1_000;
+
+interface UpgradeEntry {
+  /** The revocation sequence number current when the upgrade began. */
+  readonly seq: number;
+  readonly at: number;
+  /** Set once the upgrade reserved its socket data. */
+  hasData: boolean;
+  /**
+   * Lost predicates up to this sequence number were accounted for (issued before the upgrade
+   * began, or checked against its socket data when they were evicted). A loss above it was
+   * never checked against this upgrade, which then fails closed.
+   */
+  checkedThrough: number;
+  /** A lost predicate matched it when it was checked at eviction time. */
+  revoked: { code: number; reason: string } | undefined;
 }
 
 interface SocketState {
@@ -122,12 +164,14 @@ function resolveServerOptions(options: WsServerOptions): ResolvedServerOptions {
   if (o.maxConnectionsPerIp !== false)
     assertInteger('maxConnectionsPerIp', o.maxConnectionsPerIp, 1);
   if (o.maxConnections !== undefined) assertInteger('maxConnections', o.maxConnections, 1);
-  if (!isIpv6Prefix(o.ipv6Subnet)) {
+  // 0 would put every IPv6 client into one group, so it is not accepted.
+  if (!isIpv6Prefix(o.ipv6Subnet) || o.ipv6Subnet < 1) {
     throw new HttpConfigError(
-      `WebSocket ipv6Subnet must be an integer from 0 to 128, got ${String(o.ipv6Subnet)}.`,
+      `WebSocket ipv6Subnet must be an integer from 1 to 128, got ${String(o.ipv6Subnet)}.`,
     );
   }
   assertRate('messageRate', o.messageRate);
+  assertInteger('maxPendingRevocations', o.maxPendingRevocations, 1);
   return o;
 }
 
@@ -182,9 +226,35 @@ export class WsRegistry {
   readonly #reserved = new WeakMap<object, string | undefined>();
   readonly #perIp = new Map<string, number>();
   #reservedTotal = 0;
-  readonly #logger = inject(LOGGER);
+  readonly #log = {
+    logger: inject(LOGGER),
+    development: inject(HTTP_DEVELOPMENT, { optional: true }) ?? false,
+  };
   #server: ResolvedServerOptions = resolveServerOptions({});
   #sealed = false;
+  /**
+   * Upgrades in progress (from the upgrade request until the socket opens or the upgrade
+   * fails), keyed by their Ctx and then their socket data. Entries older than 30s (an upgrade
+   * whose socket never opened: aborted, timed out) stop counting as pending; their entry is kept
+   * in #expiredUpgrades so a late open can still be checked.
+   */
+  readonly #upgrades = new Map<object, UpgradeEntry>();
+  /** The pending upgrades that already reserved their socket data (between reserve and open). */
+  readonly #withData = new Map<object, UpgradeEntry>();
+  readonly #expiredUpgrades = new WeakMap<object, UpgradeEntry>();
+  #nextSweep = 0;
+  /** closeWhere() calls issued while an upgrade was in progress, oldest first from #head. */
+  #revocations: PendingRevocation[] = [];
+  #head = 0;
+  #revocationSeq = 0;
+  /**
+   * The newest revocation that could not be kept for every upgrade that might need it (lost to
+   * the cap or the TTL, or issued while nothing was pending): expired upgrades older than it
+   * fail closed.
+   */
+  #lostSeq = 0;
+  /** #lostSeq before the loss being processed. */
+  #lostPrevious = 0;
 
   register<D>(path: string, endpoint: WsEndpoint<D>, options: WsEndpointOptions = {}): void {
     const normalized = joinPaths(path);
@@ -237,7 +307,7 @@ export class WsRegistry {
    * throws 429 (per-IP limit) / 503 (total limit). The slot is returned when the socket closes,
    * or by `release()` if the upgrade fails.
    */
-  reserve(data: object, ip: string | undefined): void {
+  reserve(data: object, ip: string | undefined, ctx?: object): void {
     const { maxConnections, maxConnectionsPerIp } = this.#server;
     if (maxConnections !== undefined && this.#reservedTotal >= maxConnections) {
       throw new ServiceUnavailableException('Too many WebSocket connections.');
@@ -252,10 +322,72 @@ export class WsRegistry {
     this.#reservedTotal++;
     if (key !== undefined) this.#perIp.set(key, (this.#perIp.get(key) ?? 0) + 1);
     this.#reserved.set(data, key);
+    // The in-progress upgrade now follows its socket data, until the socket opens.
+    if (ctx === undefined) return;
+    const entry = this.#upgrades.get(ctx);
+    if (entry !== undefined) {
+      this.#upgrades.delete(ctx);
+      entry.hasData = true;
+      this.#upgrades.set(data, entry);
+      this.#withData.set(data, entry);
+      return;
+    }
+    const expired = this.#expiredUpgrades.get(ctx);
+    if (expired !== undefined) this.#expiredUpgrades.set(data, expired);
+  }
+
+  /** @internal Called by the compiler when an upgrade request arrives (before middleware). */
+  beginUpgrade(ctx: object): void {
+    const now = Date.now();
+    this.#sweep(now);
+    if (this.#upgrades.has(ctx)) return;
+    this.#upgrades.set(ctx, {
+      seq: this.#revocationSeq,
+      at: now,
+      hasData: false,
+      checkedThrough: this.#revocationSeq,
+      revoked: undefined,
+    });
+  }
+
+  /** @internal Ends an upgrade that did not open a socket (no-op once it moved to its data). */
+  endUpgrade(key: object): void {
+    this.#upgrades.delete(key);
+    this.#withData.delete(key);
+  }
+
+  /** The `websocket.maxPendingRevocations` limit in effect. */
+  get maxPendingRevocations(): number {
+    return this.#server.maxPendingRevocations;
+  }
+
+  /** @internal Upgrades currently in progress (for tests). */
+  get upgradesInProgress(): number {
+    this.#sweep(Date.now(), true);
+    return this.#upgrades.size;
+  }
+
+  /**
+   * Moves upgrades that never opened within the TTL out of the pending set, so the count cannot
+   * drift upwards. Runs at most once per second (or when forced), so it is amortized O(1).
+   */
+  #sweep(now: number, force = false): void {
+    if (!force && now < this.#nextSweep) return;
+    this.#nextSweep = now + SWEEP_INTERVAL;
+    // Expired predicates are checked against the upgrades with socket data before any of those
+    // upgrades leave the pending set.
+    this.#pruneRevocations(now);
+    for (const [key, entry] of this.#upgrades) {
+      if (now - entry.at <= UPGRADE_TTL) continue;
+      this.#upgrades.delete(key);
+      this.#withData.delete(key);
+      this.#expiredUpgrades.set(key, entry);
+    }
   }
 
   /** @internal Returns the connection slot held by an upgrade's data object, if any. */
   release(data: object): void {
+    this.endUpgrade(data);
     if (!this.#reserved.has(data)) return;
     const key = this.#reserved.get(data);
     this.#reserved.delete(data);
@@ -290,9 +422,16 @@ export class WsRegistry {
       backpressureLimit: limits.backpressureLimit,
       closeOnBackpressureLimit: limits.closeOnBackpressureLimit,
       idleTimeout: limits.idleTimeout,
-      open: (ws) => {
+      open: async (ws) => {
         this.#sockets.set(ws, this.#openState(ws));
-        return this.#dispatch(ws, 'open');
+        // Revocations issued while this socket was upgrading are applied before the endpoint
+        // sees it. Fail closed when one of them can no longer be checked.
+        // Expire predicates first, so they are checked against this upgrade while it is pending.
+        this.#pruneRevocations(Date.now());
+        const entry = this.#upgrades.get(ws.data) ?? this.#expiredUpgrades.get(ws.data);
+        this.endUpgrade(ws.data);
+        if (entry !== undefined && this.#reapply(ws, entry)) return;
+        await this.#dispatch(ws, 'open');
       },
       message: (ws, message) => {
         if (!this.#admitMessage(ws)) return;
@@ -303,6 +442,8 @@ export class WsRegistry {
         if (state?.timer !== undefined) clearTimeout(state.timer);
         this.#sockets.delete(ws);
         this.release(ws.data);
+        // An idle registry holds no predicate closures.
+        if (this.#upgrades.size === 0) this.#dropKept();
         return this.#dispatch(ws, 'close', code, reason);
       },
       drain: (ws) => this.#dispatch(ws, 'drain'),
@@ -315,14 +456,29 @@ export class WsRegistry {
 
   /**
    * Closes every open socket for which `predicate` returns true (for example, all sockets of a
-   * signed-out user, found through `ws.data.data`), and returns how many were closed. A
-   * predicate that throws for a socket is logged and that socket is left open.
+   * signed-out user, found through `ws.data.data`), and returns how many were closed. Predicates
+   * should read only `ws.data`: for a socket still upgrading they may be evaluated against a
+   * stand-in that has nothing else, and one that reads more makes that socket fail closed. Sockets
+   * whose upgrade is still in progress are checked when they open (the predicate is kept for up
+   * to 30s, at most `maxPendingRevocations`). A predicate that throws for a socket is logged and
+   * that socket is left open.
    */
   closeWhere(
     predicate: (ws: WsSocket) => boolean,
     code = 1008,
     reason = 'Connection revoked',
   ): number {
+    // Sockets still upgrading (in guards, or between server.upgrade() and open) are not in
+    // #sockets yet: the predicate is kept and applied to them when they open.
+    const now = Date.now();
+    this.#sweep(now);
+    if (this.#upgrades.size > 0) this.#record(predicate, code, reason, now);
+    else {
+      // Nothing is pending to keep it for: only an expired upgrade could have needed it. The
+      // predicates kept so far are no longer needed by anyone either.
+      this.#lostSeq = ++this.#revocationSeq;
+      this.#dropKept();
+    }
     let count = 0;
     for (const ws of [...this.#sockets.keys()]) {
       let matches: boolean;
@@ -330,7 +486,11 @@ export class WsRegistry {
         matches = predicate(ws);
       } catch (error) {
         // One bad socket (or a predicate bug) must not stop the revocation of the others.
-        this.#logger.error(`WsRegistry.closeWhere predicate threw for ${ws.data.endpoint}`, error);
+        logError(
+          this.#log,
+          `WsRegistry.closeWhere predicate threw for ${logValue(ws.data.endpoint)}`,
+          error,
+        );
         continue;
       }
       if (!matches) continue;
@@ -338,6 +498,124 @@ export class WsRegistry {
       count++;
     }
     return count;
+  }
+
+  /**
+   * Applies what happened while this socket was upgrading, and returns whether it closed the
+   * socket: a predicate that matched it when it was evicted, a kept predicate issued after its
+   * upgrade began, or (fail closed, 1008) a predicate it could not be checked against.
+   */
+  #reapply(ws: WsSocket, entry: UpgradeEntry): boolean {
+    if (entry.revoked) {
+      ws.close(entry.revoked.code, entry.revoked.reason);
+      return true;
+    }
+    // Fail closed only when a lost predicate was never checked against this upgrade (it was
+    // still in its guards, or no longer pending), however long the upgrade took.
+    if (this.#lostSeq > entry.checkedThrough) {
+      ws.close(1008, 'Revocation state unavailable');
+      return true;
+    }
+    for (let i = this.#firstAfter(entry.seq); i < this.#revocations.length; i++) {
+      const revocation = this.#revocations[i]!;
+      if (this.#matches(revocation, ws)) {
+        ws.close(revocation.code, revocation.reason);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Index of the first kept revocation with a sequence number above `seq` (binary search). */
+  #firstAfter(seq: number): number {
+    let lo = this.#head;
+    let hi = this.#revocations.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (this.#revocations[mid]!.seq <= seq) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  }
+
+  #matches(revocation: PendingRevocation, ws: WsSocket): boolean {
+    try {
+      return revocation.predicate(ws) === true;
+    } catch (error) {
+      logError(
+        this.#log,
+        `WsRegistry.closeWhere predicate threw for ${logValue(ws.data.endpoint)}`,
+        error,
+      );
+      return false;
+    }
+  }
+
+  /**
+   * A predicate leaves the kept list (cap or TTL): check it now against every pending upgrade
+   * that already has its socket data. Upgrades still in their guards are not walked: their
+   * `checkedThrough` stays behind #lostSeq, so they fail closed at open.
+   */
+  #lose(revocation: PendingRevocation): void {
+    this.#lostPrevious = this.#lostSeq;
+    this.#lostSeq = Math.max(this.#lostSeq, revocation.seq);
+    for (const [key, entry] of this.#withData) {
+      // Only an upgrade that was accounted for up to now stays accounted for.
+      if (entry.checkedThrough < this.#lostPrevious) continue;
+      if (entry.revoked || entry.seq >= revocation.seq) {
+        entry.checkedThrough = Math.max(entry.checkedThrough, revocation.seq);
+        continue;
+      }
+      // The socket does not exist yet: the predicate gets a stand-in that has only `data`. A
+      // predicate that reads anything else was not really evaluated, so this upgrade is not
+      // marked checked and fails closed at open.
+      let evaluated = true;
+      const standIn = new Proxy({} as WsSocket, {
+        get: (_target, prop) => {
+          if (prop === 'data') return key;
+          evaluated = false;
+          return undefined;
+        },
+      });
+      const matched = this.#matches(revocation, standIn);
+      if (!evaluated) continue;
+      entry.checkedThrough = Math.max(entry.checkedThrough, revocation.seq);
+      if (matched) entry.revoked = { code: revocation.code, reason: revocation.reason };
+    }
+  }
+
+  /** Drops every kept predicate when no upgrade is pending (only expired ones could need them). */
+  #dropKept(): void {
+    if (this.#head >= this.#revocations.length) return;
+    this.#lostSeq = Math.max(this.#lostSeq, this.#revocations[this.#revocations.length - 1]!.seq);
+    this.#revocations = [];
+    this.#head = 0;
+  }
+
+  /** @internal Kept closeWhere() predicates (for tests). */
+  get keptRevocations(): number {
+    return this.#revocations.length - this.#head;
+  }
+
+  #pruneRevocations(now: number): void {
+    const max = this.#server.maxPendingRevocations;
+    while (
+      this.#head < this.#revocations.length &&
+      (now - this.#revocations[this.#head]!.at > REVOCATION_TTL ||
+        this.#revocations.length - this.#head > max)
+    ) {
+      this.#lose(this.#revocations[this.#head++]!);
+    }
+    // Compact once the dropped prefix is large, so eviction stays amortized O(1).
+    if (this.#head > 1024 && this.#head * 2 > this.#revocations.length) {
+      this.#revocations = this.#revocations.slice(this.#head);
+      this.#head = 0;
+    }
+  }
+
+  #record(predicate: (ws: WsSocket) => boolean, code: number, reason: string, now: number): void {
+    this.#revocations.push({ seq: ++this.#revocationSeq, at: now, predicate, code, reason });
+    this.#pruneRevocations(now);
   }
 
   #rateOf(ws: WsSocket): WsMessageRate | false {
@@ -394,7 +672,11 @@ export class WsRegistry {
     try {
       await fn.call(endpoint, ws, ...args);
     } catch (error) {
-      this.#logger.error(`WebSocket ${event} handler for ${ws.data.endpoint} threw`, error);
+      logError(
+        this.#log,
+        `WebSocket ${event} handler for ${logValue(ws.data.endpoint)} threw`,
+        error,
+      );
     }
   }
 }

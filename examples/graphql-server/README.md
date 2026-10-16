@@ -1,13 +1,13 @@
-# hpmws GraphQL server example
+# Knead GraphQL server example
 
-A small blog (authors, posts and comments, kept in memory and seeded at startup) served over GraphQL with every hpmws package working together: code-first types, DataLoader-batched field resolvers, valibot argument validation, bearer-token auth with resolver guards and role metadata, subscriptions over `graphql-transport-ws` (in memory or on Redis), CORS, rate limiting, security headers and HTML sanitization, plus a plain REST `GET /health` route next to `/graphql` that returns only `{ "status": "ok" }`. Private; not published.
+A small blog (authors, posts and comments, kept in memory and seeded at startup) served over GraphQL with every Knead package working together: code-first types, DataLoader-batched field resolvers, valibot argument validation, bearer-token auth with resolver guards and role metadata, subscriptions over `graphql-transport-ws` (in memory or on Redis), CORS, rate limiting, security headers and HTML sanitization, plus a plain REST `GET /health` route next to `/graphql` that returns only `{ "status": "ok" }`. Private; not published.
 
 ## Run
 
 ```bash
 pnpm install
-pnpm --filter @hpmws/example-graphql-server dev     # NODE_ENV=development, watches src/
-pnpm --filter @hpmws/example-graphql-server start   # production defaults
+pnpm --filter @knead/example-graphql-server dev     # NODE_ENV=development, watches src/
+pnpm --filter @knead/example-graphql-server start   # production defaults
 ```
 
 | Variable | Default | Effect |
@@ -16,6 +16,9 @@ pnpm --filter @hpmws/example-graphql-server start   # production defaults
 | `PORT` | `3000` | Listening port |
 | `NODE_ENV` | | `development` turns on the playground, introspection and unmasked errors, and writes `schema.graphql`. `production` refuses to start: the demo tokens are public |
 | `REDIS_URL` | | Use `RedisPubSub` for subscriptions, so several instances share events |
+| `REDIS_PUBSUB_SIGNING_KEY` | | `RedisPubSub` `signingKey` (generate with `openssl rand -base64 32`): events are signed, and unsigned or forged ones are dropped. Required with `REDIS_URL` under `NODE_ENV=production` (the server refuses to start without it) |
+| `REDIS_PUBSUB_ENCRYPTION_KEY` | | `RedisPubSub` `encryptionKey` (generate with `openssl rand -base64 32`): event payloads are AES-256-GCM encrypted in Redis |
+| `RATE_LIMIT_HASH_SECRET` | | With `REDIS_URL`, share rate limits through `RedisStore`, with keys HMAC-hashed under this secret (`openssl rand -base64 32`, the same on every instance) so client IPs cannot be recovered from Redis |
 | `RATE_LIMIT` | `100` | Requests per client IP per minute (`/health` is exempt) |
 | `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated browser origins for CORS and subscription sockets |
 
@@ -62,11 +65,11 @@ curl localhost:3000/graphql -H 'content-type: application/json' -H 'authorizatio
   -d '{"query":"mutation { deletePost(id: \"p4\") }"}'
 ```
 
-`createPost` input is validated with valibot (a 3-character title fails with `BAD_USER_INPUT` and `extensions.issues`), and post and comment bodies are sanitized with `@hpmws/sanitize`.
+`createPost` input is validated with valibot (a 3-character title fails with `BAD_USER_INPUT` and `extensions.issues`), and post and comment bodies are sanitized with `@knead/sanitize`.
 
 ## Subscriptions
 
-`postPublished(authorId: ID)` and `commentAdded(postId: ID!)` run over a `graphql-transport-ws` WebSocket on `/graphql`. Browsers cannot send an `Authorization` header on a WebSocket, so the token goes in `connectionParams`; a missing or unknown token closes the socket with `4403`.
+`postPublished(authorId: ID)` and `commentAdded(postId: ID!)` run over a `graphql-transport-ws` WebSocket on `/graphql`. Browsers cannot send an `Authorization` header on a WebSocket, so the token goes in `connectionParams`; a missing or unknown token closes the socket with `4403`. `commentAdded` rechecks its guards before every comment, and `subscriptions.refreshContext` re-verifies the connection's token with a live `AuthService` lookup first, so revoking a token (`AuthService.revoke`) ends the subscription with `FORBIDDEN` at its next event.
 
 In the playground (development), set the connection params to `{ "token": "grace-token" }` and run:
 
@@ -76,7 +79,7 @@ subscription {
 }
 ```
 
-Then publish a post as Grace with the `createPost` curl above (with `"publish": true`). Posts by other authors are filtered out.
+Then publish a post as Grace with the `createPost` curl above (with `"publish": true`). Posts by other authors are filtered out. Events may come through Redis, a trust boundary, so the subscriptions drop malformed events (for example a post whose `status` is not a `PostStatus`) in their `filter`, and `revivePost`/`reviveComment` sanitize the body again before it is sent.
 
 From a terminal, with [`websocat`](https://github.com/vi/websocat):
 
@@ -91,9 +94,9 @@ Run the `addComment` curl above in another terminal to see the event. `commentAd
 ## Test
 
 ```bash
-pnpm --filter @hpmws/example-graphql-server test    # @hpmws/testing: app.graphql / app.graphqlSubscribe
-pnpm --filter @hpmws/example-graphql-server smoke   # starts the real server and checks it over the network
-REDIS_URL=redis://localhost:6379 pnpm --filter @hpmws/example-graphql-server smoke   # with RedisPubSub
+pnpm --filter @knead/example-graphql-server test    # @knead/testing: app.graphql / app.graphqlSubscribe
+pnpm --filter @knead/example-graphql-server smoke   # starts the real server and checks it over the network
+REDIS_URL=redis://localhost:6379 pnpm --filter @knead/example-graphql-server smoke   # with RedisPubSub
 ```
 
 The smoke test (`scripts/smoke.ts`) spawns `bun src/main.ts` on a free port with `NODE_ENV=development` and `RATE_LIMIT=40`. It checks `/health` (which returns only `{ "status": "ok" }`) and the PubSub engine the server reports at startup, queries, authenticated mutations, the playground and its CSP, security headers, a CORS preflight, a subscription event triggered by a mutation over HTTP, the depth limit, a dropped connection for an oversized WebSocket message, a 429 after the rate limit, and a 403 for a cross-origin or `Origin: null` WebSocket upgrade. The server has no WebSocket endpoint besides `/graphql`, so the origin checks run there. It prints a `PASS`/`FAIL` line per check and exits nonzero on any failure.

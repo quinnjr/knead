@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { inject, type OnModuleInit } from '@hpmws/core';
-import { Controller, type Ctx, Get, UseGuards, WsRegistry } from '@hpmws/http';
-import { Test, type TestApp } from '@hpmws/testing';
+import { inject, type OnModuleInit } from '@knead/core';
+import { Controller, type Ctx, Get, UseGuards, WsRegistry } from '@knead/http';
+import { Test, type TestApp } from '@knead/testing';
 import { CorsConfigError, CorsModule, type CorsOptions } from '../src/index.js';
 
 @Controller('/api')
@@ -326,5 +326,38 @@ describe('oversized Origin headers', () => {
       headers: { origin: long, 'access-control-request-method': 'GET' },
     });
     expect(res.headers.get('access-control-allow-origin')).toBeNull();
+  });
+});
+
+describe('RegExp origins must be anchored', () => {
+  test('an unanchored RegExp is a configuration error naming the option', () => {
+    for (const origin of [/app\.example/, /^https:\/\/app\.example/, /app\.example$/, /^a\$/]) {
+      expect(() => CorsModule.forRoot({ origin })).toThrow(CorsConfigError);
+      expect(() => CorsModule.forRoot({ origin })).toThrow('CORS origin RegExp');
+    }
+  });
+
+  test('top-level alternation is rejected with a hint to group it', () => {
+    for (const origin of [/^https:\/\/a\.com|https:\/\/b\.com$/, /^a$|^b$/]) {
+      expect(() => CorsModule.forRoot({ origin })).toThrow(CorsConfigError);
+      expect(() => CorsModule.forRoot({ origin })).toThrow('^(?:a|b)$');
+    }
+  });
+
+  test('alternation inside groups or classes, or escaped, is fine', () => {
+    for (const origin of [
+      /^https:\/\/(?:a|b)\.com$/,
+      /^https:\/\/[a|b]\.com$/,
+      /^https:\/\/a\|b\.com$/,
+      /^(https:\/\/(x|y)\.com)$/,
+    ]) {
+      expect(() => CorsModule.forRoot({ origin })).not.toThrow();
+    }
+  });
+
+  test('anchored RegExps are accepted', () => {
+    for (const origin of [/^https:\/\/app\.example$/, /^https:\/\/(?:a|b)\.example$/i, /^a\\$/]) {
+      expect(() => CorsModule.forRoot({ origin })).not.toThrow();
+    }
   });
 });

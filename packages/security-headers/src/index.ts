@@ -6,6 +6,7 @@ export {
   serializeCsp,
 } from './csp.js';
 export {
+  MIN_RECOMMENDED_HSTS_MAX_AGE,
   SECURITY_HEADERS_META,
   SECURITY_HEADERS_OPTIONS,
   SecurityHeaders,
@@ -23,7 +24,7 @@ export {
   validateSecurityHeadersOptions,
 } from './options.js';
 
-declare module '@hpmws/http' {
+declare module '@knead/http' {
   interface CtxState {
     /** Set by SecurityHeadersModule when CSP nonces are enabled. */
     cspNonce?: string;

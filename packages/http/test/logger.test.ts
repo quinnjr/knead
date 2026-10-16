@@ -1,5 +1,11 @@
 import { describe, expect, spyOn, test } from 'bun:test';
-import { ConsoleLogger, MemoryLogger, redactCredentials } from '../src/index.js';
+import {
+  ConsoleLogger,
+  logValue,
+  MemoryLogger,
+  redactCredentials,
+  redactValue,
+} from '../src/index.js';
 
 test('MemoryLogger records entries per level and clears', () => {
   const logger = new MemoryLogger();
@@ -32,7 +38,7 @@ describe('ConsoleLogger credential redaction', () => {
         42,
       );
       expect(out.calls()[0]).toEqual([
-        '[hpmws] connecting to redis://***@db.internal:6379/0',
+        '[knead] connecting to redis://***@db.internal:6379/0',
         'postgres://***@h/db',
         42,
       ]);
@@ -68,7 +74,7 @@ describe('ConsoleLogger credential redaction', () => {
       const meta = { a: 1 };
       new ConsoleLogger().warn('see https://example.com/a@b', error, meta);
       const [message, loggedError, loggedMeta] = out.calls()[0]!;
-      expect(message).toBe('[hpmws] see https://example.com/a@b');
+      expect(message).toBe('[knead] see https://example.com/a@b');
       expect(loggedError).toBe(error);
       expect(loggedMeta).toBe(meta);
     } finally {
@@ -102,6 +108,47 @@ describe('redactCredentials', () => {
     ['postgres://u:12/x@h/db', 'postgres://***@h/db'],
     ['https://example.com:8443/users/@alice', 'https://example.com:8443/users/@alice'],
     ['http://example.com/a@b', 'http://example.com/a@b'],
+    // Credential URLs nested in an http(s) URL's path or query.
+    [
+      'https://api.example.com/proxy?to=redis://admin:pw@cache',
+      'https://api.example.com/proxy?to=redis://***@cache',
+    ],
+    [
+      'https://app.example/login?next=postgres://u:p@db',
+      'https://app.example/login?next=postgres://***@db',
+    ],
+    ['https://a.example/x/https://u:p@b.example/', 'https://a.example/x/https://***@b.example/'],
+    // key=value secrets and Authorization credentials.
+    ['https://h/cb?code=1&token=abc.def&x=2', 'https://h/cb?code=1&token=***&x=2'],
+    [
+      'Server=db;User Id=sa;Password=Hunter2;Encrypt=true',
+      'Server=db;User Id=sa;Password=***;Encrypt=true',
+    ],
+    ['host=db pwd=s3cret sslpassword=k', 'host=db pwd=*** sslpassword=***'],
+    [
+      '?apikey=K1&api_key=K2&secret=S&AccountKey=A==',
+      '?apikey=***&api_key=***&secret=***&AccountKey=***',
+    ],
+    ['authorization: Bearer eyJhbGciOi.J9.x-_~+/=', 'authorization: Bearer ***'],
+    ['Authorization: Basic dXNlcjpwYXNz', 'Authorization: Basic ***'],
+    ['authorization: bearer abc.def.ghi', 'authorization: bearer ***'],
+    ['Authorization: Basic dXNlcjpw', 'Authorization: Basic ***'],
+    ['basic user:pw', 'basic ***'],
+    ['Invalid basic auth header; a basic mistake', 'Invalid basic auth header; a basic mistake'],
+    ['Bearer of bad news', 'Bearer of bad news'],
+    ['basic setup: done', 'basic setup: done'],
+    ['Basic user:pass', 'Basic ***'],
+    // Known limit: short tokens are not credential-shaped enough.
+    ['Bearer abc123', 'Bearer abc123'],
+    ['AUTHORIZATION: BASIC dXNlcg==', 'AUTHORIZATION: BASIC ***'],
+    // Prefixed and suffixed keys, any case.
+    ['?access_token=at1&x=1', '?access_token=***&x=1'],
+    ['client_secret=cs1 client_id=pub', 'client_secret=*** client_id=pub'],
+    ['#id_token=eyJ.x.y&state=s', '#id_token=***&state=s'],
+    ['DB_PASSWORD=hunter2 DB_HOST=db', 'DB_PASSWORD=*** DB_HOST=db'],
+    ['PGPASSWORD=pg1;PGHOST=db', 'PGPASSWORD=***;PGHOST=db'],
+    ['x.Refresh-Token=r1', 'x.Refresh-Token=***'],
+    ['note=fine total=3', 'note=fine total=3'],
   ])('%s', (input, expected) => {
     expect(redactCredentials(input)).toBe(expected);
   });
@@ -116,10 +163,167 @@ describe('redactCredentials performance', () => {
     [`${'a'.repeat(MB)}://x`],
     [`redis://${'u'.repeat(MB)}@h`],
     [`x://${'@'.repeat(MB)}`],
+    [`${'a://'.repeat(MB / 4)}@`],
+    [`${'https://a/'.repeat(MB / 10)}@`],
+    ['?to=redis://u:p@h&'.repeat(MB / 18)],
+    ['a='.repeat(MB / 2)],
+    [`${'apikey'.repeat(MB / 6)}=`],
+    ['Bearer\t'.repeat(MB / 7)],
+    [`${'_a'.repeat(MB / 2)}=`],
+    ['abcd='.repeat(MB / 5)],
+    ['token='.repeat(MB / 6)],
+    [`${'x'.repeat(MB - 1)}=`],
+    ['bearer '.repeat(MB / 7)],
   ])('pathological input %#: 1 MB in well under 50 ms', (input) => {
     redactCredentials(input.slice(0, 1000)); // warm up the regex
     const started = performance.now();
     redactCredentials(input);
     expect(performance.now() - started).toBeLessThan(50);
   });
+});
+
+describe('redactValue', () => {
+  test('walks plain objects, arrays and Error own properties without mutating them', () => {
+    const meta = {
+      url: 'redis://u:p@h',
+      config: { headers: { Authorization: 'Bearer abc', Accept: 'json' } },
+      list: ['postgres://a:b@db', 1],
+      nested: { password: 'x', apiKey: 'y', ok: 'fine' },
+    };
+    const copy = structuredClone(meta);
+    expect(redactValue(meta)).toEqual({
+      url: 'redis://***@h',
+      config: { headers: { Authorization: '***', Accept: 'json' } },
+      list: ['postgres://***@db', 1],
+      nested: { password: '***', apiKey: '***', ok: 'fine' },
+    });
+    expect(meta).toEqual(copy);
+  });
+
+  test('Error own properties and AggregateError.errors are redacted', () => {
+    const error = Object.assign(new Error('request failed'), {
+      url: 'https://h/x?token=t0k',
+      config: { headers: { Cookie: 'sid=1' } },
+    });
+    const text = redactValue(error) as string;
+    expect(typeof text).toBe('string');
+    expect(text).toStartWith('Error: request failed');
+    expect(text).toContain('token=***');
+    expect(text).not.toContain('t0k');
+    expect(text).not.toContain('sid=1');
+    expect(error.url).toBe('https://h/x?token=t0k');
+    const aggregate = new AggregateError([new Error('redis://a:b@h')], 'all failed');
+    const out = redactValue(aggregate) as string;
+    expect(out).toContain('redis://***@h');
+    expect(out).not.toContain('a:b@');
+  });
+
+  test('cycles and depth are bounded', () => {
+    const a: Record<string, unknown> = { s: 'redis://u:p@h' };
+    a.self = a;
+    expect(redactValue(a)).toEqual({ s: 'redis://***@h', self: '[Circular]' });
+    const deep = { a: { b: { c: { d: { e: 'redis://u:p@h' } } } } };
+    expect(JSON.stringify(redactValue(deep))).not.toContain('u:p@');
+  });
+
+  test('values with nothing to redact are returned as is', () => {
+    const meta = { a: 1, b: ['x'] };
+    const error = new Error('plain');
+    expect(redactValue(meta)).toBe(meta);
+    expect(redactValue(error)).toBe(error);
+  });
+});
+
+describe('log injection', () => {
+  test('ConsoleLogger escapes control characters in the message and string meta', () => {
+    const spy = spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      new ConsoleLogger().warn('a\r\nFAKE line\u001b[31m', 'b\nc\u007f');
+      expect(spy.mock.calls[0]).toEqual(['[knead] a\\r\\nFAKE line\\x1b[31m', 'b\\nc\\x7f']);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test('logValue caps client values at 1024 characters and escapes them', () => {
+    expect(logValue('x'.repeat(2000))).toBe(`${'x'.repeat(1024)}…`);
+    expect(logValue('/a\nb')).toBe('/a\\nb');
+  });
+});
+
+describe('redactValue robustness', () => {
+  test('a throwing getter is recorded as [unreadable]', () => {
+    const meta = {
+      ok: 'redis://u:p@h',
+      get boom(): string {
+        throw new Error('getter');
+      },
+    };
+    expect(redactValue(meta)).toEqual({ ok: 'redis://***@h', boom: '[unreadable]' });
+  });
+
+  test('a hostile Proxy never throws out of redactValue', () => {
+    const hostile = new Proxy(
+      {},
+      {
+        ownKeys() {
+          throw new Error('nope');
+        },
+        getPrototypeOf() {
+          throw new Error('nope');
+        },
+      },
+    );
+    expect(() => redactValue(hostile)).not.toThrow();
+    expect(() => redactValue({ nested: hostile })).not.toThrow();
+  });
+
+  test('Headers, Map and AxiosHeaders-like objects are walked', () => {
+    class AxiosHeaders {
+      readonly #values: Record<string, string> = { Authorization: 'Bearer t0k', Accept: 'json' };
+      toJSON() {
+        return { ...this.#values };
+      }
+    }
+    const error = Object.assign(new Error('request failed'), {
+      config: {
+        headers: new AxiosHeaders(),
+        fetchHeaders: new Headers({ authorization: 'Basic abc', 'x-ok': '1' }),
+        map: new Map([['cookie', 'sid=1']]),
+      },
+    });
+    const text = redactValue(error) as string;
+    expect(text).not.toContain('t0k');
+    expect(text).not.toContain('abc');
+    expect(text).not.toContain('sid=1');
+    expect(text).toContain('Accept');
+    const plain = new Headers({ accept: 'json' });
+    expect(redactValue({ plain }) as object).toEqual({ plain });
+  });
+
+  test('logging failures never escape: a throwing logger keeps the 500 response', async () => {
+    const { createErrorHandler } = await import('../src/pipeline.js');
+    const { makeCtx } = await import('./helpers.js');
+    const broken = {
+      debug() {},
+      info() {},
+      warn() {},
+      error() {
+        throw new Error('logger down');
+      },
+    };
+    for (const development of [true, false]) {
+      const res = await createErrorHandler([], broken, development)(new Error('x'), makeCtx('/p'));
+      expect(res.status).toBe(500);
+    }
+  });
+});
+
+test('redactValue walks own Symbol keys', () => {
+  const key = Symbol('conn');
+  const out = redactValue({ [key]: 'redis://u:p@h', plain: 1 }) as Record<PropertyKey, unknown>;
+  expect(out[key]).toBe('redis://***@h');
+  expect(out.plain).toBe(1);
+  const error = Object.assign(new Error('x'), { [key]: 'postgres://a:b@db' });
+  expect(redactValue(error) as string).not.toContain('a:b@');
 });

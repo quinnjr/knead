@@ -2,11 +2,11 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { InjectionToken, inject, Module } from '@hpmws/core';
-import { APP_GUARD, type Ctx, HttpConfigError } from '@hpmws/http';
-import { RateLimitModule } from '@hpmws/rate-limit';
-import { SecurityHeadersModule } from '@hpmws/security-headers';
-import { Test } from '@hpmws/testing';
+import { InjectionToken, inject, Module } from '@knead/core';
+import { APP_GUARD, type Ctx, HttpConfigError } from '@knead/http';
+import { RateLimitModule } from '@knead/rate-limit';
+import { SecurityHeadersModule } from '@knead/security-headers';
+import { Test } from '@knead/testing';
 import {
   GraphQLModule,
   GraphQLRuntime,
@@ -158,7 +158,7 @@ describe('GraphQLModule', () => {
   });
 
   test('emitSchemaFile writes the sorted SDL', async () => {
-    const file = join(tmpdir(), `hpmws-gql-${crypto.randomUUID()}.graphql`);
+    const file = join(tmpdir(), `knead-gql-${crypto.randomUUID()}.graphql`);
     try {
       s = await startGraphQL([BlogModule], { emitSchemaFile: file });
       const written = await Bun.file(file).text();
@@ -222,6 +222,15 @@ describe('playground and CSP', () => {
     expect(csp).not.toMatch(/script-src[^;]*https:\/\/cdn\.jsdelivr\.net[ ;]/);
     expect(csp).not.toContain("script-src 'self' 'unsafe-inline'");
     expect(res.headers.get('x-frame-options')).toBe('DENY');
+    // No third-party font hosts: Google Fonts is blocked and the page uses system fonts.
+    expect(csp).not.toContain('fonts.googleapis.com');
+    expect(csp).not.toContain('fonts.gstatic.com');
+    expect(csp).toContain("font-src 'self' data:;");
+    expect(res.headers.get('referrer-policy')).toBe('no-referrer');
+    // The page still renders: the playground bundle and stylesheet load with their SRI hashes.
+    expect(html).toContain('GraphQLPlayground.init');
+    expect(html).toMatch(/<script src="[^"]+middleware\.js" integrity="sha384-[^"]+"/);
+    expect(html).toMatch(/<link\s+rel="stylesheet"\s+href="[^"]+index\.css" integrity="sha384-/);
   });
 
   test('JSON responses keep the strict default CSP', async () => {

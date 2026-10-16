@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { Module } from '@hpmws/core';
-import { MemoryLogger } from '@hpmws/http';
+import { Module } from '@knead/core';
+import { MemoryLogger } from '@knead/http';
 import { GraphQLError } from 'graphql';
 import { createErrorFormatter, Query, Resolver } from '../src/index.js';
 import { startGraphQL } from './helpers.js';
@@ -87,7 +87,27 @@ describe('internal error logging', () => {
     expect(entry?.message).toBe(
       `GraphQL resolver error at post (correlation id ${json.extensions?.correlationId})`,
     );
-    expect(entry?.meta[0]).toBeInstanceOf(Error);
+    // The full error, redacted (it held a credential URL, so it is printed as its stack text).
+    expect(entry?.meta[0]).toContain('DatabaseError: db at postgres://***@db.internal failed');
+    expect(entry?.meta[0]).not.toContain('admin:pw');
+    const plain = new MemoryLogger();
+    const raw = new Error('plain');
+    createErrorFormatter({ maskErrors: false, logger: plain, development: true })(
+      new GraphQLError('ignored', { path: ['post'], originalError: raw }),
+    );
+    expect(plain.entries[0]?.meta[0]).toBe(raw);
+  });
+
+  test('the summary is redacted before truncation, so a cut URL leaks no password', () => {
+    const logger = new MemoryLogger();
+    const format = createErrorFormatter({ maskErrors: true, logger, development: false });
+    // The 500-character cut lands between "://admin:" and "@".
+    const raw = new Error(`${'x'.repeat(470)} postgres://admin:${'s'.repeat(60)}@db failed`);
+    format(new GraphQLError('ignored', { path: ['post'], originalError: raw }));
+    const message = logger.entries[0]!.message;
+    expect(message).toContain('postgres://***@db failed');
+    expect(message).not.toContain('admin');
+    expect(message).not.toContain('sss');
   });
 
   test('the application flag decides: startGraphQL runs with development false', async () => {

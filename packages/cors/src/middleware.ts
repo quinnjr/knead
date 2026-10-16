@@ -1,5 +1,5 @@
-import { inject } from '@hpmws/core';
-import { type Ctx, ForbiddenException, type Middleware, type Next, withHeaders } from '@hpmws/http';
+import { inject } from '@knead/core';
+import { type Ctx, ForbiddenException, type Middleware, type Next, withHeaders } from '@knead/http';
 import { CORS_OPTIONS } from './options.js';
 
 const DEFAULT_METHODS = ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE'];

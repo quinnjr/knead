@@ -1,5 +1,5 @@
-import { InjectionToken } from '@hpmws/core';
-import type { Logger } from '@hpmws/http';
+import { InjectionToken } from '@knead/core';
+import { type Logger, redactCredentials, redactValue, summarizeError } from '@knead/http';
 import type { PubSubEngine } from '@leaven-graphql/ws';
 
 /** The PubSubEngine used by @Subscription resolvers: `inject(PUBSUB).publish(topic, payload)`. */
@@ -31,8 +31,40 @@ export class EventSourceError extends Error {
   }
 }
 
+/** Objects already frozen all the way down, so a payload shared by many subscribers is walked once. */
+const deeplyFrozen = new WeakSet<object>();
+
+function isPlain(value: object): boolean {
+  if (Array.isArray(value)) return true;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
 /**
- * An async iterator over `topics` on any PubSubEngine. `filter` runs per event; `return()`
+ * Freezes `value` and every plain object and array reachable through them, and returns it.
+ * Anything else (class instances, Dates, Maps, Buffers, ORM entities) is left as is and not
+ * walked into: it belongs to the publisher. Event payloads are shared by every subscriber, so
+ * one resolver must not be able to change what the others receive; publish plain DTOs.
+ */
+export function deepFreeze<T>(value: T): T {
+  const stack: unknown[] = [value];
+  while (stack.length > 0) {
+    const item = stack.pop();
+    if (typeof item !== 'object' || item === null) continue;
+    if (deeplyFrozen.has(item) || !isPlain(item)) continue;
+    Object.freeze(item);
+    deeplyFrozen.add(item);
+    for (const key of Reflect.ownKeys(item)) {
+      const descriptor = Object.getOwnPropertyDescriptor(item, key);
+      if (descriptor && 'value' in descriptor) stack.push(descriptor.value);
+    }
+  }
+  return value;
+}
+
+/**
+ * An async iterator over `topics` on any PubSubEngine. Payloads' plain objects and arrays are
+ * deep-frozen when they arrive (deepFreeze), so they are immutable for resolvers. `filter` runs per event; `return()`
  * unsubscribes from every topic.
  */
 export function eventIterator<T>(
@@ -50,6 +82,7 @@ export function eventIterator<T>(
   let failure: EventSourceError | undefined;
   const push = (payload: unknown) => {
     if (done) return;
+    deepFreeze(payload);
     const waiter = waiting.shift();
     if (waiter) waiter.resolve({ value: payload as T, done: false });
     else {
@@ -102,23 +135,33 @@ export function eventIterator<T>(
 }
 
 /**
- * Adapts an hpmws `Logger` to the logger Leaven's WebSocket transport and in-memory `PubSub`
- * accept, so their diagnostics go through `LOGGER` (and its credential redaction) instead of
- * `console`.
+ * Adapts a Knead `Logger` to the logger Leaven's WebSocket transport and in-memory `PubSub`
+ * accept, so their diagnostics go through `LOGGER` instead of `console`. Arguments are redacted
+ * whatever LOGGER is configured; outside development an Error argument is reduced to
+ * `Name: message` (summarizeError), without its stack, cause or properties.
  */
-export function leavenLogger(logger: Logger): {
+export function leavenLogger(
+  logger: Logger,
+  development = false,
+): {
   error(...args: unknown[]): void;
   warn(...args: unknown[]): void;
 } {
-  const split = (args: unknown[]): [string, unknown[]] =>
-    typeof args[0] === 'string' ? [args[0], args.slice(1)] : ['Leaven', args];
+  const prepare = (args: unknown[]): [string, unknown[]] => {
+    const [message, meta] =
+      typeof args[0] === 'string' ? [args[0], args.slice(1)] : ['Leaven', args];
+    const safe = meta.map((value) =>
+      !development && value instanceof Error ? summarizeError(value) : redactValue(value),
+    );
+    return [redactCredentials(message), safe];
+  };
   return {
     error: (...args) => {
-      const [message, meta] = split(args);
+      const [message, meta] = prepare(args);
       logger.error(message, ...meta);
     },
     warn: (...args) => {
-      const [message, meta] = split(args);
+      const [message, meta] = prepare(args);
       logger.warn(message, ...meta);
     },
   };

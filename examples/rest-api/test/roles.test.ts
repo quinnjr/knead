@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { Ctx } from '@hpmws/http';
+import type { Ctx } from '@knead/http';
 import { RolesGuard, type User } from '../src/auth/auth.js';
 
 const ctx = (meta: Record<PropertyKey, unknown>, user?: User) =>

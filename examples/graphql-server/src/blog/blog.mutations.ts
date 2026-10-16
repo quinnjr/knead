@@ -1,7 +1,7 @@
-import { inject } from '@hpmws/core';
-import { ID, Mutation, PUBSUB, Resolver, type ResolverCtx } from '@hpmws/graphql';
-import { ForbiddenException, UseGuards } from '@hpmws/http';
-import { sanitize } from '@hpmws/sanitize';
+import { inject } from '@knead/core';
+import { ID, Mutation, PUBSUB, Resolver, type ResolverCtx } from '@knead/graphql';
+import { ForbiddenException, UseGuards } from '@knead/http';
+import { sanitize } from '@knead/sanitize';
 import * as v from 'valibot';
 import { Authenticated, Roles, RolesGuard } from '../auth/auth.js';
 import { toCommentEvent, toPostEvent } from './blog.events.js';

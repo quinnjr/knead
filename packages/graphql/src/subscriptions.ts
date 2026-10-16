@@ -1,4 +1,4 @@
-import { BadRequestException, type Ctx, type WsEndpoint, type WsSocket } from '@hpmws/http';
+import { BadRequestException, type Ctx, type WsEndpoint, type WsSocket } from '@knead/http';
 import type { GraphQLRequest, LeavenExecutor, SubscriptionIterator } from '@leaven-graphql/core';
 import {
   type WebSocketContext,
@@ -13,6 +13,9 @@ import { leavenLogger } from './pubsub.js';
 import type { GraphQLRuntime } from './runtime.js';
 
 export const GRAPHQL_TRANSPORT_WS = 'graphql-transport-ws';
+
+/** Accepted subscribe/complete message ids. */
+const MESSAGE_ID = /^[A-Za-z0-9_.:-]{1,64}$/;
 
 interface UpgradeData {
   http: Ctx;
@@ -37,6 +40,8 @@ interface PendingSubscribe {
 interface SocketState {
   http: Ctx;
   extra: object | undefined;
+  /** The `context(http)` factory result, computed once when the connection initializes. */
+  base: object | undefined;
   /** Set synchronously on the first connection_init, before Leaven awaits onConnect. */
   initStarted: boolean;
   /** Set when the socket closed; a subscribe that completes later is returned at once. */
@@ -120,6 +125,23 @@ function track<T>(
   return tracked;
 }
 
+/**
+ * A per-operation view of the shared upgrade Ctx: its own `state`, a shallow copy of the
+ * upgrade's (so it sees what middleware and guards set at upgrade time, but its writes stay its
+ * own); everything else (headers, ip, query, ...) is read from the upgrade Ctx, with methods
+ * bound to it.
+ */
+export function operationView(http: Ctx): Ctx {
+  const state: Ctx['state'] = { ...http.state };
+  return new Proxy(http, {
+    get(target, prop) {
+      if (prop === 'state') return state;
+      const value = Reflect.get(target, prop, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
+
 const asLeavenSocket = (facade: SocketFacade) =>
   facade as unknown as ServerWebSocket<WebSocketContext>;
 
@@ -127,7 +149,11 @@ const asLeavenSocket = (facade: SocketFacade) =>
 export interface GraphQLConnection {
   /** The upgrade request's Ctx. */
   readonly http: Ctx;
-  /** The object `onConnect` returned (empty before connection_init, or without onConnect). */
+  /**
+   * The connection's identity: the `context(http)` factory result (computed once, when the
+   * connection initializes) with the object `onConnect` returned merged over it. Empty before
+   * connection_init.
+   */
   readonly context: Readonly<Record<PropertyKey, unknown>>;
 }
 
@@ -153,7 +179,8 @@ const EMPTY_CONTEXT: Readonly<Record<PropertyKey, unknown>> = Object.freeze({});
 function connectionOf(state: SocketState): GraphQLConnection {
   return {
     http: state.http,
-    context: state.extra ? Object.freeze({ ...state.extra }) : EMPTY_CONTEXT,
+    context:
+      state.base || state.extra ? Object.freeze({ ...state.base, ...state.extra }) : EMPTY_CONTEXT,
   };
 }
 
@@ -186,6 +213,13 @@ export function createSubscriptionEndpoint(
   createHandler: HandlerFactory = leavenHandler,
 ): SubscriptionEndpoint {
   const facades = new WeakMap<WsSocket, SocketFacade>();
+  /** Revocations recorded for sockets that had not opened yet, keyed by their socket data. */
+  const early = new WeakMap<object, DeferredRevocation[]>();
+  /**
+   * closeWhere predicates kept per socket until its init completes (the registry's
+   * `maxPendingRevocations`, default 10000); more fail closed.
+   */
+  const maxDeferred = () => runtime.maxPendingRevocations ?? 10_000;
   const states = new WeakMap<object, SocketState>();
   const stateOf = (socket: object): SocketState => {
     const state = states.get(socket);
@@ -223,7 +257,7 @@ export function createSubscriptionEndpoint(
   });
   const handler = createHandler({
     schema: runtime.schema,
-    logger: leavenLogger(runtime.logger),
+    logger: leavenLogger(runtime.logger, runtime.development),
     connectionInitTimeout: options.connectionInitTimeout,
     keepAliveInterval: options.keepAliveInterval,
     subscriptionManager: {
@@ -245,6 +279,14 @@ export function createSubscriptionEndpoint(
     onConnect: async (socket, params) => {
       const state = stateOf(socket);
       let accepted = true;
+      if (runtime.options.context) {
+        try {
+          state.base = await runtime.options.context(state.http);
+        } catch {
+          // Every operation calls the factory again and reports the failure as a masked error
+          // (logged there), so the connection itself is not rejected here.
+        }
+      }
       if (options.onConnect) {
         try {
           const result = await options.onConnect(state.http, params ?? {});
@@ -269,7 +311,11 @@ export function createSubscriptionEndpoint(
         try {
           matches = revocation.predicate(connection);
         } catch (error) {
-          runtime.logger.error('GraphQLSubscriptions.closeWhere predicate threw', error);
+          logInternalError(
+            runtime.masking,
+            'GraphQLSubscriptions.closeWhere predicate threw',
+            error,
+          );
         }
         if (matches) {
           (socket as unknown as SocketFacade).close(revocation.code, revocation.reason);
@@ -282,7 +328,13 @@ export function createSubscriptionEndpoint(
       const state = stateOf(socket);
       const pending = requests.get(request);
       try {
-        const op = await runtime.createOperationContext(state.http, ['subscription'], state.extra);
+        // Each operation gets its own view of the upgrade Ctx with a fresh `state`, so one
+        // operation's ctx.http.state never leaks into the next.
+        const op = await runtime.createOperationContext(
+          operationView(state.http),
+          ['subscription'],
+          state.extra,
+        );
         op.operationName = request.operationName;
         if (pending) operations.set(op, { state, pending });
         return op;
@@ -306,8 +358,23 @@ export function createSubscriptionEndpoint(
     },
     deferRevocation(ws, predicate, code, reason) {
       const facade = facades.get(ws);
-      const state = facade && states.get(facade);
+      if (!facade) {
+        // Still upgrading (WsRegistry re-applies closeWhere before open): keep the predicate for
+        // the connection that open() creates.
+        if (ws.data.endpoint !== runtime.options.path) return false;
+        const list = early.get(ws.data) ?? [];
+        // Past the cap the list only needs to show that it overflowed (open() then fails closed).
+        if (list.length <= maxDeferred()) list.push({ predicate, code, reason });
+        early.set(ws.data, list);
+        return true;
+      }
+      const state = states.get(facade);
       if (!state || state.initDone || state.closed) return false;
+      if (state.deferred.length >= maxDeferred()) {
+        // Too many to keep: fail closed rather than let one escape.
+        ws.close(1008, 'Revocation state unavailable');
+        return true;
+      }
       state.deferred.push({ predicate, code, reason });
       return true;
     },
@@ -330,16 +397,23 @@ export function createSubscriptionEndpoint(
         send: (message) => ws.send(message),
         close: (code, reason) => ws.close(code, reason),
       };
+      const deferred = early.get(ws.data) ?? [];
+      early.delete(ws.data);
+      if (deferred.length > maxDeferred()) {
+        ws.close(1008, 'Revocation state unavailable');
+        return;
+      }
       facades.set(ws, facade);
       states.set(facade, {
         http,
         extra: undefined,
+        base: undefined,
         initStarted: false,
         closed: false,
         pending: new Set(),
         iterators: new Map(),
         initDone: false,
-        deferred: [],
+        deferred,
       });
       handler.handleOpen(asLeavenSocket(facade));
     },
@@ -356,6 +430,16 @@ export function createSubscriptionEndpoint(
           return;
         }
         state.initStarted = true;
+      }
+      // Ids end up in Leaven's logs and maps: anything but a short, plain id closes the socket
+      // before the message reaches Leaven. Leaven validates ids too; this is a duplicate safety
+      // net, with Leaven's close reason.
+      if (
+        (parsed?.type === 'subscribe' || parsed?.type === 'complete') &&
+        (typeof parsed.id !== 'string' || !MESSAGE_ID.test(parsed.id))
+      ) {
+        ws.close(4400, 'Invalid message');
+        return;
       }
       if (parsed?.type === 'complete' && typeof parsed.id === 'string') {
         dropPending(state, parsed.id);

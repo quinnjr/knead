@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { createConnection } from 'node:net';
-import { Module } from '@hpmws/core';
+import { Module } from '@knead/core';
 import { type HttpApplication, redirectToHttps } from '../src/application.js';
 import { Controller, Get } from '../src/decorators.js';
 import { BadRequestException } from '../src/exceptions.js';
@@ -87,6 +87,30 @@ describe('redirectToHttps with a Host that does not form a valid URL', () => {
     expect(res.status).toBe(400);
     expect(res.headers.get('location')).toBeNull();
     expect(res.headers.get('cache-control')).toBe('no-store');
+  });
+
+  test('is 400 when the Host header is not a strict host[:port]', () => {
+    for (const host of [
+      'a b',
+      '1.2.3.256',
+      '[1.2.3.4]',
+      'xn--a',
+      'evil.com/x',
+      'u@evil.com',
+      '0x7f.1',
+    ]) {
+      const res = redirectToHttps(new Request('http://placeholder/p', { headers: { host } }), 443);
+      expect(res.status).toBe(400);
+      expect(res.headers.get('location')).toBeNull();
+    }
+  });
+
+  test('a valid Host header is redirected with the HTTPS port', () => {
+    const res = redirectToHttps(
+      new Request('http://placeholder/p?q=1', { headers: { host: 'App.Example:8080' } }),
+      8443,
+    );
+    expect(res.headers.get('location')).toBe('https://app.example:8443/p?q=1');
   });
 
   test('redirects to the canonical host when one is configured', () => {

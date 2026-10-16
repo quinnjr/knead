@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { Test, type TestApp, type TestingModule } from '@hpmws/testing';
+import { Test, type TestApp, type TestingModule } from '@knead/testing';
 import { AppModule } from '../src/app.module.js';
 
 let mod: TestingModule;

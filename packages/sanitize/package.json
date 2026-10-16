@@ -1,11 +1,11 @@
 {
-  "name": "@hpmws/sanitize",
+  "name": "@knead/sanitize",
   "version": "0.0.0",
   "description": "Opt-in allowlist HTML sanitization as a Standard Schema wrapper",
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/quinnjr/high-performance-modular-web-server.git",
+    "url": "git+https://github.com/quinnjr/knead.git",
     "directory": "packages/sanitize"
   },
   "type": "module",
@@ -20,7 +20,7 @@
   ],
   "sideEffects": false,
   "engines": {
-    "bun": ">=1.4.0"
+    "bun": ">=1.4.3"
   },
   "scripts": {
     "test": "bun test",
@@ -28,7 +28,7 @@
   },
   "dependencies": {
     "@standard-schema/spec": "^1.1.0",
-    "sanitize-html": "^2.18.1"
+    "sanitize-html": "2.18.1"
   },
   "devDependencies": {
     "@types/sanitize-html": "^2.16.2"

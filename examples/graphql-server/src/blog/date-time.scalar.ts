@@ -1,4 +1,4 @@
-import { defineScalar } from '@hpmws/graphql';
+import { defineScalar } from '@knead/graphql';
 import { GraphQLError, GraphQLScalarType, Kind } from 'graphql';
 
 const ISO_8601 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?(Z|[+-]\d{2}:\d{2})$/;

@@ -25,7 +25,7 @@ const run = (cmd: string[], cwd: string) => {
 const required = ['LICENSE-MIT', 'LICENSE-APACHE', 'README.md', 'dist/index.js', 'dist/index.d.ts'];
 const forbidden = [/\.map$/, /\.tsbuildinfo$/, /\/src\//, /\/test\//];
 const problems: string[] = [];
-const tmp = mkdtempSync(join(tmpdir(), 'hpmws-pack-'));
+const tmp = mkdtempSync(join(tmpdir(), 'knead-pack-'));
 const tarballs = new Map<string, string>();
 
 try {
@@ -112,7 +112,7 @@ function smokeTest(dir: string): void {
   }
   writeFileSync(
     join(dir, 'package.json'),
-    JSON.stringify({ name: 'hpmws-consumer', private: true, type: 'module' }),
+    JSON.stringify({ name: 'knead-consumer', private: true, type: 'module' }),
   );
   writeFileSync(
     join(dir, 'tsconfig.json'),
@@ -140,14 +140,14 @@ function smokeTest(dir: string): void {
 
 function consumerApp(): string {
   return `
-import { inject, Module } from '@hpmws/core';
-import { CorsModule } from '@hpmws/cors';
-import { Field, GraphQLModule, ID, ObjectType, Query, Resolver, type ResolverCtx } from '@hpmws/graphql';
-import { Controller, type Ctx, Get, HpmwsFactory, MemoryLogger } from '@hpmws/http';
-import { RateLimitModule } from '@hpmws/rate-limit';
-import { sanitize, type SanitizePolicy } from '@hpmws/sanitize';
-import { SecurityHeadersModule } from '@hpmws/security-headers';
-import type { TestingModuleBuilder } from '@hpmws/testing';
+import { inject, Module } from '@knead/core';
+import { CorsModule } from '@knead/cors';
+import { Field, GraphQLModule, ID, ObjectType, Query, Resolver, type ResolverCtx } from '@knead/graphql';
+import { Controller, type Ctx, Get, KneadFactory, MemoryLogger } from '@knead/http';
+import { RateLimitModule } from '@knead/rate-limit';
+import { sanitize, type SanitizePolicy } from '@knead/sanitize';
+import { SecurityHeadersModule } from '@knead/security-headers';
+import type { TestingModuleBuilder } from '@knead/testing';
 
 class Greeter {
   greet(name: string): string {
@@ -197,7 +197,7 @@ const policy: SanitizePolicy = { allowedTags: ['b'], allowedAttributes: {} };
 const builder: TestingModuleBuilder | undefined = undefined;
 void builder;
 
-const app = await HpmwsFactory.create(AppModule, { logger: new MemoryLogger() });
+const app = await KneadFactory.create(AppModule, { logger: new MemoryLogger() });
 await app.listen({ port: 0, hostname: '127.0.0.1' });
 try {
   const res = await fetch(new URL('/greet/ada', app.url), {

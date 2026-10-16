@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { LOGGER, type Logger } from '@hpmws/http';
-import { Test, type TestingModule } from '@hpmws/testing';
+import { LOGGER, type Logger } from '@knead/http';
+import { Test, type TestingModule } from '@knead/testing';
 import { GraphQLModule, PUBSUB, Query, Resolver } from '../src/index.js';
 
 @Resolver()
@@ -54,5 +54,23 @@ describe("Leaven's diagnostics go through LOGGER", () => {
     }
     expect(leaked).toEqual([]);
     expect(JSON.stringify(logger.errors.map((a) => a.map(String)))).toContain('subscriber boom');
+  });
+});
+
+describe('leavenLogger summarizes outside development', () => {
+  test('production: an Error argument becomes Name: message, redacted', async () => {
+    const { leavenLogger } = await import('../src/pubsub.js');
+    const logger = spyLogger();
+    const error = Object.assign(new Error('dial redis://u:p@h failed'), { token: 't' });
+    leavenLogger(logger, false).error('Leaven failed', error);
+    expect(logger.errors[0]).toEqual(['Leaven failed', 'Error: dial redis://***@h failed']);
+  });
+
+  test('development: the full error, redacted', async () => {
+    const { leavenLogger } = await import('../src/pubsub.js');
+    const logger = spyLogger();
+    const plain = new Error('plain');
+    leavenLogger(logger, true).error('x', plain, { authorization: 'Bearer t' });
+    expect(logger.errors[0]).toEqual(['x', plain, { authorization: '***' }]);
   });
 });

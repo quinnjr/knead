@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { inject, Module } from '@hpmws/core';
-import { MemoryLogger } from '@hpmws/http';
+import { inject, Module } from '@knead/core';
+import { MemoryLogger } from '@knead/http';
 import { RedisClient } from 'bun';
 import {
   Mutation,
@@ -16,7 +16,7 @@ import { startGraphQL, until } from './helpers.js';
 const url = process.env.REDIS_URL;
 
 describe.skipIf(!url)('RedisPubSub', () => {
-  const prefix = `hpmws:test:${crypto.randomUUID()}:`;
+  const prefix = `knead:test:${crypto.randomUUID()}:`;
   const admin = url ? new RedisClient(url) : undefined;
   afterAll(() => admin?.close());
 

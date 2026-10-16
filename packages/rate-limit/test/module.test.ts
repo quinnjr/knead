@@ -1,14 +1,16 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
-import type { ModuleImport } from '@hpmws/core';
-import { CorsModule } from '@hpmws/cors';
-import { Controller, type Ctx, Get } from '@hpmws/http';
-import { Test, type TestApp, type TestingModule } from '@hpmws/testing';
+import type { ModuleImport } from '@knead/core';
+import { CorsModule } from '@knead/cors';
+import { Controller, type Ctx, Get } from '@knead/http';
+import { Test, type TestApp, type TestingModule } from '@knead/testing';
+import type { RedisClient } from 'bun';
 import {
   MemoryStore,
   RateLimit,
   RateLimitModule,
   type RateLimitModuleOptions,
   type RateLimitStore,
+  RedisStore,
   SkipRateLimit,
 } from '../src/index.js';
 
@@ -107,6 +109,34 @@ describe('RateLimitModule', () => {
     await mod!.close();
     const closed = await serve({ store: broken, onStoreError: 'deny' });
     expect((await closed.request('GET', '/r/global')).status).toBe(503);
+  });
+
+  test('a Redis client that never answers is a store error (onStoreError applies)', async () => {
+    const never = { send: () => new Promise(() => {}) } as unknown as RedisClient;
+    const store = new RedisStore({ client: never, commandTimeout: 20 });
+    const open = await serve({ store });
+    expect((await open.request('GET', '/r/global')).status).toBe(200);
+    await mod!.close();
+    const closed = await serve({ store, onStoreError: 'deny' });
+    expect((await closed.request('GET', '/r/global')).status).toBe(503);
+  });
+
+  test('store failures are logged as a redacted summary outside development', async () => {
+    const error = Object.assign(new Error('dial redis://app:pw@cache failed'), {
+      command: 'AUTH app pw',
+    });
+    const broken: RateLimitStore = { consume: async () => Promise.reject(error) };
+    mod = await Test.createModule({
+      imports: [RateLimitModule.forRoot({ limit: 2, window: '1m', store: broken })],
+      controllers: [LimitedController],
+    }).compile({ development: false });
+    const app = await mod.createApp();
+    expect((await app.request('GET', '/r/global')).status).toBe(200);
+    const entry = mod.logs.find((e) => e.message.includes('Rate limit store failed'))!;
+    expect(entry.level).toBe('warn');
+    expect(entry.message).toContain('Error: dial redis://***@cache failed');
+    expect(entry.message).toMatch(/correlation id [0-9a-f-]{36}/);
+    expect(entry.meta).toEqual([]);
   });
 
   test('parallel requests never exceed the limit', async () => {

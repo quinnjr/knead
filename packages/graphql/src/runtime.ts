@@ -8,8 +8,9 @@ import {
   type OnModuleDestroy,
   type OnModuleInit,
   type Type,
-} from '@hpmws/core';
+} from '@knead/core';
 import {
+  assertGuardRef,
   BadRequestException,
   type Ctx,
   ForbiddenException,
@@ -21,7 +22,7 @@ import {
   ROUTE_META,
   WsRegistry,
   type WsSocket,
-} from '@hpmws/http';
+} from '@knead/http';
 import {
   type CompilerOptions,
   type ExecutionHooks,
@@ -125,11 +126,22 @@ function resolveGuard(ref: GuardRef<any>, injector: ModuleInjector): Guard<any> 
   return ref;
 }
 
-/** Rejects computed topics containing a wildcard ("*" or "#") with BAD_USER_INPUT. */
+/** Longest computed subscription topic, in characters. */
+export const MAX_TOPIC_LENGTH = 256;
+
+/**
+ * Rejects computed topics containing a wildcard ("*" or "#") or longer than 256 characters with
+ * BAD_USER_INPUT.
+ */
 export function rejectWildcards(topics: string | readonly string[]): void {
   for (const topic of typeof topics === 'string' ? [topics] : topics) {
     if (/[*#]/.test(topic)) {
       throw new BadRequestException('Subscription topics cannot contain "*" or "#".');
+    }
+    if (topic.length > MAX_TOPIC_LENGTH) {
+      throw new BadRequestException(
+        `Subscription topics cannot be longer than ${MAX_TOPIC_LENGTH} characters.`,
+      );
     }
   }
 }
@@ -245,12 +257,24 @@ export function rejectionMessage(
  * it parsed, validated and cached) is allowed on this transport, then the user's hooks with
  * their errors made safe.
  */
+export interface DocumentLimits {
+  readonly maxAliases?: number | false;
+  readonly maxDepth?: number | false;
+  readonly maxFields?: number | false;
+  readonly maxIntrospectionDepth?: number | false;
+}
+
 export function buildHooks(
   user: ExecutionHooks | undefined,
   masking: ErrorMaskingOptions,
-  maxAliases: number | false = false,
-  maxDepth: number | false = false,
+  limits: DocumentLimits = {},
 ): ExecutionHooks {
+  const {
+    maxAliases = false,
+    maxDepth = false,
+    maxFields = false,
+    maxIntrospectionDepth = false,
+  } = limits;
   const safe = <A extends unknown[]>(
     name: string,
     fn: ((...args: A) => void | Promise<void>) | undefined,
@@ -268,9 +292,13 @@ export function buildHooks(
   const userError = user?.onError;
   return {
     onParse: safe('onParse', user?.onParse),
-    // Runs for cached documents too, so the alias limit holds whatever the cache contains.
+    // Runs before validation and before Leaven caches the document (it caches only validated
+    // documents), and for cached documents too, so the limits hold whatever the cache contains.
+    // The field count goes first: it bounds the quadratic OverlappingFieldsCanBeMerged rule.
     onParsed: async (document: DocumentNode) => {
+      if (maxFields !== false) checkFields(document, maxFields);
       if (maxDepth !== false) checkDepth(document, maxDepth);
+      if (maxIntrospectionDepth !== false) checkIntrospectionDepth(document, maxIntrospectionDepth);
       if (maxAliases !== false) checkAliases(document, maxAliases);
       await userParsed?.(document);
     },
@@ -369,10 +397,161 @@ export function queryDepth(document: DocumentNode): number {
   return deepest;
 }
 
+/**
+ * Rejects a document with more than `max` field selections (FIELD_LIMIT): both the field nodes
+ * written in all its operations and fragments (spread or not, since validation visits them all)
+ * and the fields of every operation with fragments expanded where they are spread (each fragment is counted
+ * once and memoized; a cycle adds nothing, and validation rejects it). Stops as soon as the
+ * count passes `max`, and visits at most 100 000 selections.
+ */
+export function checkFields(document: DocumentNode, max: number): void {
+  const fragments = new Map<string, FragmentDefinitionNode>();
+  for (const definition of document.definitions) {
+    if (definition.kind === Kind.FRAGMENT_DEFINITION)
+      fragments.set(definition.name.value, definition);
+  }
+  const memo = new Map<string, number>();
+  let visits = 0;
+  let total = 0;
+  const over = () =>
+    new LeavenError(`The document selects more than ${max} fields.`, 'FIELD_LIMIT' as ErrorCode, {
+      statusCode: 400,
+    });
+  const count = (set: SelectionSetNode | undefined): number => {
+    let n = 0;
+    for (const selection of set?.selections ?? []) {
+      if (++visits > MAX_DEPTH_VISITS) throw over();
+      if (selection.kind === Kind.FIELD) n += 1 + count(selection.selectionSet);
+      else if (selection.kind === Kind.INLINE_FRAGMENT) n += count(selection.selectionSet);
+      else {
+        const name = selection.name.value;
+        let known = memo.get(name);
+        if (known === undefined) {
+          memo.set(name, 0); // a cycle counts as nothing
+          known = count(fragments.get(name)?.selectionSet);
+          memo.set(name, known);
+        }
+        n += known;
+      }
+      if (n > max) throw over();
+    }
+    return n;
+  };
+  // Validation walks every definition, spread or not: the field nodes written in the document
+  // (operations and fragments, unexpanded) are capped too.
+  let written = 0;
+  const stack: SelectionSetNode[] = [];
+  for (const definition of document.definitions) {
+    if (
+      definition.kind === Kind.OPERATION_DEFINITION ||
+      definition.kind === Kind.FRAGMENT_DEFINITION
+    )
+      stack.push(definition.selectionSet);
+  }
+  while (stack.length > 0) {
+    for (const selection of stack.pop()!.selections) {
+      if (selection.kind === Kind.FIELD && ++written > max) throw over();
+      if (selection.kind !== Kind.FRAGMENT_SPREAD && selection.selectionSet)
+        stack.push(selection.selectionSet);
+    }
+  }
+  for (const definition of document.definitions) {
+    if (definition.kind !== Kind.OPERATION_DEFINITION) continue;
+    total += count(definition.selectionSet);
+    if (total > max) throw over();
+  }
+}
+
+/**
+ * The deepest selection under an introspection field (`__schema` or `__type`), counting that
+ * field as level 1, with fragments expanded (memoized; a cycle adds no depth).
+ */
+export function introspectionDepth(document: DocumentNode): number {
+  const fragments = new Map<string, FragmentDefinitionNode>();
+  for (const definition of document.definitions) {
+    if (definition.kind === Kind.FRAGMENT_DEFINITION)
+      fragments.set(definition.name.value, definition);
+  }
+  const memo = new Map<string, number>();
+  const expanding = new Set<string>();
+  let visits = 0;
+  const visit = () => {
+    if (++visits > MAX_DEPTH_VISITS) {
+      throw new LeavenError(
+        `Query analysis exceeded the maximum of ${MAX_DEPTH_VISITS} nodes`,
+        'COMPLEXITY_LIMIT' as ErrorCode,
+        { statusCode: 400 },
+      );
+    }
+  };
+  // Depth of a selection set relative to its parent field (1 = its own fields).
+  const height = (set: SelectionSetNode | undefined): number => {
+    let deepest = 0;
+    for (const selection of set?.selections ?? []) {
+      visit();
+      if (selection.kind === Kind.FIELD)
+        deepest = Math.max(deepest, 1 + height(selection.selectionSet));
+      else if (selection.kind === Kind.INLINE_FRAGMENT)
+        deepest = Math.max(deepest, height(selection.selectionSet));
+      else deepest = Math.max(deepest, fragmentHeight(selection.name.value));
+    }
+    return deepest;
+  };
+  const fragmentHeight = (name: string): number => {
+    const known = memo.get(name);
+    if (known !== undefined) return known;
+    const fragment = fragments.get(name);
+    if (!fragment || expanding.has(name)) return 0;
+    expanding.add(name);
+    const h = height(fragment.selectionSet);
+    expanding.delete(name);
+    memo.set(name, h);
+    return h;
+  };
+  // Find the introspection fields anywhere in the operations (they are usually at the root).
+  const seen = new Set<string>();
+  const find = (set: SelectionSetNode | undefined): number => {
+    let deepest = 0;
+    for (const selection of set?.selections ?? []) {
+      visit();
+      if (selection.kind === Kind.FIELD) {
+        const name = selection.name.value;
+        if (name === '__schema' || name === '__type') {
+          deepest = Math.max(deepest, 1 + height(selection.selectionSet));
+        } else deepest = Math.max(deepest, find(selection.selectionSet));
+      } else if (selection.kind === Kind.INLINE_FRAGMENT) {
+        deepest = Math.max(deepest, find(selection.selectionSet));
+      } else if (!seen.has(selection.name.value)) {
+        seen.add(selection.name.value);
+        deepest = Math.max(deepest, find(fragments.get(selection.name.value)?.selectionSet));
+      }
+    }
+    return deepest;
+  };
+  let deepest = 0;
+  for (const definition of document.definitions) {
+    if (definition.kind === Kind.OPERATION_DEFINITION)
+      deepest = Math.max(deepest, find(definition.selectionSet));
+  }
+  return deepest;
+}
+
 /** Rejects a document deeper than `max` with Leaven's DEPTH_LIMIT error. */
 export function checkDepth(document: DocumentNode, max: number): void {
   const depth = queryDepth(document);
   if (depth > max) throw new DepthLimitError(depth, max);
+}
+
+/** Rejects introspection selections deeper than `max` (DEPTH_LIMIT). */
+export function checkIntrospectionDepth(document: DocumentNode, max: number): void {
+  const depth = introspectionDepth(document);
+  if (depth > max) {
+    throw new LeavenError(
+      `Introspection depth of ${depth} exceeds maximum allowed depth of ${max}`,
+      'DEPTH_LIMIT' as ErrorCode,
+      { statusCode: 400, extensions: { depth, maxIntrospectionDepth: max } },
+    );
+  }
 }
 
 /** Rejects a document with more than `max` field aliases (counted once per alias in the text). */
@@ -503,6 +682,11 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
     };
   }
 
+  /** `listen({ websocket: { maxPendingRevocations } })`, also the per-socket deferral cap. */
+  get maxPendingRevocations(): number {
+    return this.#ws.maxPendingRevocations;
+  }
+
   /** The GraphQL connection of a subscription socket, or undefined for any other socket. */
   connection(ws: WsSocket): GraphQLConnection | undefined {
     return this.#endpoint?.connection(ws);
@@ -534,12 +718,20 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
         compilerOptions: calculator
           ? { complexityCalculator: calculator, ...compilerOptions }
           : compilerOptions,
-        hooks: buildHooks(hooks, this.masking, this.options.maxAliases, this.options.maxDepth),
+        hooks: buildHooks(hooks, this.masking, {
+          maxAliases: this.options.maxAliases,
+          maxDepth: this.options.maxDepth,
+          maxFields: this.options.maxFields,
+          maxIntrospectionDepth: this.options.maxIntrospectionDepth,
+        }),
         formatExecutionError: createErrorFormatter(this.masking),
       },
       this.masking,
     );
-    (this.pubsub as { useLogger?: (logger: unknown) => void }).useLogger?.(this.logger);
+    (this.pubsub as { useLogger?: (logger: unknown, development?: boolean) => void }).useLogger?.(
+      this.logger,
+      this.development,
+    );
     if (this.options.playground) {
       this.#playground = new PlaygroundGate(this.logger);
       if (!this.development) {
@@ -638,12 +830,19 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
       ...(options.guards ?? []),
       ...(getMethodMetadata(cls, def.method, GUARDS) ?? []),
     ];
+    for (const ref of own) assertGuardRef(ref, `the guards of ${owner}`);
+    for (const ref of this.options.guards) assertGuardRef(ref, 'GraphQLModule guards');
     // Module guards and defaultDeny apply to root fields (not @ResolveField) unless @Public().
     const root = def.kind !== 'field' && meta[IS_PUBLIC] !== true;
-    const denied = root && this.options.defaultDeny && own.length === 0;
+    // An undefined entry (a circular import) is not a guard, so it never satisfies defaultDeny.
+    const denied =
+      root && this.options.defaultDeny && own.filter((ref) => ref !== undefined).length === 0;
     const guards = [...(denied ? [DENY] : []), ...(root ? this.options.guards : []), ...own].map(
       (ref) => resolveGuard(ref, injector),
     );
+    for (const ref of options.authorize ?? [])
+      assertGuardRef(ref, `the authorize guards of ${owner}`);
+    const authorize = (options.authorize ?? []).map((ref) => resolveGuard(ref, injector));
     const call = (ctx: ResolverCtx<any, any>) =>
       (method as (c: unknown) => unknown).call(instance, ctx);
     const prepare = async (
@@ -656,6 +855,8 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
       const ctx = createResolverCtx(op, injector, meta, args, parent, info);
       if (guarded) await runGuards(guards, ctx);
       ctx.args = await validateArgs(options.validate, args);
+      // Authorization that depends on the validated (canonical) arguments.
+      if (guarded) await runGuards(authorize, ctx);
       return ctx;
     };
     const spec: FieldSpec = {
@@ -716,9 +917,26 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
         },
       );
       if (!sub.recheckGuards) return events;
-      return recheckEvents(events, () =>
-        runGuards(guards, createResolverCtx(op, injector, meta, ctx.args, parent, info)),
-      );
+      const subscriptions = this.options.subscriptions;
+      const refresh = subscriptions === false ? undefined : subscriptions.refreshContext;
+      return recheckEvents(events, async () => {
+        if (refresh) {
+          let refreshed: object | false;
+          try {
+            refreshed = await refresh({ http: op.http, context: op.user });
+          } catch (error) {
+            throw toSafeError(error, this.masking, 'subscriptions.refreshContext');
+          }
+          if (refreshed === false) throw new ForbiddenException();
+          if (typeof refreshed === 'object' && refreshed !== null) {
+            op.user = { ...op.user, ...refreshed };
+          }
+        }
+        // ctx.args are the validated arguments from subscribe time, as authorize expects.
+        const recheck = createResolverCtx(op, injector, meta, ctx.args, parent, info);
+        await runGuards(guards, recheck);
+        await runGuards(authorize, recheck);
+      });
     });
     spec.resolve = marked(async (payload, args, op: OperationContext, info) => {
       if (payload instanceof RevokedEvent) throw payload.error;

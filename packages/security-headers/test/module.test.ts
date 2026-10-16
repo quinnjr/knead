@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { CorsModule } from '@hpmws/cors';
-import { Controller, type Ctx, Get } from '@hpmws/http';
-import { RateLimitModule } from '@hpmws/rate-limit';
-import { Test, type TestingModule } from '@hpmws/testing';
+import { CorsModule } from '@knead/cors';
+import { Controller, type Ctx, Get } from '@knead/http';
+import { RateLimitModule } from '@knead/rate-limit';
+import { Test, type TestingModule } from '@knead/testing';
 import {
   SecurityHeaders,
   SecurityHeadersModule,
@@ -185,5 +185,40 @@ describe('ordering with CORS and rate limiting', () => {
     });
     expect(res.status).toBe(500);
     expect(res.headers.get('x-frame-options')).toBe('DENY');
+  });
+});
+
+describe('short HSTS max-age', () => {
+  const warnings = () =>
+    mod!.logs.filter((e) => e.level === 'warn' && e.message.includes('HSTS max-age'));
+
+  test('0 < maxAge < 15552000 logs one warning', async () => {
+    mod = await Test.createModule({
+      imports: [SecurityHeadersModule.forRoot({ strictTransportSecurity: { maxAge: 86_400 } })],
+      controllers: [PageController],
+    }).compile();
+    const app = await mod.createApp();
+    await app.request('GET', '/json');
+    await app.request('GET', '/embed');
+    expect(warnings()).toHaveLength(1);
+  });
+
+  test('the default, 15552000, 0 (clearing HSTS) and false do not warn', async () => {
+    for (const strictTransportSecurity of [
+      undefined,
+      { maxAge: 15_552_000 },
+      { maxAge: 0 },
+      false as const,
+    ]) {
+      mod = await Test.createModule({
+        imports: [SecurityHeadersModule.forRoot({ strictTransportSecurity })],
+        controllers: [PageController],
+      }).compile();
+      const app = await mod.createApp();
+      await app.request('GET', '/json');
+      expect(warnings()).toHaveLength(0);
+      await mod.close();
+      mod = undefined;
+    }
   });
 });

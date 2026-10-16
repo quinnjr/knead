@@ -1,5 +1,5 @@
-import { InjectionToken } from '@hpmws/core';
-import { type Ctx, type GuardRef, HttpConfigError, type WsMessageRate } from '@hpmws/http';
+import { InjectionToken } from '@knead/core';
+import { type Ctx, type GuardRef, HttpConfigError, type WsMessageRate } from '@knead/http';
 import type {
   CompilerOptions,
   ExecutionHooks,
@@ -35,6 +35,17 @@ export interface SubscriptionOptions {
     http: Ctx,
     connectionParams: ConnectionParams,
   ) => boolean | ConnectContext | Promise<boolean | ConnectContext>;
+  /**
+   * Called before every recheck of a `recheckGuards: true` subscription, with the operation's
+   * upgrade Ctx and current user context. An object is merged over that context (the guards and
+   * the event's resolvers see it); `false` ends the subscription with FORBIDDEN. Without it,
+   * rechecked guards see the identity from connect time: use it for a live lookup (for example
+   * re-verifying the session) so that a revoked credential ends the subscription.
+   */
+  refreshContext?: (connection: {
+    http: Ctx;
+    context: Readonly<Record<PropertyKey, unknown>>;
+  }) => ConnectContext | false | Promise<ConnectContext | false>;
   /** ms to wait for `connection_init` (Leaven default 3000). */
   connectionInitTimeout?: number;
   /** ms between server pings; 0 disables (Leaven default 12000). */
@@ -81,9 +92,16 @@ export interface GraphQLModuleOptions {
   introspection?: boolean;
   /**
    * Deepest selection allowed (fragments expanded). Selections inside `__schema` and `__type`
-   * do not count, so introspection works. Default 10; `Infinity` or `false` disables.
+   * do not count, so introspection works; `maxIntrospectionDepth` caps them. Default 10;
+   * `Infinity` or `false` disables.
    */
   maxDepth?: number | false;
+  /**
+   * Deepest selection inside `__schema` or `__type`, counting that field as level 1 (fragments
+   * expanded). Default 20, headroom above graphql-js's `getIntrospectionQuery()` (15);
+   * `Infinity` or `false` disables.
+   */
+  maxIntrospectionDepth?: number | false;
   /** Highest query cost allowed (see `complexity`). Default 1000; `Infinity` or `false` disables. */
   maxComplexity?: number | false;
   /**
@@ -93,9 +111,20 @@ export interface GraphQLModuleOptions {
   maxQueryLength?: number | false;
   /** Most field aliases in one document. Default 30; `Infinity` or `false` disables. */
   maxAliases?: number | false;
+  /**
+   * Most field selections in one document, fragments expanded where they are spread (FIELD_LIMIT).
+   * Checked right after parsing, before validation (whose overlapping-fields rule is quadratic in
+   * repeated fields) and before the document is cached. Default 1000; `Infinity` or `false`
+   * disables.
+   */
+  maxFields?: number | false;
+  /**
+   * Leaven's parsed-document cache. Default `{ maxSize: 100 }` documents; `false` disables it.
+   * Every entry keeps the document's AST, so keep it small.
+   */
   cache?: ExecutorConfig['cache'];
   compilerOptions?: CompilerOptions;
-  /** Leaven parser options. `maxTokens` defaults to 10000; `Infinity` disables it. */
+  /** Leaven parser options. `maxTokens` defaults to 3000; `Infinity` disables it. */
   parseOptions?: ParseOptions;
   /** Leaven execution hooks (Leaven has no plugin system; these are its extension point). */
   hooks?: ExecutionHooks;
@@ -146,7 +175,9 @@ export interface ResolvedGraphQLOptions {
   readonly defaultDeny: boolean;
   readonly maxQueryLength: number | false;
   readonly maxAliases: number | false;
-  /** Checked by hpmws (introspection fields excluded); Leaven's own maxDepth stays unset. */
+  readonly maxFields: number | false;
+  readonly maxIntrospectionDepth: number | false;
+  /** Checked by Knead (introspection fields excluded); Leaven's own maxDepth stays unset. */
   readonly maxDepth: number | false;
   readonly executor: Pick<
     ExecutorConfig,
@@ -158,10 +189,15 @@ export interface ResolvedGraphQLOptions {
 export const GRAPHQL_LIMITS = Object.freeze({
   maxDepth: 10,
   maxComplexity: 1000,
-  maxTokens: 10_000,
+  maxTokens: 3000,
   maxQueryLength: 100 * 1024,
   maxAliases: 30,
+  maxFields: 1000,
+  maxIntrospectionDepth: 20,
 });
+
+/** Default Leaven document cache: at most 100 parsed documents. */
+export const DEFAULT_DOCUMENT_CACHE = Object.freeze({ maxSize: 100 });
 
 /** The client error for a query over `maxQueryLength`. */
 export function queryTooLongMessage(max: number): string {
@@ -203,6 +239,8 @@ export function validateGraphQLOptions(options: GraphQLModuleOptions): void {
   limit('maxComplexity', options.maxComplexity, 1);
   limit('maxQueryLength', options.maxQueryLength, 1);
   limit('maxAliases', options.maxAliases, 1);
+  limit('maxFields', options.maxFields, 1);
+  limit('maxIntrospectionDepth', options.maxIntrospectionDepth, 1);
   limit('parseOptions.maxTokens', options.parseOptions?.maxTokens, 1);
   const endpoint =
     typeof options.playground === 'object' ? options.playground.subscriptionEndpoint : undefined;
@@ -255,13 +293,19 @@ export function resolveOptions(
     defaultDeny: options.defaultDeny ?? false,
     maxQueryLength: limit('maxQueryLength', options.maxQueryLength, GRAPHQL_LIMITS.maxQueryLength),
     maxAliases: limit('maxAliases', options.maxAliases, GRAPHQL_LIMITS.maxAliases),
+    maxFields: limit('maxFields', options.maxFields, GRAPHQL_LIMITS.maxFields),
+    maxIntrospectionDepth: limit(
+      'maxIntrospectionDepth',
+      options.maxIntrospectionDepth,
+      GRAPHQL_LIMITS.maxIntrospectionDepth,
+    ),
     maxDepth,
     executor: {
       // Leaven's depth check counts introspection selections, so getIntrospectionQuery() (depth
       // 15) would fail; runtime.ts runs its own check instead.
       maxDepth: undefined,
       maxComplexity: maxComplexity === false ? undefined : maxComplexity,
-      cache: options.cache,
+      cache: options.cache ?? { ...DEFAULT_DOCUMENT_CACHE },
       compilerOptions: options.compilerOptions,
       parseOptions: parseOptionsWithDefaults(options.parseOptions),
       hooks: options.hooks,

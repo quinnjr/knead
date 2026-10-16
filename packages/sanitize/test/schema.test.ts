@@ -20,7 +20,7 @@ describe('sanitizedHtml', () => {
     expect(await schema['~standard'].validate('<b>x</b><script>bad()</script>')).toEqual({
       value: '<b>x</b>',
     });
-    expect(schema['~standard'].vendor).toBe('hpmws');
+    expect(schema['~standard'].vendor).toBe('knead');
   });
 
   test('passes inner issues through untouched', async () => {

@@ -1,5 +1,5 @@
-import { MetadataKey } from '@hpmws/core';
-import type { GuardRef } from '@hpmws/http';
+import { MetadataKey } from '@knead/core';
+import type { GuardRef } from '@knead/http';
 import type { StandardSchemaV1 } from '@standard-schema/spec';
 import type { GraphQLResolveInfo } from 'graphql';
 import type { Class, Nullable, TypeThunkResult } from './type-refs.js';
@@ -57,6 +57,12 @@ export interface ResolverMethodOptions {
   complexity?: number;
   /** Guards receiving the ResolverCtx; run after class-level @UseGuards guards. */
   guards?: readonly GuardRef<any>[];
+  /**
+   * Guards that run after `validate`, so they see the validated (and transformed) `ctx.args`.
+   * `guards` run before validation and see the coerced but unvalidated arguments. Anything but
+   * `true` is FORBIDDEN.
+   */
+  authorize?: readonly GuardRef<any>[];
   meta?: Readonly<Record<PropertyKey, unknown>>;
 }
 
@@ -65,7 +71,7 @@ export interface SubscriptionMethodOptions extends ResolverMethodOptions {
   filter?: (event: { payload: any; args: any; ctx: any }) => boolean | Promise<boolean>;
   resolve?: (payload: any) => unknown;
   /**
-   * Re-run the root guards (module, class and method guards) before every event. An event whose
+   * Re-run the root guards (module, class and method guards), then `authorize`, before every event. An event whose
    * guards deny is delivered as a FORBIDDEN error (or the guard's own error) and ends the
    * subscription. Default false: guards run once, when the operation subscribes.
    */
@@ -83,9 +89,9 @@ export interface ResolverDefinition {
   type: (() => Class) | undefined;
 }
 
-export const TYPE_DEF = new MetadataKey<TypeDefinition>('hpmws:graphql:type');
-export const FIELDS = new MetadataKey<FieldDefinition[]>('hpmws:graphql:fields');
-export const RESOLVER = new MetadataKey<ResolverDefinition>('hpmws:graphql:resolver');
+export const TYPE_DEF = new MetadataKey<TypeDefinition>('knead:graphql:type');
+export const FIELDS = new MetadataKey<FieldDefinition[]>('knead:graphql:fields');
+export const RESOLVER = new MetadataKey<ResolverDefinition>('knead:graphql:resolver');
 export const RESOLVER_METHODS = new MetadataKey<ResolverMethodDefinition[]>(
-  'hpmws:graphql:resolver-methods',
+  'knead:graphql:resolver-methods',
 );

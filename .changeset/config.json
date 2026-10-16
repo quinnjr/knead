@@ -6,7 +6,7 @@
   "changelog": "@changesets/cli/changelog",
   "commit": false,
   "ignore": [],
-  "fixed": [["@hpmws/*"]],
+  "fixed": [["@knead/*"]],
   "linked": [],
   "updateInternalDependencies": "patch",
   "privatePackages": { "version": false, "tag": false }

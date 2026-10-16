@@ -133,6 +133,37 @@ describe('validateRequest', () => {
     ]);
   });
 
+  test('redactIssueMessages: body and query messages become generic, paths stay', async () => {
+    const echoing: StandardSchemaV1 = {
+      '~standard': {
+        version: 1,
+        vendor: 'test',
+        validate: (value) => ({
+          issues: [{ message: `bad ${JSON.stringify(value)}`, path: [{ key: 'password' }] }],
+        }),
+      },
+    };
+    const ctx = makeCtx(jsonPost('/?q=secret-query', '{"password":"hunter2"}'));
+    ctx.params = { id: 'secret-param' };
+    const error = (await validateRequest(
+      ctx,
+      { body: echoing, query: echoing, params: echoing },
+      { redactIssueMessages: true },
+    ).catch((e) => e)) as ValidationException;
+    expect(JSON.stringify(error.issues)).not.toContain('secret-param');
+    expect(error.issues).toEqual([
+      { source: 'params', message: 'Invalid value', path: ['password'] },
+      { source: 'query', message: 'Invalid value', path: ['password'] },
+      { source: 'body', message: 'Invalid value', path: ['password'] },
+    ]);
+    expect(JSON.stringify(error.toProblem('/'))).not.toContain('hunter2');
+    // Off by default: the schema's own message is kept.
+    const plain = (await validateRequest(makeCtx(jsonPost('/', '{"a":1}')), {
+      body: echoing,
+    }).catch((e) => e)) as ValidationException;
+    expect(plain.issues[0]!.message).toBe('bad {"a":1}');
+  });
+
   test('after the body validates, ctx.json() resolves to the validated value', async () => {
     const ctx = makeCtx(jsonPost('/', '{"name":"Ada","admin":true}'));
     await validateRequest(ctx, { body: requireStrings(['name']) });

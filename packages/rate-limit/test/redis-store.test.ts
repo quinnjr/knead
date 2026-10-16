@@ -5,7 +5,7 @@ import { hashKey, MemoryStore, type RateLimitRule, RedisStore } from '../src/ind
 const url = process.env.REDIS_URL;
 
 describe.skipIf(!url)('RedisStore', () => {
-  const prefix = `hpmws:test:${crypto.randomUUID()}:`;
+  const prefix = `knead:test:${crypto.randomUUID()}:`;
   const shared = url ? new RedisClient(url) : undefined;
   afterAll(() => shared?.close());
 
@@ -158,13 +158,22 @@ describe.skipIf(!url)('RedisStore', () => {
   });
 
   test('keys are hashed by default', async () => {
-    const own = `hpmws:test:${crypto.randomUUID()}:`;
+    const own = `knead:test:${crypto.randomUUID()}:`;
     const rule: RateLimitRule = { limit: 5, windowMs: 60_000, algorithm: 'token-bucket' };
     await new RedisStore({ client: shared, prefix: own }).consume('global|203.0.113.9', rule);
     await new RedisStore({ client: shared, prefix: own, hashKeys: false }).consume('raw', rule);
+    const secret = 's'.repeat(32);
+    await new RedisStore({ client: shared, prefix: own, hashSecret: secret }).consume(
+      'keyed',
+      rule,
+    );
     const keys = ((await shared!.send('KEYS', [`${own}*`])) as string[]).sort();
     expect(keys).toEqual(
-      [`${own}${hashKey('global|203.0.113.9')}:60000`, `${own}raw:60000`].sort(),
+      [
+        `${own}${hashKey('global|203.0.113.9')}:60000`,
+        `${own}raw:60000`,
+        `${own}${hashKey('keyed', secret)}:60000`,
+      ].sort(),
     );
     await shared!.send('DEL', keys);
   });

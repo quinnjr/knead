@@ -1,5 +1,5 @@
-import { type DynamicModule, inject, Module } from '@hpmws/core';
-import { APP_MIDDLEWARE } from '@hpmws/http';
+import { type DynamicModule, inject, Module } from '@knead/core';
+import { APP_MIDDLEWARE } from '@knead/http';
 import { CorsMiddleware } from './middleware.js';
 import { CORS_OPTIONS, type CorsOptions, validateCorsOptions } from './options.js';
 

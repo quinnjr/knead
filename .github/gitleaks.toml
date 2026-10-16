@@ -1,0 +1,13 @@
+# gitleaks configuration for the `secrets` job in ci.yml: the default rules, minus known fakes.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "RFC 6455 sample Sec-WebSocket-Key nonce used by WebSocket tests"
+regexTarget = "match"
+regexes = ['''dGhlIHNhbXBsZSBub25jZQ==''']
+
+[[allowlists]]
+description = "Demo bearer tokens of the example apps (admin-token, grace-token, ada-token)"
+regexTarget = "match"
+regexes = ['''Bearer (admin|grace|ada)-token''']

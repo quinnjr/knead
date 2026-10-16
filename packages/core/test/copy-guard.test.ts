@@ -4,7 +4,7 @@ import '../src/index.js';
 
 const store = globalThis as Record<symbol, unknown>;
 
-describe('duplicate @hpmws/core guard', () => {
+describe('duplicate @knead/core guard', () => {
   const original = store[CORE_COPY_KEY];
   afterEach(() => {
     store[CORE_COPY_KEY] = original;
@@ -12,7 +12,7 @@ describe('duplicate @hpmws/core guard', () => {
   });
 
   test('loading the package records its identity on globalThis', () => {
-    expect(CORE_COPY_KEY as symbol).toBe(Symbol.for('hpmws.core'));
+    expect(CORE_COPY_KEY as symbol).toBe(Symbol.for('knead.core'));
     expect(store[CORE_COPY_KEY]).toMatchObject({ url: expect.stringContaining('copy-guard') });
   });
 
@@ -20,12 +20,12 @@ describe('duplicate @hpmws/core guard', () => {
     const warn = spyOn(console, 'warn').mockImplementation(() => {});
     try {
       store[CORE_COPY_KEY] = {
-        url: 'file:///elsewhere/node_modules/@hpmws/core/dist/copy-guard.js',
+        url: 'file:///elsewhere/node_modules/@knead/core/dist/copy-guard.js',
       };
-      registerCoreCopy({ url: 'file:///app/node_modules/@hpmws/core/dist/copy-guard.js' });
-      registerCoreCopy({ url: 'file:///third/node_modules/@hpmws/core/dist/copy-guard.js' });
+      registerCoreCopy({ url: 'file:///app/node_modules/@knead/core/dist/copy-guard.js' });
+      registerCoreCopy({ url: 'file:///third/node_modules/@knead/core/dist/copy-guard.js' });
       expect(warn).toHaveBeenCalledTimes(1);
-      expect(String(warn.mock.calls[0]?.[0])).toContain('Multiple copies of @hpmws/core');
+      expect(String(warn.mock.calls[0]?.[0])).toContain('Multiple copies of @knead/core');
       expect(String(warn.mock.calls[0]?.[0])).toContain('inject()');
     } finally {
       warn.mockRestore();

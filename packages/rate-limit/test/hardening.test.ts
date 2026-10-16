@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { Controller, type Ctx, Get } from '@hpmws/http';
-import { Test, type TestApp, type TestingModule } from '@hpmws/testing';
+import { Controller, type Ctx, Get } from '@knead/http';
+import { Test, type TestApp, type TestingModule } from '@knead/testing';
 import {
   hashKey,
   MemoryStore,
@@ -66,12 +66,12 @@ describe('IPv6 subnets', () => {
   });
 
   test('invalid ipv6Subnet values are rejected at forRoot', () => {
-    for (const ipv6Subnet of [-1, 129, 1.5, Number.NaN]) {
+    for (const ipv6Subnet of [-1, 0, 129, 1.5, Number.NaN]) {
       expect(() => RateLimitModule.forRoot({ limit: 1, window: '1m', ipv6Subnet })).toThrow(
         RangeError,
       );
     }
-    expect(() => RateLimitModule.forRoot({ limit: 1, window: '1m', ipv6Subnet: 0 })).not.toThrow();
+    expect(() => RateLimitModule.forRoot({ limit: 1, window: '1m', ipv6Subnet: 1 })).not.toThrow();
   });
 });
 
