@@ -17,8 +17,10 @@ test('JSON.stringify redacts every value', () => {
 });
 test('inspect never shows values', () => {
   const config = new Config({ jwtSecret: 's3cret' });
-  expect(Bun.inspect(config)).not.toContain('s3cret');
-  expect(Bun.inspect({ nested: config })).not.toContain('s3cret');
+  expect(Bun.inspect(config)).toBe('Config {"jwtSecret":"[redacted]"}');
+  expect(Bun.inspect({ nested: config })).toBe(
+    '{\n  nested: Config {"jwtSecret":"[redacted]"},\n}',
+  );
 });
 test('data is deep-frozen', () => {
   const config = new Config({ db: { host: 'h' }, list: [{ a: 1 }] });
@@ -26,4 +28,11 @@ test('data is deep-frozen', () => {
   expect(Object.isFrozen(config.get('db'))).toBe(true);
   expect(Object.isFrozen(config.get('list'))).toBe(true);
   expect(Object.isFrozen(config.get('list')[0])).toBe(true);
+});
+test('deep-freezes children of an already shallow-frozen object, and handles cycles', () => {
+  const config = new Config(Object.freeze({ db: { host: 'h' } }));
+  expect(Object.isFrozen(config.get('db'))).toBe(true);
+  const cyclic: { self?: unknown } = {};
+  cyclic.self = cyclic;
+  expect(Object.isFrozen(new Config(cyclic).all())).toBe(true);
 });

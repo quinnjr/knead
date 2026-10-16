@@ -1,9 +1,10 @@
 const INSPECT = Symbol.for('nodejs.util.inspect.custom');
 
-function deepFreeze<V>(value: V): V {
-  if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
+function deepFreeze<V>(value: V, seen = new WeakSet<object>()): V {
+  if (value !== null && typeof value === 'object' && !seen.has(value)) {
+    seen.add(value);
     Object.freeze(value);
-    for (const child of Object.values(value)) deepFreeze(child);
+    for (const child of Object.values(value)) deepFreeze(child, seen);
   }
   return value;
 }
