@@ -10,6 +10,7 @@ import {
   type Type,
 } from '@hpmws/core';
 import {
+  assertGuardRef,
   BadRequestException,
   type Ctx,
   ForbiddenException,
@@ -805,9 +806,13 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
       ...(options.guards ?? []),
       ...(getMethodMetadata(cls, def.method, GUARDS) ?? []),
     ];
+    for (const ref of own) assertGuardRef(ref, `the guards of ${owner}`);
+    for (const ref of this.options.guards) assertGuardRef(ref, 'GraphQLModule guards');
     // Module guards and defaultDeny apply to root fields (not @ResolveField) unless @Public().
     const root = def.kind !== 'field' && meta[IS_PUBLIC] !== true;
-    const denied = root && this.options.defaultDeny && own.length === 0;
+    // An undefined entry (a circular import) is not a guard, so it never satisfies defaultDeny.
+    const denied =
+      root && this.options.defaultDeny && own.filter((ref) => ref !== undefined).length === 0;
     const guards = [...(denied ? [DENY] : []), ...(root ? this.options.guards : []), ...own].map(
       (ref) => resolveGuard(ref, injector),
     );

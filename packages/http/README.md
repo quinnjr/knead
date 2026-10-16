@@ -8,7 +8,7 @@ const BearerGuard = (ctx: Ctx) => ctx.upgrade !== null || isValidToken(ctx.req.h
 
 A route path may contain at most one `*` wildcard; more is a configuration error at `listen()`.
 
-A guard passes only when it returns (or resolves to) exactly `true`; any other value, truthy or not, is a 403. `ctx.meta` is the matched route's metadata (`ctx.route?.meta`, from `createRouteDecorator()` and the `meta` option), or an empty frozen object on unmatched requests and upgrades. GraphQL resolver contexts expose the same `ctx.meta`, so one role guard works on routes and resolvers. Deny when required roles are present but unmet:
+Guard references are checked at `listen()`: a guard is an object with a `canActivate()` function, a guard function, or a class with a `canActivate()` method on its prototype. Anything else, such as `undefined` from a circular import or a class whose `canActivate` is an arrow-function field, is an `HttpConfigError` naming the controller or route (`APP_GUARD`, `useGlobalGuards()`). A guard passes only when it returns (or resolves to) exactly `true`; any other value, truthy or not, is a 403. `ctx.meta` is the matched route's metadata (`ctx.route?.meta`, from `createRouteDecorator()` and the `meta` option), or an empty frozen object on unmatched requests and upgrades. GraphQL resolver contexts expose the same `ctx.meta`, so one role guard works on routes and resolvers. Deny when required roles are present but unmet:
 
 ```ts
 const Roles = createRouteDecorator<string[]>('roles');

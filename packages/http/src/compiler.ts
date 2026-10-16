@@ -201,7 +201,7 @@ export function compileApplication(input: CompileInput): CompiledApp {
       const ctrlGuards = [
         ...(def.options.guards ?? []),
         ...(getMetadata(controller, GUARDS) ?? []),
-      ].map((r) => resolveGuard(r, injector));
+      ].map((r) => resolveGuard(r, injector, `the guards of ${controller.name}`));
       const ctrlFilters = [
         ...(def.options.filters ?? []),
         ...(getMetadata(controller, FILTERS) ?? []),
@@ -236,7 +236,7 @@ export function compileApplication(input: CompileInput): CompiledApp {
         const routeGuards = [
           ...(route.options.guards ?? []),
           ...(getMethodMetadata(controller, name, GUARDS) ?? []),
-        ].map((r) => resolveGuard(r, injector));
+        ].map((r) => resolveGuard(r, injector, `the guards of ${label}`));
         const routeFilters = [
           ...(route.options.filters ?? []),
           ...(getMethodMetadata(controller, name, FILTERS) ?? []),

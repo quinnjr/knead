@@ -463,8 +463,8 @@ export class HttpApplication {
       globalGuards: [
         ...this.context
           .collectEntries(APP_GUARD)
-          .map(({ value, injector }) => resolveGuard(value, injector)),
-        ...this.#extraGuards.map((g) => resolveGuard(g, root)),
+          .map(({ value, injector }) => resolveGuard(value, injector, 'APP_GUARD')),
+        ...this.#extraGuards.map((g) => resolveGuard(g, root, 'useGlobalGuards()')),
       ],
       globalFilters: [
         ...this.context

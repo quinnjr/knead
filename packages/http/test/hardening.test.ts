@@ -342,3 +342,52 @@ describe('listen({ defaultCacheControl })', () => {
     }
   });
 });
+
+describe('guard references are validated at listen()', () => {
+  class ArrowGuard {
+    canActivate = () => true;
+  }
+  class ProtoGuard {
+    canActivate() {
+      return true;
+    }
+  }
+
+  test('undefined, arrow-field classes and plain objects are an HttpConfigError naming the route', async () => {
+    for (const bad of [undefined, ArrowGuard, {}, null, 42]) {
+      @Controller('/g')
+      class G {
+        @Get('/', { guards: [bad as never] }) get() {
+          return 'x';
+        }
+      }
+      @Module({ controllers: [G] })
+      class GM {}
+      const failure = await start(GM).catch((e) => e);
+      expect(failure).toBeInstanceOf(HttpConfigError);
+      expect((failure as Error).message).toContain('G.get');
+    }
+  });
+
+  test('controller guards name the controller; valid refs pass', async () => {
+    @Controller('/c', { guards: [undefined as never] })
+    class Ctrl {
+      @Get('/') get() {
+        return 'x';
+      }
+    }
+    @Module({ controllers: [Ctrl] })
+    class CM {}
+    await expect(start(CM)).rejects.toThrow('the guards of Ctrl');
+    @Controller('/ok', { guards: [ProtoGuard, () => true, { canActivate: () => true }] })
+    class Ok {
+      @Get('/') get() {
+        return 'ok';
+      }
+    }
+    @Module({ controllers: [Ok] })
+    class OkModule {}
+    app = await start(OkModule);
+    expect((await fetch(new URL('/ok', app.url))).status).toBe(200);
+  });
+});
