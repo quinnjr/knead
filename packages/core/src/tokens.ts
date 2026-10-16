@@ -19,3 +19,9 @@ export function tokenName(token: unknown): string {
   if (typeof token === 'function') return token.name || '<anonymous class>';
   return String(token);
 }
+
+/**
+ * Whether the application runs in development: the `development` option of
+ * `ApplicationContext.create`, default `NODE_ENV === 'development'`. Injectable from any module.
+ */
+export const DEVELOPMENT = new InjectionToken<boolean>('DEVELOPMENT');

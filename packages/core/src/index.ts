@@ -3,6 +3,7 @@ import './copy-guard.js';
 
 export { ApplicationContext, type CreateContextOptions } from './application-context.js';
 export * from './decorators.js';
+export { type ErrorLogOptions, logError } from './error-log.js';
 export {
   CircularDependencyError,
   InjectionContextError,
@@ -28,6 +29,14 @@ export {
   redactValue,
   summarizeError,
 } from './log-redaction.js';
+export {
+  ConsoleLogger,
+  LOGGER,
+  type LogEntry,
+  type Logger,
+  type LogLevel,
+  MemoryLogger,
+} from './logger.js';
 export * from './metadata.js';
 export { MODULES, type ModuleRef } from './modules.js';
 export { defaultRedisUrl, isLoopbackHostname, parseIp, plaintextRedisHost } from './net.js';

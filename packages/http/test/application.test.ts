@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import * as core from '@knead-js/core';
 import { inject, Module, type OnModuleDestroy, type OnModuleInit } from '@knead-js/core';
 import type { StandardSchemaV1 } from '@standard-schema/spec';
+import * as http from '../src/index.js';
 import {
   APP_GUARD,
   APP_MIDDLEWARE,
@@ -680,4 +682,18 @@ describe('listen after or during close', () => {
     expect(() => app?.server).toThrow(HttpConfigError);
     await expect(fetch(`http://127.0.0.1:${port}/d`)).rejects.toThrow();
   });
+});
+
+test('http re-exports core logging as the same objects', () => {
+  expect(http.LOGGER).toBe(core.LOGGER);
+  expect(http.HTTP_DEVELOPMENT).toBe(core.DEVELOPMENT);
+  expect(http.ConsoleLogger).toBe(core.ConsoleLogger);
+  expect(http.MemoryLogger).toBe(core.MemoryLogger);
+  expect(http.redactCredentials).toBe(core.redactCredentials);
+  expect(http.redactValue).toBe(core.redactValue);
+  expect(http.logValue).toBe(core.logValue);
+  expect(http.MAX_LOGGED_VALUE_LENGTH).toBe(core.MAX_LOGGED_VALUE_LENGTH);
+  expect(http.summarizeError).toBe(core.summarizeError);
+  expect(http.LOGGED_MESSAGE_LENGTH).toBe(core.LOGGED_MESSAGE_LENGTH);
+  expect(http.logError).toBe(core.logError);
 });

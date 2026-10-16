@@ -1,10 +1,14 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import {
   ApplicationContext,
   CircularDependencyError,
+  ConsoleLogger,
+  DEVELOPMENT,
   InjectionContextError,
   InjectionToken,
   inject,
+  LOGGER,
+  MemoryLogger,
   Module,
   NoProviderError,
   ProviderConfigError,
@@ -244,5 +248,62 @@ describe('ApplicationContext.initializeLate', () => {
     await expect(ctx.initializeLate()).rejects.toThrow('late boom');
     expect(log).toEqual(['eager:destroy']);
     expect(ctx.closed).toBe(true);
+  });
+});
+
+describe('default LOGGER and DEVELOPMENT', () => {
+  const original = process.env.NODE_ENV;
+  afterEach(() => {
+    if (original === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = original;
+  });
+
+  @Module({})
+  class Root {}
+
+  test('provides a ConsoleLogger by default', async () => {
+    const ctx = await ApplicationContext.create(Root);
+    expect(ctx.get(LOGGER)).toBeInstanceOf(ConsoleLogger);
+  });
+
+  test('uses the logger option', async () => {
+    const mem = new MemoryLogger();
+    const ctx = await ApplicationContext.create(Root, { logger: mem });
+    expect(ctx.get(LOGGER)).toBe(mem);
+  });
+
+  test('development defaults to NODE_ENV', async () => {
+    process.env.NODE_ENV = 'development';
+    expect((await ApplicationContext.create(Root)).get(DEVELOPMENT)).toBe(true);
+    process.env.NODE_ENV = 'production';
+    expect((await ApplicationContext.create(Root)).get(DEVELOPMENT)).toBe(false);
+  });
+
+  test('the development option overrides NODE_ENV', async () => {
+    process.env.NODE_ENV = 'production';
+    expect((await ApplicationContext.create(Root, { development: true })).get(DEVELOPMENT)).toBe(
+      true,
+    );
+  });
+
+  test("a global module's LOGGER wins over the default", async () => {
+    const mem = new MemoryLogger();
+    @Module({ global: true, providers: [{ provide: LOGGER, useValue: mem }], exports: [LOGGER] })
+    class LogModule {}
+    const ctx = await ApplicationContext.create(Root, { globalModules: [LogModule] });
+    expect(ctx.get(LOGGER)).toBe(mem);
+  });
+
+  test('a provider inside a module can inject LOGGER without importing anything', async () => {
+    class Service {
+      readonly log = inject(LOGGER);
+    }
+    @Module({ providers: [Service] })
+    class Feature {}
+    @Module({ imports: [Feature] })
+    class App {}
+    const ctx = await ApplicationContext.create(App);
+    expect(ctx.get(LOGGER)).toBeInstanceOf(ConsoleLogger);
+    expect(ctx.modules.length).toBeGreaterThan(1);
   });
 });
