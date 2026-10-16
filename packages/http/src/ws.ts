@@ -95,6 +95,18 @@ interface ResolvedServerOptions {
   messageRate: WsMessageRate | false;
 }
 
+interface PendingRevocation {
+  readonly seq: number;
+  readonly at: number;
+  readonly predicate: (ws: WsSocket) => boolean;
+  readonly code: number;
+  readonly reason: string;
+}
+
+/** How long, and how many, closeWhere() predicates are kept for sockets still upgrading. */
+const REVOCATION_TTL = 30_000;
+const MAX_PENDING_REVOCATIONS = 100;
+
 interface SocketState {
   tokens: number;
   updatedAt: number;
@@ -191,6 +203,16 @@ export class WsRegistry {
   };
   #server: ResolvedServerOptions = resolveServerOptions({});
   #sealed = false;
+  /**
+   * Upgrades in progress (from the upgrade request until the socket opens or the upgrade
+   * fails), keyed by their Ctx and then their socket data, with the revocation sequence number
+   * current when they started.
+   */
+  readonly #upgrades = new WeakMap<object, number>();
+  #upgrading = 0;
+  /** closeWhere() calls issued while an upgrade was in progress, re-applied when it opens. */
+  #revocations: PendingRevocation[] = [];
+  #revocationSeq = 0;
 
   register<D>(path: string, endpoint: WsEndpoint<D>, options: WsEndpointOptions = {}): void {
     const normalized = joinPaths(path);
@@ -243,7 +265,7 @@ export class WsRegistry {
    * throws 429 (per-IP limit) / 503 (total limit). The slot is returned when the socket closes,
    * or by `release()` if the upgrade fails.
    */
-  reserve(data: object, ip: string | undefined): void {
+  reserve(data: object, ip: string | undefined, ctx?: object): void {
     const { maxConnections, maxConnectionsPerIp } = this.#server;
     if (maxConnections !== undefined && this.#reservedTotal >= maxConnections) {
       throw new ServiceUnavailableException('Too many WebSocket connections.');
@@ -258,10 +280,29 @@ export class WsRegistry {
     this.#reservedTotal++;
     if (key !== undefined) this.#perIp.set(key, (this.#perIp.get(key) ?? 0) + 1);
     this.#reserved.set(data, key);
+    // The in-progress upgrade now follows its socket data, until the socket opens.
+    const mark = ctx === undefined ? undefined : this.#upgrades.get(ctx);
+    if (mark !== undefined) {
+      this.#upgrades.delete(ctx!);
+      this.#upgrades.set(data, mark);
+    }
+  }
+
+  /** @internal Called by the compiler when an upgrade request arrives (before middleware). */
+  beginUpgrade(ctx: object): void {
+    if (this.#upgrades.has(ctx)) return;
+    this.#upgrades.set(ctx, this.#revocationSeq);
+    this.#upgrading++;
+  }
+
+  /** @internal Ends an upgrade that did not open a socket (no-op once it moved to its data). */
+  endUpgrade(key: object): void {
+    if (this.#upgrades.delete(key)) this.#upgrading--;
   }
 
   /** @internal Returns the connection slot held by an upgrade's data object, if any. */
   release(data: object): void {
+    this.endUpgrade(data);
     if (!this.#reserved.has(data)) return;
     const key = this.#reserved.get(data);
     this.#reserved.delete(data);
@@ -296,9 +337,12 @@ export class WsRegistry {
       backpressureLimit: limits.backpressureLimit,
       closeOnBackpressureLimit: limits.closeOnBackpressureLimit,
       idleTimeout: limits.idleTimeout,
-      open: (ws) => {
+      open: async (ws) => {
         this.#sockets.set(ws, this.#openState(ws));
-        return this.#dispatch(ws, 'open');
+        const mark = this.#upgrades.get(ws.data);
+        this.endUpgrade(ws.data);
+        await this.#dispatch(ws, 'open');
+        if (mark !== undefined) this.#reapply(ws, mark);
       },
       message: (ws, message) => {
         if (!this.#admitMessage(ws)) return;
@@ -321,14 +365,19 @@ export class WsRegistry {
 
   /**
    * Closes every open socket for which `predicate` returns true (for example, all sockets of a
-   * signed-out user, found through `ws.data.data`), and returns how many were closed. A
-   * predicate that throws for a socket is logged and that socket is left open.
+   * signed-out user, found through `ws.data.data`), and returns how many were closed. Sockets
+   * whose upgrade is still in progress are checked when they open (the predicate is kept for up
+   * to 30s, at most 100 predicates). A predicate that throws for a socket is logged and that
+   * socket is left open.
    */
   closeWhere(
     predicate: (ws: WsSocket) => boolean,
     code = 1008,
     reason = 'Connection revoked',
   ): number {
+    // Sockets still upgrading (in guards, or between server.upgrade() and open) are not in
+    // #sockets yet: the predicate is kept and applied to them when they open.
+    if (this.#upgrading > 0) this.#record(predicate, code, reason);
     let count = 0;
     for (const ws of [...this.#sockets.keys()]) {
       let matches: boolean;
@@ -348,6 +397,36 @@ export class WsRegistry {
       count++;
     }
     return count;
+  }
+
+  /** Applies closeWhere() predicates issued after this socket's upgrade began. */
+  #reapply(ws: WsSocket, mark: number): void {
+    const now = Date.now();
+    for (const revocation of this.#revocations) {
+      if (revocation.seq <= mark || now - revocation.at > REVOCATION_TTL) continue;
+      if (!this.#sockets.has(ws)) return;
+      let matches = false;
+      try {
+        matches = revocation.predicate(ws);
+      } catch (error) {
+        logError(
+          this.#log,
+          `WsRegistry.closeWhere predicate threw for ${logValue(ws.data.endpoint)}`,
+          error,
+        );
+      }
+      if (matches) {
+        ws.close(revocation.code, revocation.reason);
+        return;
+      }
+    }
+  }
+
+  #record(predicate: (ws: WsSocket) => boolean, code: number, reason: string): void {
+    const now = Date.now();
+    this.#revocations = this.#revocations.filter((r) => now - r.at <= REVOCATION_TTL);
+    this.#revocations.push({ seq: ++this.#revocationSeq, at: now, predicate, code, reason });
+    if (this.#revocations.length > MAX_PENDING_REVOCATIONS) this.#revocations.shift();
   }
 
   #rateOf(ws: WsSocket): WsMessageRate | false {

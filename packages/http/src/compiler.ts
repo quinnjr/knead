@@ -94,7 +94,7 @@ function upgradeChain(
       if (data === false) throw new ForbiddenException('WebSocket upgrade rejected');
       const socketData: WsData = { endpoint: path, data, ip: ctx.ip };
       // Synchronous from here to upgrade(): the connection limits cannot be raced.
-      registry.reserve(socketData, ctx.ip);
+      registry.reserve(socketData, ctx.ip, ctx);
       let accepted = false;
       try {
         accepted = (ctx.server as Server<WsData>).upgrade(ctx.req, { data: socketData });
@@ -112,6 +112,7 @@ function upgradeChain(
 }
 
 async function runUpgrade(
+  registry: WsRegistry,
   path: string,
   handler: Handler,
   req: Request,
@@ -120,8 +121,14 @@ async function runUpgrade(
   route: RouteInfo | null = null,
 ): Promise<Response | undefined> {
   const ctx = new RequestContext(req, server, route, net, Object.freeze({ path }));
-  const res = await handler(ctx);
-  return upgraded.has(ctx) ? undefined : res;
+  registry.beginUpgrade(ctx);
+  try {
+    const res = await handler(ctx);
+    return upgraded.has(ctx) ? undefined : res;
+  } finally {
+    // Still marked only when the upgrade did not reach its socket data.
+    registry.endUpgrade(ctx);
+  }
 }
 
 const FORWARDED_HEADERS = ['x-forwarded-for', 'x-forwarded-proto', 'x-forwarded-host'] as const;
@@ -293,7 +300,7 @@ export function compileApplication(input: CompileInput): CompiledApp {
           byMethod[method] = async (req, server) => {
             if (misdirected(req)) return misdirectedResponse();
             checkForwarded(req);
-            if (ws && isUpgrade(req)) return runUpgrade(path, ws, req, server, net, info);
+            if (ws && isUpgrade(req)) return runUpgrade(input.ws, path, ws, req, server, net, info);
             return withCacheDefault(await handle(new RequestContext(req, server, info, net)));
           };
           const entry = allowed.get(path) ?? {
@@ -334,7 +341,7 @@ export function compileApplication(input: CompileInput): CompiledApp {
     if (isUpgrade(req)) {
       const pathname = requestUrl(req).pathname;
       const ws = wsHandlers.get(pathname);
-      if (ws) return runUpgrade(pathname, ws, req, server, net);
+      if (ws) return runUpgrade(input.ws, pathname, ws, req, server, net);
     }
     return withCacheDefault(await fallback(new RequestContext(req, server, null, net)));
   };

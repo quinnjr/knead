@@ -2,7 +2,7 @@ import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { ApplicationContext, inject, Module, type OnModuleInit } from '@hpmws/core';
 import type { HttpApplication, ListenOptions } from '../src/application.js';
 import { HttpConfigError, TooManyRequestsException } from '../src/exceptions.js';
-import { originAllowed } from '../src/index.js';
+import { APP_GUARD, originAllowed } from '../src/index.js';
 import { LOGGER, MemoryLogger } from '../src/logger.js';
 import {
   type WsData,
@@ -495,5 +495,80 @@ describe('WebSocket handler errors are logged as summaries in production', () =>
     expect(entry.message).toContain('WebSocket message handler for /boom threw');
     expect(entry.message).toContain('Error: dial redis://***@h\\nFAKE');
     expect(entry.meta).toEqual([]);
+  });
+});
+
+describe('closeWhere and upgrades in progress', () => {
+  test('a revocation issued during an async global guard closes the socket when it opens', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered!: () => void;
+    const inGuard = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    class Gateway implements OnModuleInit {
+      readonly ws = inject(WsRegistry);
+      onModuleInit() {
+        this.ws.register('/live', { upgrade: () => ({ user: 'eve' }) });
+      }
+    }
+    @Module({
+      providers: [
+        Gateway,
+        {
+          provide: APP_GUARD,
+          multi: true,
+          useValue: async () => {
+            entered();
+            await gate;
+            return true;
+          },
+        },
+      ],
+    })
+    class M {}
+    app = await start(M);
+    const registry = app.get(WsRegistry);
+    const socket = new WebSocket(new URL('/live', app.url).toString().replace('http', 'ws'));
+    const code = new Promise<number>((resolve) => {
+      socket.onclose = (e) => resolve(e.code);
+    });
+    await inGuard;
+    expect(registry.closeWhere((ws) => (ws.data.data as { user: string }).user === 'eve')).toBe(0);
+    release();
+    expect(await code).toBe(1008);
+  });
+
+  test('a revocation between server.upgrade() and open is applied at open', async () => {
+    const ws = await registry();
+    const ctx = {};
+    const data: WsData = { endpoint: '/x', data: { user: 'eve' } };
+    ws.beginUpgrade(ctx);
+    ws.reserve(data, '1.2.3.4', ctx);
+    expect(ws.closeWhere((s) => (s.data.data as { user: string }).user === 'eve')).toBe(0);
+    const socket = { data, close: mock(() => {}) } as unknown as WsSocket & {
+      close: ReturnType<typeof mock>;
+    };
+    await ws.handler().open?.(socket);
+    expect(socket.close).toHaveBeenCalledWith(1008, 'Connection revoked');
+  });
+
+  test('revocations from before an upgrade began, or not matching, leave it open', async () => {
+    const ws = await registry();
+    const early = {};
+    ws.beginUpgrade(early); // keeps an upgrade in progress so predicates are recorded
+    ws.closeWhere(() => true); // issued before the next upgrade starts
+    const ctx = {};
+    const data: WsData = { endpoint: '/x', data: { user: 'ada' } };
+    ws.beginUpgrade(ctx);
+    ws.reserve(data, '1.2.3.5', ctx);
+    ws.closeWhere((s) => (s.data.data as { user: string }).user === 'eve');
+    const socket = { data, close: mock(() => {}) } as unknown as WsSocket & {
+      close: ReturnType<typeof mock>;
+    };
+    await ws.handler().open?.(socket);
+    expect(socket.close).not.toHaveBeenCalled();
   });
 });
