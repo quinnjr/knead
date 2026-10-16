@@ -77,6 +77,32 @@ test('a rejected build is not cached', async () => {
   expect((await abilities.forCtx(ctx)).can('read', 'Post')).toBe(true);
 });
 
+test('a spread copy of a ctx state (a WS operation of an upgrade) does not reuse its ability', async () => {
+  let builds = 0;
+  const abilities = await service({
+    ...options,
+    defineUserAbility: (user, builder) => {
+      builds++;
+      defineUserAbility(user, builder);
+    },
+  });
+  const upgrade = {
+    req: new Request('http://x/', bearer('alice', { posts: 'read' })),
+    state: {},
+    meta: {},
+  } as unknown as Ctx;
+  await abilities.forCtx(upgrade);
+  expect(builds).toBe(1);
+  // subscriptions.ts operationView: `{ ...http.state }` copies own symbol keys too.
+  const operation = { ...upgrade, state: { ...upgrade.state } } as unknown as Ctx;
+  expect(Object.getOwnPropertySymbols(operation.state).length).toBe(1);
+  await abilities.forCtx(operation);
+  expect(builds).toBe(2);
+  await abilities.forCtx(operation);
+  await abilities.forCtx(upgrade);
+  expect(builds).toBe(2);
+});
+
 test('GraphQL subscription root fields rebuild instead of using the cache', async () => {
   let builds = 0;
   const abilities = await service({

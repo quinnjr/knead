@@ -7,8 +7,9 @@ export {
 } from './ability.js';
 export { CaslConfigError } from './errors.js';
 export { PermittedFields, pickPermitted } from './fields.js';
-export { CaslForbiddenFilter } from './filter.js';
+export { CaslForbiddenFilter, mapCaslError } from './filter.js';
 export { type Grant, MAX_SCOPE_LENGTH, parseGrant } from './grant.js';
+export { AbilitySubject, FieldAbilityGuard, SUBJECT } from './graphql.js';
 export { AbilityGuard } from './guard.js';
 export { CAN, Can, type CanRequirement, SKIP, SkipAbility } from './metadata.js';
 export { CaslModule } from './module.js';

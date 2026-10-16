@@ -9,6 +9,15 @@ const ABILITY = Symbol('knead:casl:ability');
 
 type Cached = Promise<AppAbility | null>;
 
+/**
+ * Bound to the state object it was stored on: a spread copy of that state (a WebSocket
+ * operation's copy of its upgrade request's state) carries the entry but must not use it.
+ */
+interface CacheEntry {
+  owner: object;
+  promise: Cached;
+}
+
 export type GrantProblem =
   | { reason: 'malformed' }
   | { reason: 'exceeds-user'; area: string; level: string; action: string; subject: string };
@@ -17,7 +26,8 @@ export type GrantValidation = { ok: true; grant: Grant } | { ok: false; problems
 
 /** The ability promise cached on `ctx.state` by AbilityService.forCtx(), if any (internal). */
 export function cachedAbility(ctx: AbilityCtx): Cached | undefined {
-  return ctx.state[ABILITY] as Cached | undefined;
+  const entry = ctx.state[ABILITY] as CacheEntry | undefined;
+  return entry?.owner === ctx.state ? entry.promise : undefined;
 }
 
 /** A GraphQL subscription root field runs per event; its ability must never be cached. */
@@ -77,12 +87,13 @@ export class AbilityService {
     if (isSubscriptionRoot(ctx)) return this.#build(ctx);
     const existing = cachedAbility(ctx);
     if (existing) return existing;
-    const built = this.#build(ctx);
-    ctx.state[ABILITY] = built;
-    built.catch(() => {
-      if (ctx.state[ABILITY] === built) delete ctx.state[ABILITY];
+    const { state } = ctx;
+    const entry: CacheEntry = { owner: state, promise: this.#build(ctx) };
+    state[ABILITY] = entry;
+    entry.promise.catch(() => {
+      if (state[ABILITY] === entry) delete state[ABILITY];
     });
-    return built;
+    return entry.promise;
   }
 
   async #build(ctx: AbilityCtx): Cached {
