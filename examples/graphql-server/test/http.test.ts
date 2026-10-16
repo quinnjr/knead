@@ -103,8 +103,13 @@ describe('production defaults: masked errors', () => {
     });
     expect(JSON.stringify(res)).not.toContain('db.internal');
     const logged = broken.mod.logs.find((e) => e.level === 'error');
-    expect(logged?.message).toBe('GraphQL resolver error at post.author');
-    expect(String(logged?.meta[0])).toContain('db.internal');
+    // Outside development: the error's name and message plus a correlation id the client also
+    // gets, but not the error object.
+    const id = res.errors?.[0]?.extensions?.correlationId;
+    expect(logged?.message).toBe(
+      `GraphQL resolver error at post.author (correlation id ${id}): Error: connect ECONNREFUSED db.internal:5432`,
+    );
+    expect(logged?.meta).toEqual([]);
   });
 
   test('expected errors keep their message', async () => {

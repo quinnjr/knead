@@ -3,7 +3,7 @@ import type { GraphQLRequest, LeavenExecutor, SubscriptionIterator } from '@leav
 import { type WebSocketContext, WebSocketHandler } from '@leaven-graphql/ws';
 import type { ServerWebSocket } from 'bun';
 import type { OperationContext } from './context.js';
-import { toSafeError } from './errors.js';
+import { logInternalError, toSafeError } from './errors.js';
 import { queryTooLongMessage, type SubscriptionOptions } from './options.js';
 import type { GraphQLRuntime } from './runtime.js';
 
@@ -186,7 +186,8 @@ export function createSubscriptionEndpoint(
         if (typeof result === 'object' && result !== null) state.extra = result;
         return true;
       } catch (error) {
-        runtime.logger.error(
+        logInternalError(
+          runtime.masking,
           'GraphQL subscriptions onConnect threw; rejecting the connection',
           error,
         );

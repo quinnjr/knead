@@ -54,3 +54,62 @@ describe('output serialization errors', () => {
     }
   });
 });
+
+describe('internal error logging', () => {
+  const boom = () => {
+    const raw = new Error(`db at postgres://admin:pw@db.internal failed ${'x'.repeat(600)}`);
+    raw.name = 'DatabaseError';
+    return new GraphQLError('ignored', { path: ['post'], originalError: raw });
+  };
+
+  test('outside development: name, a truncated message and a correlation id, no objects', () => {
+    const logger = new MemoryLogger();
+    const format = createErrorFormatter({ maskErrors: true, logger, development: false });
+    const json = format(boom());
+    const id = json.extensions?.correlationId;
+    expect(typeof id).toBe('string');
+    expect(json).toMatchObject({ message: 'Internal server error' });
+    const [entry] = logger.entries;
+    expect(entry?.meta).toEqual([]);
+    expect(entry?.message).toStartWith(
+      `GraphQL resolver error at post (correlation id ${id}): DatabaseError: db at`,
+    );
+    const logged = entry!.message.slice(entry!.message.indexOf('DatabaseError: ') + 15);
+    expect(logged.length).toBe(501);
+    expect(logged.endsWith('…')).toBe(true);
+  });
+
+  test('in development the full error object is logged', () => {
+    const logger = new MemoryLogger();
+    const format = createErrorFormatter({ maskErrors: false, logger, development: true });
+    const json = format(boom());
+    const [entry] = logger.entries;
+    expect(entry?.message).toBe(
+      `GraphQL resolver error at post (correlation id ${json.extensions?.correlationId})`,
+    );
+    expect(entry?.meta[0]).toBeInstanceOf(Error);
+  });
+
+  test('the application flag decides: startGraphQL runs with development false', async () => {
+    @Resolver()
+    class R {
+      @Query(() => String) crash(): string {
+        throw new TypeError('secret detail');
+      }
+    }
+    @Module({ providers: [R] })
+    class M {}
+    const s = await startGraphQL([M]);
+    try {
+      const res = await s.app.graphql('{ crash }');
+      const id = res.errors?.[0]?.extensions?.correlationId;
+      const entry = s.mod.logs.find((e) => e.level === 'error');
+      expect(entry?.message).toBe(
+        `GraphQL resolver error at crash (correlation id ${id}): TypeError: secret detail`,
+      );
+      expect(entry?.meta).toEqual([]);
+    } finally {
+      await s.mod.close();
+    }
+  });
+});

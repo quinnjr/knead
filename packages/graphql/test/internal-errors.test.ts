@@ -50,7 +50,7 @@ describe("Leaven's own INTERNAL_ERROR", () => {
     });
     expect(
       s.mod.logs.some(
-        (e) => e.level === 'error' && JSON.stringify(e.meta).includes('ECONNREFUSED'),
+        (e) => e.level === 'error' && e.message.includes('ECONNREFUSED') && e.meta.length === 0,
       ),
     ).toBe(true);
     const strict = await s.app.graphql('{ n }', {

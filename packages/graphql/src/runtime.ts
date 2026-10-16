@@ -54,6 +54,7 @@ import {
   type ArgsValidationIssue,
   createErrorFormatter,
   type ErrorMaskingOptions,
+  logInternalError,
   MASKED_MESSAGE,
   markResolverError,
   SchemaBuildError,
@@ -277,7 +278,7 @@ export function buildHooks(
           try {
             await userError(error);
           } catch (hookError) {
-            masking.logger.error('GraphQL hooks.onError threw', hookError);
+            logInternalError(masking, 'GraphQL hooks.onError threw', hookError);
           }
         }
       : undefined,
@@ -340,11 +341,15 @@ export function normalizeResponse<T>(
     if (message) {
       return { ...error, message, extensions: { ...error.extensions, code: 'BAD_USER_INPUT' } };
     }
-    masking.logger.error('GraphQL execution failed inside Leaven', error);
+    const correlationId = logInternalError(
+      masking,
+      'GraphQL execution failed inside Leaven',
+      error,
+    );
     return {
       ...error,
       message: masking.maskErrors ? MASKED_MESSAGE : error.message,
-      extensions: { code: 'INTERNAL_SERVER_ERROR' },
+      extensions: { code: 'INTERNAL_SERVER_ERROR', correlationId },
     };
   });
   return { ...response, errors };
@@ -413,7 +418,11 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
   }
 
   get masking(): ErrorMaskingOptions {
-    return { maskErrors: this.options.maskErrors, logger: this.logger };
+    return {
+      maskErrors: this.options.maskErrors,
+      logger: this.logger,
+      development: this.development,
+    };
   }
 
   /** The GraphQL connection of a subscription socket, or undefined for any other socket. */
