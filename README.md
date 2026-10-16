@@ -83,7 +83,7 @@ To check a release locally without publishing: `bun scripts/release.ts gate v<ve
 > [!WARNING]
 > Never push a `v*` tag on a commit that predates the two-job release workflow. Older commits carry the old single-job `release.yml`, which runs every repo script while holding the npm publish credential and has none of these checks.
 
-CI authenticates to npm with [trusted publishing](https://docs.npmjs.com/trusted-publishers) (OIDC) rather than a stored token. Each `@hpmws/*` package on npmjs.com must trust this repository's `release.yml` workflow. A new package needs one manual publish first (`pnpm publish --access public --otp <code>` from its directory). After that, register the workflow for every public package while logged in to npm with 2FA: `pnpm trust:npm` (add `--dry-run` to preview). npm attaches provenance only while the repository is public.
+CI authenticates to npm with [trusted publishing](https://docs.npmjs.com/trusted-publishers) (OIDC) rather than a stored token. Each `@hpmws/*` package on npmjs.com must trust this repository's `release.yml` workflow. A new package needs one manual publish first (`pnpm publish --access public --otp <code>` from its directory). After that, register the workflow for every public package while logged in to npm with 2FA: `pnpm trust:npm` (add `--dry-run` to preview). The script logs in if needed and always logs out of npm when it exits, even on failure, so no long-lived npm session token stays in `~/.npmrc`; that also ends any session you had before running it. npm attaches provenance only while the repository is public.
 
 ### Pending until the repository is public
 
