@@ -23,6 +23,7 @@ import {
   type CompilerOptions,
   type ExecutionHooks,
   type ExecutionResult,
+  type ExecutorConfig,
   type GraphQLRequest,
   type GraphQLResponse,
   LeavenExecutor,
@@ -49,6 +50,7 @@ import {
   type ArgsValidationIssue,
   createErrorFormatter,
   type ErrorMaskingOptions,
+  MASKED_MESSAGE,
   markResolverError,
   SchemaBuildError,
   toSafeError,
@@ -226,10 +228,15 @@ export function buildHooks(
 const OPERATION_NOT_FOUND = /^Operation "(.*)" not found(?: in document)?$/;
 
 /**
- * Leaven's query compiler reports a missing or unknown operation as INTERNAL_ERROR; these are
- * client mistakes, so they are reported as graphql-js does, with BAD_USER_INPUT.
+ * Leaven reports anything non-GraphQL thrown inside its pipeline (a failing custom cache, a
+ * compiler error) as INTERNAL_ERROR with the raw message. The two client mistakes among them, a
+ * missing or unknown operation name, become BAD_USER_INPUT as graphql-js reports them; every
+ * other INTERNAL_ERROR is logged and becomes INTERNAL_SERVER_ERROR, masked when `maskErrors`.
  */
-export function normalizeResponse<T>(response: GraphQLResponse<T>): GraphQLResponse<T> {
+export function normalizeResponse<T>(
+  response: GraphQLResponse<T>,
+  masking: ErrorMaskingOptions,
+): GraphQLResponse<T> {
   if (!response.errors?.some((e) => e.extensions?.code === 'INTERNAL_ERROR')) return response;
   const errors = response.errors.map((error) => {
     if (error.extensions?.code !== 'INTERNAL_ERROR') return error;
@@ -240,21 +247,34 @@ export function normalizeResponse<T>(response: GraphQLResponse<T>): GraphQLRespo
         : named
           ? `Unknown operation named "${named[1]}".`
           : undefined;
-    return message
-      ? { ...error, message, extensions: { ...error.extensions, code: 'BAD_USER_INPUT' } }
-      : error;
+    if (message) {
+      return { ...error, message, extensions: { ...error.extensions, code: 'BAD_USER_INPUT' } };
+    }
+    masking.logger.error('GraphQL execution failed inside Leaven', error);
+    return {
+      ...error,
+      message: masking.maskErrors ? MASKED_MESSAGE : error.message,
+      extensions: { code: 'INTERNAL_SERVER_ERROR' },
+    };
   });
   return { ...response, errors };
 }
 
 /** LeavenExecutor whose request-level errors are normalized (used for HTTP and WebSocket). */
 export class GraphQLExecutor extends LeavenExecutor {
+  readonly #masking: ErrorMaskingOptions;
+
+  constructor(config: ExecutorConfig, masking: ErrorMaskingOptions) {
+    super(config);
+    this.#masking = masking;
+  }
+
   override async execute<TData = Record<string, unknown>, TContext = unknown>(
     request: GraphQLRequest,
     context?: TContext,
   ): Promise<ExecutionResult<TData>> {
     const result = await super.execute<TData, TContext>(request, context);
-    return { ...result, response: normalizeResponse(result.response) };
+    return { ...result, response: normalizeResponse(result.response, this.#masking) };
   }
 
   override async subscribe<TData = Record<string, unknown>, TContext = unknown>(
@@ -262,7 +282,7 @@ export class GraphQLExecutor extends LeavenExecutor {
     context?: TContext,
   ): Promise<SubscriptionIterator<TData> | GraphQLResponse<TData>> {
     const result = await super.subscribe<TData, TContext>(request, context);
-    return Symbol.asyncIterator in result ? result : normalizeResponse(result);
+    return Symbol.asyncIterator in result ? result : normalizeResponse(result, this.#masking);
   }
 }
 
@@ -303,16 +323,19 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
     this.#schema = this.#build();
     const calculator = complexityCalculator(this.#schema);
     const { compilerOptions, hooks, ...executor } = this.options.executor;
-    this.#executor = new GraphQLExecutor({
-      ...executor,
-      schema: this.#schema,
-      introspection: this.options.introspection,
-      compilerOptions: calculator
-        ? { complexityCalculator: calculator, ...compilerOptions }
-        : compilerOptions,
-      hooks: buildHooks(hooks, this.masking),
-      formatExecutionError: createErrorFormatter(this.masking),
-    });
+    this.#executor = new GraphQLExecutor(
+      {
+        ...executor,
+        schema: this.#schema,
+        introspection: this.options.introspection,
+        compilerOptions: calculator
+          ? { complexityCalculator: calculator, ...compilerOptions }
+          : compilerOptions,
+        hooks: buildHooks(hooks, this.masking),
+        formatExecutionError: createErrorFormatter(this.masking),
+      },
+      this.masking,
+    );
     (this.pubsub as { useLogger?: (logger: unknown) => void }).useLogger?.(this.logger);
     if (this.options.emitSchemaFile !== false) {
       await Bun.write(this.options.emitSchemaFile, printSortedSchema(this.#schema));
