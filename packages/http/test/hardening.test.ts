@@ -2,7 +2,11 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { Module } from '@hpmws/core';
 import type { HttpApplication } from '../src/application.js';
 import { Controller, createRouteDecorator, Get, Post, UseGuards } from '../src/decorators.js';
-import { BadRequestException, ServiceUnavailableException } from '../src/exceptions.js';
+import {
+  BadRequestException,
+  HttpConfigError,
+  ServiceUnavailableException,
+} from '../src/exceptions.js';
 import type { MemoryLogger } from '../src/logger.js';
 import type { Ctx } from '../src/types.js';
 import { makeCtx, start } from './helpers.js';
@@ -158,5 +162,34 @@ describe('forwarded headers without trustProxy', () => {
       headers: { 'x-forwarded-for': '203.0.113.9' },
     });
     expect((app.logger as MemoryLogger).entries.filter((e) => e.level === 'warn')).toEqual([]);
+  });
+});
+
+describe('route wildcards', () => {
+  test('more than one * in a route is a configuration error', async () => {
+    @Controller('/files')
+    class Files {
+      @Get('/*/x/*')
+      get() {
+        return 'ok';
+      }
+    }
+    @Module({ controllers: [Files] })
+    class M {}
+    await expect(start(M)).rejects.toThrow(HttpConfigError);
+  });
+
+  test('a single trailing * is fine', async () => {
+    @Controller('/files')
+    class Files {
+      @Get('/*')
+      get() {
+        return 'ok';
+      }
+    }
+    @Module({ controllers: [Files] })
+    class M {}
+    app = await start(M);
+    expect((await fetch(new URL('/files/a/b', app.url))).status).toBe(200);
   });
 });

@@ -171,6 +171,9 @@ export function compileApplication(input: CompileInput): CompiledApp {
         const fn = instance[name];
         if (typeof fn !== 'function') throw new HttpConfigError(`${label} is not a method.`);
         const path = joinPaths(def.prefix, route.path);
+        if (path.split('*').length > 2) {
+          throw new HttpConfigError(`Route ${path} has more than one "*" wildcard (${label}).`);
+        }
         const shape = routeShape(path);
         const known = shapes.get(shape);
         if (known !== undefined && known !== path) {

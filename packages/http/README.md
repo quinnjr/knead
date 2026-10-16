@@ -6,6 +6,8 @@ HTTP(S) for hpmws: `@Controller` and `@Get`/`@Post`/… compiled into Bun's nati
 const BearerGuard = (ctx: Ctx) => ctx.upgrade !== null || isValidToken(ctx.req.headers.get('authorization'));
 ```
 
+A route path may contain at most one `*` wildcard; more is a configuration error at `listen()`.
+
 A guard passes only when it returns (or resolves to) exactly `true`; any other value, truthy or not, is a 403. `ctx.meta` is the matched route's metadata (`ctx.route?.meta`, from `createRouteDecorator()` and the `meta` option), or an empty frozen object on unmatched requests and upgrades. GraphQL resolver contexts expose the same `ctx.meta`, so one role guard works on routes and resolvers. Deny when required roles are present but unmet:
 
 ```ts
