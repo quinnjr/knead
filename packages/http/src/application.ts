@@ -15,6 +15,9 @@ import { APP_FILTER, APP_GUARD, APP_MIDDLEWARE } from './tokens.js';
 import type { FilterRef, GlobalMiddleware, GuardRef, MiddlewareRef } from './types.js';
 import { type WsData, WsRegistry } from './ws.js';
 
+/** Default `maxRequestBodySize`: 1 MiB. */
+export const DEFAULT_MAX_REQUEST_BODY_SIZE = 1024 * 1024;
+
 /** Global module the factory registers: provides LOGGER and WsRegistry everywhere. */
 @Module({})
 export class HttpCoreModule {}
@@ -33,6 +36,7 @@ export interface ListenOptions {
   /** Starts a second plain-HTTP listener that 308-redirects to the HTTPS listener. */
   redirectHttp?: { port: number; hostname?: string };
   trustProxy?: TrustProxy;
+  /** Largest accepted request body in bytes; larger bodies get 413. Default 1 MiB. */
   maxRequestBodySize?: number;
   idleTimeout?: number;
   /**
@@ -326,8 +330,7 @@ export class HttpApplication {
       // Required by reloadTls(): a replacement listener binds the same port.
       serveOptions.reusePort = true;
     }
-    if (options.maxRequestBodySize !== undefined)
-      serveOptions.maxRequestBodySize = options.maxRequestBodySize;
+    serveOptions.maxRequestBodySize = options.maxRequestBodySize ?? DEFAULT_MAX_REQUEST_BODY_SIZE;
     if (options.idleTimeout !== undefined) serveOptions.idleTimeout = options.idleTimeout;
     const server = Bun.serve(serveOptions as unknown as Serve.Options<WsData, string>);
     let redirect: Server<undefined> | undefined;
