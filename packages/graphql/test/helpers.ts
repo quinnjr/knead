@@ -53,7 +53,7 @@ export async function until(
   }
 }
 
-/** Sends a raw graphql-transport-ws upgrade request and returns the HTTP status code. */
+/** Sends a raw graphql-transport-ws upgrade request and returns the HTTP status code (`host` overrides Host). */
 export function upgradeStatus(app: TestApp, headers: Record<string, string> = {}): Promise<number> {
   const port = Number(app.url.port);
   return new Promise((resolve, reject) => {
@@ -63,11 +63,12 @@ export function upgradeStatus(app: TestApp, headers: Record<string, string> = {}
       port,
       socket: {
         open(sock) {
-          const extra = Object.entries(headers).map(([k, v]) => `${k}: ${v}`);
+          const { host = `127.0.0.1:${port}`, ...rest } = headers;
+          const extra = Object.entries(rest).map(([k, v]) => `${k}: ${v}`);
           sock.write(
             [
               'GET /graphql HTTP/1.1',
-              `Host: 127.0.0.1:${port}`,
+              `Host: ${host}`,
               'Upgrade: websocket',
               'Connection: Upgrade',
               'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',

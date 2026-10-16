@@ -1,10 +1,4 @@
-import {
-  BadRequestException,
-  type Ctx,
-  ForbiddenException,
-  type WsEndpoint,
-  type WsSocket,
-} from '@hpmws/http';
+import { BadRequestException, type Ctx, type WsEndpoint, type WsSocket } from '@hpmws/http';
 import { type WebSocketContext, WebSocketHandler } from '@leaven-graphql/ws';
 import type { ServerWebSocket } from 'bun';
 import type { OperationContext } from './context.js';
@@ -31,28 +25,6 @@ interface SocketFacade {
 interface SocketState {
   http: Ctx;
   extra: object | undefined;
-}
-
-/** Same origin (Origin scheme matches the connection, Origin host equals Host), an allowed origin, or no Origin header. */
-export function originAllowed(
-  origin: string | null,
-  host: string | null,
-  secure: boolean,
-  allowed: SubscriptionOptions['allowedOrigins'],
-): boolean {
-  if (origin === null || allowed === '*') return true;
-  if (allowed?.includes(origin)) return true;
-  try {
-    const url = new URL(origin);
-    // Same origin means same scheme as well as host: an http:// page must not reach a wss:// socket.
-    return (
-      host !== null &&
-      url.protocol === (secure ? 'https:' : 'http:') &&
-      url.host === host.toLowerCase()
-    );
-  } catch {
-    return false;
-  }
 }
 
 const asLeavenSocket = (facade: SocketFacade) =>
@@ -111,17 +83,7 @@ export function createSubscriptionEndpoint(
       const offered = (ctx.req.headers.get('sec-websocket-protocol') ?? '')
         .split(',')
         .map((p) => p.trim());
-      const headers = ctx.req.headers;
-      if (
-        !originAllowed(
-          headers.get('origin'),
-          headers.get('host'),
-          ctx.secure,
-          options.allowedOrigins,
-        )
-      ) {
-        throw new ForbiddenException('Cross-origin GraphQL WebSocket connections are not allowed.');
-      }
+      // WsRegistry has already checked Origin (same origin or subscriptions.allowedOrigins).
       if (!offered.includes(GRAPHQL_TRANSPORT_WS)) {
         throw new BadRequestException(
           `GraphQL subscriptions require the ${GRAPHQL_TRANSPORT_WS} WebSocket subprotocol.`,

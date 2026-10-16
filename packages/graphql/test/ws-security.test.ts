@@ -1,9 +1,8 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Module } from '@hpmws/core';
-import { APP_GUARD, type Ctx } from '@hpmws/http';
+import { APP_GUARD, type Ctx, originAllowed } from '@hpmws/http';
 import { RateLimitModule } from '@hpmws/rate-limit';
 import { Int, Mutation, Query, Resolver, Subscription } from '../src/index.js';
-import { originAllowed } from '../src/subscriptions.js';
 import { type Started, startGraphQL, upgradeStatus } from './helpers.js';
 
 let bumps = 0;
@@ -83,6 +82,22 @@ describe('WebSocket transport security', () => {
     expect(originAllowed('https://app.example', 'app.example', false, undefined)).toBe(false);
     expect(originAllowed('null', 'app.example', false, undefined)).toBe(false);
     expect(originAllowed(null, 'app.example', true, undefined)).toBe(true);
+  });
+
+  test('default ports are normalized on both sides of the same-origin check', async () => {
+    s = await startGraphQL([M]);
+    expect(
+      await upgradeStatus(s.app, { host: 'app.example:80', origin: 'http://app.example' }),
+    ).toBe(101);
+    expect(
+      await upgradeStatus(s.app, { host: 'app.example', origin: 'http://app.example:80' }),
+    ).toBe(101);
+    expect(
+      await upgradeStatus(s.app, { host: 'app.example:8080', origin: 'http://app.example' }),
+    ).toBe(403);
+    expect(originAllowed('https://app.example', 'app.example:443', true)).toBe(true);
+    expect(originAllowed('https://app.example:443', 'app.example', true)).toBe(true);
+    expect(originAllowed('http://app.example:443', 'app.example', true)).toBe(false);
   });
 
   test('allowedOrigins lists extra origins; "*" allows any', async () => {
