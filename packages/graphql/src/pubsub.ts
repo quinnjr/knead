@@ -8,6 +8,29 @@ export const PUBSUB = new InjectionToken<PubSubEngine>('PUBSUB');
 export const MAX_QUEUED_EVENTS = 1000;
 
 /**
+ * Engines may accept a third `onError` argument to report that a subscription can no longer
+ * deliver events (RedisPubSub does); Leaven's in-memory PubSub ignores it.
+ */
+type SubscribeWithError = (
+  topic: string,
+  callback: (payload: unknown) => void,
+  onError?: (error: Error) => void,
+) => () => void;
+
+export interface EventIteratorOptions {
+  /** Called each time a full queue drops its oldest event. */
+  onDrop?: () => void;
+}
+
+/** Thrown from next() when the engine reports a failure; the cause is not exposed to clients. */
+export class EventSourceError extends Error {
+  constructor(cause: unknown) {
+    super('Subscription event source failed.', { cause });
+    this.name = 'EventSourceError';
+  }
+}
+
+/**
  * An async iterator over `topics` on any PubSubEngine. `filter` runs per event; `return()`
  * unsubscribes from every topic.
  */
@@ -15,31 +38,46 @@ export function eventIterator<T>(
   engine: PubSubEngine,
   topics: readonly string[],
   filter?: (payload: T) => boolean | Promise<boolean>,
+  options: EventIteratorOptions = {},
 ): AsyncIterableIterator<T> {
   const queue: T[] = [];
-  const waiting: ((result: IteratorResult<T>) => void)[] = [];
+  const waiting: {
+    resolve: (result: IteratorResult<T>) => void;
+    reject: (error: unknown) => void;
+  }[] = [];
   let done = false;
+  let failure: EventSourceError | undefined;
   const push = (payload: unknown) => {
     if (done) return;
     const waiter = waiting.shift();
-    if (waiter) waiter({ value: payload as T, done: false });
+    if (waiter) waiter.resolve({ value: payload as T, done: false });
     else {
-      if (queue.length >= MAX_QUEUED_EVENTS) queue.shift();
+      if (queue.length >= MAX_QUEUED_EVENTS) {
+        queue.shift();
+        options.onDrop?.();
+      }
       queue.push(payload as T);
     }
   };
-  const unsubscribes = topics.map((topic) => engine.subscribe(topic, push));
+  const fail = (error: Error) => {
+    if (done || failure) return;
+    failure = new EventSourceError(error);
+    for (const waiter of waiting.splice(0)) waiter.reject(failure);
+  };
+  const subscribe = engine.subscribe.bind(engine) as SubscribeWithError;
+  const unsubscribes = topics.map((topic) => subscribe(topic, push, fail));
   const finish = () => {
     if (done) return;
     done = true;
     for (const unsubscribe of unsubscribes) unsubscribe();
-    for (const waiter of waiting.splice(0)) waiter({ value: undefined, done: true });
+    for (const waiter of waiting.splice(0)) waiter.resolve({ value: undefined, done: true });
     queue.length = 0;
   };
   const pull = (): Promise<IteratorResult<T>> => {
     if (queue.length > 0) return Promise.resolve({ value: queue.shift() as T, done: false });
     if (done) return Promise.resolve({ value: undefined, done: true });
-    return new Promise((resolve) => waiting.push(resolve));
+    if (failure) return Promise.reject(failure);
+    return new Promise((resolve, reject) => waiting.push({ resolve, reject }));
   };
   return {
     [Symbol.asyncIterator]() {
