@@ -416,12 +416,13 @@ export function createSubscriptionEndpoint(
         state.initStarted = true;
       }
       // Ids end up in Leaven's logs and maps: anything but a short, plain id closes the socket
-      // before the message reaches Leaven.
+      // before the message reaches Leaven. Leaven validates ids too; this is a duplicate safety
+      // net, with Leaven's close reason.
       if (
         (parsed?.type === 'subscribe' || parsed?.type === 'complete') &&
         (typeof parsed.id !== 'string' || !MESSAGE_ID.test(parsed.id))
       ) {
-        ws.close(4400, 'Invalid message id');
+        ws.close(4400, 'Invalid message');
         return;
       }
       if (parsed?.type === 'complete' && typeof parsed.id === 'string') {

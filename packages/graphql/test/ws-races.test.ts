@@ -169,7 +169,7 @@ describe('http WebSocket limits apply to the subscription endpoint', () => {
   });
 });
 
-describe('Leaven 0.2.2 and a deferred revocation in onConnect', () => {
+describe("Leaven's handler and a deferred revocation in onConnect", () => {
   test('onConnect closing the socket and returning false sends no connection_ack', async () => {
     const { WebSocketHandler } = await import('@leaven-graphql/ws');
     const { buildSchema } = await import('graphql');

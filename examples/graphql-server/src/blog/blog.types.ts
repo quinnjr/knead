@@ -82,10 +82,7 @@ export class PostsArgs extends PageArgs {
   since?: Date | null;
 }
 
-/**
- * Rebuilds a Post from an event payload, which is plain JSON when it came through Redis. Only
- * the known fields are copied: a payload is never Object.assign-ed onto an entity.
- */
+/** Every PostStatus value, for validating events. */
 const STATUSES = new Set<unknown>(Object.values(PostStatus));
 
 /**
@@ -117,8 +114,10 @@ export function isCommentEvent(payload: unknown): payload is CommentEvent {
 }
 
 /**
- * Rebuilds a Post from an event. The event crossed a trust boundary (Redis), so the body is
- * sanitized again and the status must be a PostStatus.
+ * Rebuilds a Post from an event payload, which is plain JSON when it came through Redis. Only
+ * the known fields are copied (a payload is never Object.assign-ed onto an entity), and since
+ * the event crossed a trust boundary the body is sanitized again and the status must be a
+ * PostStatus.
  */
 export function revivePost(payload: PostEvent): Post {
   if (!STATUSES.has(payload.status)) throw new TypeError('Invalid post status in event');
