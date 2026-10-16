@@ -164,7 +164,7 @@ jobs:
           fi
       # npm trusted publishing (OIDC): no NPM_TOKEN. npm exchanges this job's GitHub OIDC token
       # (`id-token: write`) for a short-lived publish token per package, matched against the
-      # trusted publisher configured on npmjs.com (repo quinnjr/high-performance-modular-web-server,
+      # trusted publisher configured on npmjs.com (repo quinnjr/knead,
       # workflow release.yml). Provenance is attached automatically only while the repo is public.
       #
       # Every tarball is verified before any is published: SHA256SUMS must match the digest the

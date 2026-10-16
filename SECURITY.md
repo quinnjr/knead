@@ -8,7 +8,7 @@ discussion.
 **Once this repository is public**, report vulnerabilities privately through
 GitHub private vulnerability reporting: open the repository's **Security** tab
 and choose **Report a vulnerability**
-(<https://github.com/quinnjr/high-performance-modular-web-server/security/advisories/new>).
+(<https://github.com/quinnjr/knead/security/advisories/new>).
 
 **At any time**, you can email the maintainer at
 <quinn.josephr@protonmail.com> (use the subject "hpmws security report"). While

@@ -17,7 +17,7 @@
 # session you had before running it; run `npm login` again if you need one.
 set -euo pipefail
 
-REPO="quinnjr/high-performance-modular-web-server"
+REPO="quinnjr/knead"
 WORKFLOW="release.yml"
 # Exact npm version, so the trust call is reproducible.
 NPM_VERSION="11.21.0"

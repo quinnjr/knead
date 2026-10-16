@@ -5,7 +5,7 @@
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/quinnjr/high-performance-modular-web-server.git",
+    "url": "git+https://github.com/quinnjr/knead.git",
     "directory": "packages/graphql"
   },
   "type": "module",
