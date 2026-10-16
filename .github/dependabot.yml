@@ -23,6 +23,9 @@ updates:
     schedule:
       interval: weekly
     target-branch: develop
+    # Give new action releases a few days for problems to surface before pinning them.
+    cooldown:
+      default-days: 3
     commit-message:
       prefix: ci(deps)
     groups:
