@@ -247,6 +247,22 @@ importers:
         specifier: workspace:^
         version: link:../../packages/testing
 
+  packages/config:
+    dependencies:
+      '@standard-schema/spec':
+        specifier: ^1.1.0
+        version: 1.1.0
+    devDependencies:
+      '@knead-js/core':
+        specifier: workspace:^
+        version: link:../core
+      '@knead-js/http':
+        specifier: workspace:^
+        version: link:../http
+      '@knead-js/testing':
+        specifier: workspace:^
+        version: link:../testing
+
   packages/core: {}
 
   packages/cors:

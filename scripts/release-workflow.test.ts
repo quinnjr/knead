@@ -412,8 +412,8 @@ describe('release.yml publish step', () => {
     });
 
     test('a garbled latest dist-tag stops the release', () => {
-      const r = publish('v1.2.3', [['@knead-js/core', '1.2.3']], {
-        env: { FAKE_LATEST: '@knead-js/core=not-a-version' },
+      const r = publish('v1.2.3', [['@knead-js/config', '1.2.3']], {
+        env: { FAKE_LATEST: '@knead-js/config=not-a-version' },
       });
       expectRejected(r, 'unexpected latest dist-tag');
     });
@@ -465,7 +465,7 @@ describe('release.yml publish step', () => {
       expect(r.cwds[0]).not.toBe(r.tarballs);
       expect(readdirSync(r.cwds[0])).toEqual([]);
       const published = r.rawCalls.filter((c) => c.startsWith('npm publish'));
-      expect(published).toHaveLength(8);
+      expect(published).toHaveLength(9);
       for (const c of published) expect(c.split(' ')[2].startsWith(`${r.tarballs}/`)).toBe(true);
       for (const c of r.rawCalls.filter((c) => c !== 'npm root -g'))
         expect(c).toContain('--@knead-js:registry=https://registry.npmjs.org/');
@@ -492,7 +492,7 @@ describe('release.yml publish step', () => {
 
     test('publishes nothing when the preflight query fails', () => {
       const r = publish('v1.2.3', [], { env: { FAKE_PREFLIGHT_ERROR: 'ETIMEDOUT' } });
-      expectRejected(r, 'could not query npm for @knead-js/core');
+      expectRejected(r, 'could not query npm for @knead-js/config');
     });
   });
 
@@ -501,12 +501,12 @@ describe('release.yml publish step', () => {
       const r = publish('v1.2.3', []);
       expect(r.exitCode).toBe(0);
       expect(r.allPublishes).toHaveLength(ALLOWED.length);
-      expect(ALLOWED).toHaveLength(8);
+      expect(ALLOWED).toHaveLength(9);
     });
 
     test('publishes nothing when a package is missing from the artifact', () => {
       const r = publish('v1.2.3', [['@knead-js/core', '1.2.3']], { partial: true });
-      expectRejected(r, 'missing from the artifact: @knead-js/cors');
+      expectRejected(r, 'missing from the artifact: @knead-js/config');
     });
 
     test('publishes nothing when a package appears twice', () => {
