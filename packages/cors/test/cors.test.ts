@@ -328,3 +328,18 @@ describe('oversized Origin headers', () => {
     expect(res.headers.get('access-control-allow-origin')).toBeNull();
   });
 });
+
+describe('RegExp origins must be anchored', () => {
+  test('an unanchored RegExp is a configuration error naming the option', () => {
+    for (const origin of [/app\.example/, /^https:\/\/app\.example/, /app\.example$/, /^a\$/]) {
+      expect(() => CorsModule.forRoot({ origin })).toThrow(CorsConfigError);
+      expect(() => CorsModule.forRoot({ origin })).toThrow('CORS origin RegExp');
+    }
+  });
+
+  test('anchored RegExps are accepted', () => {
+    for (const origin of [/^https:\/\/app\.example$/, /^https:\/\/(?:a|b)\.example$/i, /^a\\$/]) {
+      expect(() => CorsModule.forRoot({ origin })).not.toThrow();
+    }
+  });
+});
