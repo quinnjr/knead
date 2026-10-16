@@ -93,7 +93,7 @@ Some protections need features that private repositories on the free plan do not
   2. Add `environment: npm-publish` to the `publish` job in `release.yml`.
   3. Remove the existing environment-less trusted publisher from every package, so it cannot still be used. List it with `pnpm dlx npm@11.21.0 trust list @hpmws/<pkg>` and remove it with `pnpm dlx npm@11.21.0 trust revoke @hpmws/<pkg> --id=<trust-id>`, or delete it under each package's **Settings → Trusted publishing** on npmjs.com.
   4. Re-register with the environment: `pnpm trust:npm --env npm-publish`.
-- **CodeQL.** `codeql.yml` skips its analysis while the repository is private, because code scanning is unavailable there. It starts running automatically once the repository is public (or has GitHub Advanced Security); enable code scanning under **Settings → Code security**.
+- **CodeQL.** `codeql.yml` skips its analysis until the repository variable `CODEQL_ENABLED` is `true`, because code scanning is unavailable on a private free-plan repository. When the repository goes public (or gets GitHub Advanced Security), enable code scanning under **Settings → Code security** and set the variable under **Settings → Secrets and variables → Actions → Variables** (`gh variable set CODEQL_ENABLED --body true`).
 - **Private vulnerability reporting** (see [SECURITY.md](SECURITY.md)) and **CODEOWNERS enforcement** through branch protection.
 
 Security issues: see [SECURITY.md](SECURITY.md).
