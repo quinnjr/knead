@@ -1,5 +1,5 @@
 import { appendMetadata, INJECTABLE, setMetadata } from '@hpmws/core';
-import type { GuardRef } from '@hpmws/http';
+import { createRouteDecorator, type GuardRef } from '@hpmws/http';
 import type {
   ResolverCtx,
   ResolverCtxKey,
@@ -222,3 +222,14 @@ export function Subscription<
     { args: A; nullable: N }
   >;
 }
+
+/** The `ctx.meta` key set by `@Public()`. */
+export const IS_PUBLIC: unique symbol = Symbol('hpmws:graphql:public');
+
+const publicMeta = createRouteDecorator<true>(IS_PUBLIC);
+
+/**
+ * Marks a resolver class or root field as public: module-level `guards` do not run for it, and
+ * `defaultDeny` lets it through. Its own class and method guards still run.
+ */
+export const Public = () => publicMeta(true);

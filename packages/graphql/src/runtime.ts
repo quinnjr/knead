@@ -70,6 +70,7 @@ import {
 } from './options.js';
 import { PlaygroundGate } from './playground.js';
 import { eventIterator, PUBSUB } from './pubsub.js';
+import { IS_PUBLIC } from './resolvers.js';
 import { argNames, type FieldSpec, printSortedSchema, SchemaBuilder } from './schema.js';
 import { createSubscriptionEndpoint } from './subscriptions.js';
 import type { Class } from './type-refs.js';
@@ -112,6 +113,9 @@ function resolveGuard(ref: GuardRef<any>, injector: ModuleInjector): Guard<any> 
   if (typeof ref === 'function') return { canActivate: ref as (ctx: unknown) => boolean };
   return ref;
 }
+
+/** The guard defaultDeny puts on a root field that has no guard of its own. */
+const DENY: Guard<unknown> = { canActivate: () => false };
 
 async function runGuards(guards: readonly Guard<any>[], ctx: ResolverCtx<any, any>): Promise<void> {
   for (const guard of guards) {
@@ -448,16 +452,22 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
         throw new SchemaBuildError(`${owner}: validate.${key} does not match a declared argument.`);
       }
     }
-    const guards = [
-      ...(getMetadata(cls, GUARDS) ?? []),
-      ...(options.guards ?? []),
-      ...(getMethodMetadata(cls, def.method, GUARDS) ?? []),
-    ].map((ref) => resolveGuard(ref, injector));
     const meta = Object.freeze({
       ...(getMetadata(cls, ROUTE_META) ?? {}),
       ...(options.meta ?? {}),
       ...(getMethodMetadata(cls, def.method, ROUTE_META) ?? {}),
     });
+    const own = [
+      ...(getMetadata(cls, GUARDS) ?? []),
+      ...(options.guards ?? []),
+      ...(getMethodMetadata(cls, def.method, GUARDS) ?? []),
+    ];
+    // Module guards and defaultDeny apply to root fields (not @ResolveField) unless @Public().
+    const root = def.kind !== 'field' && meta[IS_PUBLIC] !== true;
+    const denied = root && this.options.defaultDeny && own.length === 0;
+    const guards = [...(denied ? [DENY] : []), ...(root ? this.options.guards : []), ...own].map(
+      (ref) => resolveGuard(ref, injector),
+    );
     const call = (ctx: ResolverCtx<any, any>) =>
       (method as (c: unknown) => unknown).call(instance, ctx);
     const prepare = async (

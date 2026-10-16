@@ -29,8 +29,10 @@ export { RedisPubSub, type RedisPubSubOptions } from './redis-pubsub.js';
 export {
   type ArgsOf,
   type ArgsTs,
+  IS_PUBLIC,
   Mutation,
   type ParentMismatches,
+  Public,
   Query,
   ResolveField,
   type ResolveFieldDecorator,

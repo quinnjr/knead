@@ -1,5 +1,5 @@
 import { InjectionToken } from '@hpmws/core';
-import { type Ctx, HttpConfigError, type WsMessageRate } from '@hpmws/http';
+import { type Ctx, type GuardRef, HttpConfigError, type WsMessageRate } from '@hpmws/http';
 import type {
   CompilerOptions,
   ExecutionHooks,
@@ -7,6 +7,7 @@ import type {
   ParseOptions,
 } from '@leaven-graphql/core';
 import type { PubSubEngine } from '@leaven-graphql/ws';
+import type { ResolverCtx } from './context.js';
 import type { Class } from './type-refs.js';
 
 export interface SubscriptionOptions {
@@ -76,6 +77,17 @@ export interface GraphQLModuleOptions {
   subscriptions?: SubscriptionOptions | false;
   /** Default: Leaven's in-memory PubSub. Closed on shutdown if it has close(). */
   pubsub?: PubSubEngine;
+  /**
+   * Guards run on every root field (query, mutation and subscription), before the resolver's
+   * class and method guards. `@Public()` resolvers skip them. Not run for `@ResolveField`.
+   */
+  guards?: readonly GuardRef<ResolverCtx<any, any>>[];
+  /**
+   * Deny (FORBIDDEN) every root field that is neither `@Public()` nor protected by a guard of
+   * its own (class `@UseGuards`, the `guards` option or method `@UseGuards`); module `guards`
+   * do not count. Default false.
+   */
+  defaultDeny?: boolean;
 }
 
 export interface ResolvedGraphQLOptions {
@@ -88,6 +100,8 @@ export interface ResolvedGraphQLOptions {
   readonly csrf: { readonly requiredHeaders: readonly string[] } | false;
   readonly subscriptions: SubscriptionOptions | false;
   readonly orphanedTypes: readonly Class[];
+  readonly guards: readonly GuardRef<ResolverCtx<any, any>>[];
+  readonly defaultDeny: boolean;
   readonly maxQueryLength: number | false;
   readonly maxAliases: number | false;
   readonly executor: Pick<
@@ -180,6 +194,8 @@ export function resolveOptions(
           },
     subscriptions: options.subscriptions === false ? false : { ...(options.subscriptions ?? {}) },
     orphanedTypes: options.orphanedTypes ?? [],
+    guards: options.guards ?? [],
+    defaultDeny: options.defaultDeny ?? false,
     maxQueryLength: limit('maxQueryLength', options.maxQueryLength, GRAPHQL_LIMITS.maxQueryLength),
     maxAliases: limit('maxAliases', options.maxAliases, GRAPHQL_LIMITS.maxAliases),
     executor: {
