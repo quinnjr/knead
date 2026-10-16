@@ -69,6 +69,36 @@ type ArgDefaultsCheck<O> = [BadArgDefaults<O>] extends [never]
   ? unknown
   : { readonly 'inline argument defaultValue does not match its type': BadArgDefaults<O> };
 
+/**
+ * A @ResolveField method's first parameter must be a ResolverCtx itself (branded, not a
+ * SubscriptionCtx, structural look-alike or Pick/Omit of one), so the @Resolver parent check
+ * sees it. Methods without parameters are fine.
+ */
+type FieldCtxCheck<F> = F extends (...args: infer P) => any
+  ? P extends []
+    ? unknown
+    : P[0] extends infer C
+      ? ResolverCtxKey extends keyof C
+        ? SubscriptionEventKey extends keyof C
+          ? { readonly '@ResolveField takes a ResolverCtx, not a SubscriptionCtx': never }
+          : unknown
+        : {
+            readonly '@ResolveField takes a ResolverCtx<Args, Parent> as its first parameter': never;
+          }
+      : unknown
+  : unknown;
+
+export type ResolveFieldDecorator<R, O extends ResolverOptions> = <
+  This,
+  F extends (
+    this: This,
+    ctx: ResolverCtx<ArgsOf<O>, any>,
+  ) => MaybePromise<OutType<R, O['nullable']>>,
+>(
+  method: F,
+  context: ClassMethodDecoratorContext<This, F> & ArgDefaultsCheck<O> & FieldCtxCheck<F>,
+) => void;
+
 export type ResolverMethodDecorator<R, O extends ResolverOptions> = <
   This,
   F extends (
@@ -171,8 +201,8 @@ export function Mutation<const R extends TypeThunkResult, const O extends Resolv
 export function ResolveField<const R extends TypeThunkResult, const O extends ResolverOptions = {}>(
   type: () => R,
   options?: O,
-): ResolverMethodDecorator<R, O> {
-  return method('field', 'ResolveField', type, options ?? {}) as ResolverMethodDecorator<R, O>;
+): ResolveFieldDecorator<R, O> {
+  return method('field', 'ResolveField', type, options ?? {}) as ResolveFieldDecorator<R, O>;
 }
 
 /**

@@ -225,3 +225,38 @@ export class WithHelper {
     return input.parent.length;
   }
 }
+
+// @ResolveField methods must take a real ResolverCtx, so the parent check cannot be bypassed.
+@Resolver(() => User)
+export class BypassSubscriptionCtx {
+  // @ts-expect-error SubscriptionCtx is not accepted by @ResolveField
+  @ResolveField(() => Int) f(ctx: SubscriptionCtx<{}, Holder>) {
+    return ctx.parent.narrow.age;
+  }
+}
+
+@Resolver(() => User)
+export class BypassStructural {
+  // @ts-expect-error an unbranded structural ctx is not accepted by @ResolveField
+  @ResolveField(() => Int) f(ctx: { parent: Holder }) {
+    return ctx.parent.narrow.age;
+  }
+}
+
+@Resolver(() => User)
+export class BypassPick {
+  // @ts-expect-error Pick<ResolverCtx> drops the brand and is not accepted by @ResolveField
+  @ResolveField(() => Int) f(ctx: Pick<ResolverCtx<{}, Holder>, 'parent'>) {
+    return ctx.parent.narrow.age;
+  }
+}
+
+@Resolver(() => User)
+export class CorrectParent {
+  @ResolveField(() => Int) f(ctx: ResolverCtx<{}, User>) {
+    return ctx.parent.age;
+  }
+  @ResolveField(() => Int) noCtx() {
+    return 1;
+  }
+}

@@ -27,6 +27,7 @@ export {
   type ParentMismatches,
   Query,
   ResolveField,
+  type ResolveFieldDecorator,
   Resolver,
   type ResolverDecorator,
   type ResolverMethodDecorator,
