@@ -70,13 +70,14 @@ export interface GraphQLModuleOptions {
   /** Builds the user part of each operation's context; merged onto ResolverCtx. */
   context?: (http: Ctx) => object | Promise<object>;
   /**
-   * Serves GraphQL Playground to browsers. Default: NODE_ENV === 'development'. An object enables
+   * Serves GraphQL Playground to browsers. Default: the application is in development (the
+   * HTTP_DEVELOPMENT flag, else NODE_ENV === 'development'). An object enables
    * it with options: `subscriptionEndpoint` is the WebSocket URL the page connects to (a
    * `ws://`/`wss://` URL or an absolute path). Without it, the URL is derived from the request's
    * Host header when that is a plain `host[:port]`, and is the relative path otherwise.
    */
   playground?: boolean | PlaygroundOptions;
-  /** Default: NODE_ENV === 'development', or true when `playground: true`. */
+  /** Default: true in development (HTTP_DEVELOPMENT, else NODE_ENV), or when the playground is on. */
   introspection?: boolean;
   /**
    * Deepest selection allowed (fragments expanded). Selections inside `__schema` and `__type`
@@ -105,7 +106,7 @@ export interface GraphQLModuleOptions {
   cacheControl?: string | false;
   /** GET requests must carry one of `requiredHeaders` (default ['x-graphql-request']). */
   csrf?: { requiredHeaders?: readonly string[] } | false;
-  /** Default: NODE_ENV !== 'development'. */
+  /** Default: true outside development (HTTP_DEVELOPMENT, else NODE_ENV). */
   maskErrors?: boolean;
   /** Writes sorted SDL at bootstrap. Default: 'schema.graphql' in development, else false. */
   emitSchemaFile?: string | false;
@@ -221,10 +222,11 @@ export function validateGraphQLOptions(options: GraphQLModuleOptions): void {
 export function resolveOptions(
   options: GraphQLModuleOptions,
   path: string,
-  env: string | undefined = process.env.NODE_ENV,
+  /** The application's development flag, or a NODE_ENV value (default: process.env.NODE_ENV). */
+  development: boolean | string | undefined = process.env.NODE_ENV,
 ): ResolvedGraphQLOptions {
   validateGraphQLOptions(options);
-  const dev = env === 'development';
+  const dev = typeof development === 'boolean' ? development : development === 'development';
   const maxDepth = limit('maxDepth', options.maxDepth, GRAPHQL_LIMITS.maxDepth);
   const maxComplexity = limit('maxComplexity', options.maxComplexity, GRAPHQL_LIMITS.maxComplexity);
   return {

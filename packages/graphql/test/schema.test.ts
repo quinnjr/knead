@@ -25,7 +25,7 @@ async function bootError(providers: Function[], orphanedTypes: Function[] = []):
   const result = await Test.createModule({
     imports: [GraphQLModule.forRoot({ orphanedTypes: orphanedTypes as never }), M],
   })
-    .compile()
+    .compile({ development: false })
     .then(
       () => undefined,
       (error: Error) => error,

@@ -33,7 +33,7 @@ export async function sdlOf(
 ): Promise<string> {
   const mod = await Test.createModule({
     imports: [GraphQLModule.forRoot(options), ...imports],
-  }).compile();
+  }).compile({ development: false });
   try {
     return printSortedSchema(mod.get(GraphQLRuntime).schema);
   } finally {

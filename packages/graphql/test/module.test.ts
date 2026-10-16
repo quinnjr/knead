@@ -28,6 +28,43 @@ afterEach(async () => {
   s = undefined;
 });
 
+describe('defaults follow the application development flag', () => {
+  test('development: false wins over NODE_ENV=development', async () => {
+    const previous = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'development';
+    try {
+      const mod = await Test.createModule({
+        imports: [GraphQLModule.forRoot({ emitSchemaFile: false }), DevFlagModule],
+      }).compile({ development: false });
+      try {
+        const o = mod.get(GraphQLRuntime).options;
+        expect(o).toMatchObject({ playground: false, introspection: false, maskErrors: true });
+      } finally {
+        await mod.close();
+      }
+    } finally {
+      process.env.NODE_ENV = previous;
+    }
+  });
+
+  test('development: true enables the tooling without NODE_ENV', async () => {
+    const mod = await Test.createModule({
+      imports: [GraphQLModule.forRoot({ emitSchemaFile: false }), DevFlagModule],
+    }).compile({ development: true });
+    try {
+      const o = mod.get(GraphQLRuntime).options;
+      expect(o).toMatchObject({ playground: true, introspection: true, maskErrors: false });
+    } finally {
+      await mod.close();
+    }
+  });
+
+  test('resolveOptions accepts the boolean flag', () => {
+    expect(resolveOptions({}, '/g', true).maskErrors).toBe(false);
+    expect(resolveOptions({}, '/g', false).maskErrors).toBe(true);
+  });
+});
+
 describe('resolveOptions defaults', () => {
   test('development enables tooling and disables masking', () => {
     const o = resolveOptions({}, '/graphql', 'development');
@@ -89,7 +126,7 @@ describe('GraphQLModule', () => {
         }),
         BlogModule,
       ],
-    }).compile();
+    }).compile({ development: false });
     const app = await mod.createApp();
     try {
       const res = await app.request('GET', '/async', {
@@ -215,3 +252,13 @@ describe('global middleware and guards', () => {
     expect((await s.app.graphql('{ post(id: "p1") { title } }')).status).toBe(429);
   });
 });
+
+@Resolver()
+class DevFlagResolver {
+  @Query(() => Int) one() {
+    return 1;
+  }
+}
+
+@Module({ providers: [DevFlagResolver] })
+class DevFlagModule {}

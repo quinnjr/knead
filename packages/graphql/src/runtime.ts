@@ -459,15 +459,17 @@ export class GraphQLExecutor extends LeavenExecutor {
 
 /** Owns the schema, the Leaven executor and the subscription endpoint. */
 export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
-  readonly options: ResolvedGraphQLOptions = resolveOptions(
-    inject(GRAPHQL_OPTIONS),
-    inject(GRAPHQL_PATH),
-  );
-  readonly pubsub = inject(PUBSUB);
-  readonly logger = inject(LOGGER);
   /** The application's development flag (HTTP_DEVELOPMENT), else NODE_ENV === 'development'. */
   readonly development: boolean =
     inject(HTTP_DEVELOPMENT, { optional: true }) ?? process.env.NODE_ENV === 'development';
+  /** Playground, introspection, masking and emitSchemaFile defaults follow `development`. */
+  readonly options: ResolvedGraphQLOptions = resolveOptions(
+    inject(GRAPHQL_OPTIONS),
+    inject(GRAPHQL_PATH),
+    this.development,
+  );
+  readonly pubsub = inject(PUBSUB);
+  readonly logger = inject(LOGGER);
   readonly #modules = inject(MODULES);
   readonly #ws = inject(WsRegistry);
   #schema: GraphQLSchema | undefined;
