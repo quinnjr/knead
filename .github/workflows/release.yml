@@ -3,23 +3,49 @@ on:
   push:
     tags: ['v*']
 
-permissions:
-  contents: read
-  id-token: write
+# Nothing by default; each job asks for exactly what it needs.
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: 24.21.0
+  BUN_VERSION: 1.4.2
 
 jobs:
-  publish:
+  # Runs every repo script (install, lint, tests, build, pack) with a read-only token and no
+  # OIDC access. Its only output is the tarballs and SBOMs it uploads.
+  build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          node-version: 24
-          cache: pnpm
-      - uses: oven-sh/setup-bun@v2
+          persist-credentials: false
+          # Full history and every branch, so the ancestry gate can see origin/main.
+          fetch-depth: 0
+      - name: Gate on main ancestry
+        run: |
+          git rev-parse --verify --quiet origin/main >/dev/null \
+            || { echo "::error::origin/main was not fetched"; exit 1; }
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) is not on main; refusing to release"
+            exit 1
+          fi
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      # No dependency cache: a poisoned cache must not reach a release build.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          bun-version: 1.4.2
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      # Imports only node: builtins, so it runs before any dependency is installed.
+      - name: Gate on tag matching package versions
+        run: bun scripts/release.ts gate "$GITHUB_REF_NAME"
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm typecheck
@@ -27,10 +53,97 @@ jobs:
       - run: pnpm clean
       - run: pnpm build
       - run: pnpm check:pack
-      # npm trusted publishing (OIDC): no NPM_TOKEN. pnpm exchanges this job's
-      # GitHub OIDC token (`id-token: write` above) for a short-lived publish
-      # token per package, matched against the trusted publisher configured on
-      # npmjs.com (repo quinnjr/high-performance-modular-web-server, workflow
-      # release.yml). Provenance is attached automatically while the repo is
-      # public; npm cannot attest builds from a private repo.
-      - run: pnpm release
+      - name: Pack publishable packages
+        run: bun scripts/release.ts pack "$RUNNER_TEMP/npm-tarballs"
+      - name: Generate CycloneDX SBOMs
+        run: |
+          pnpm --filter './packages/*' sbom --sbom-format cyclonedx --prod --split \
+            --out "$RUNNER_TEMP/sbom/%s-%v.cdx.json"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: npm-tarballs
+          path: ${{ runner.temp }}/npm-tarballs/*.tgz
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom
+          path: ${{ runner.temp }}/sbom/*.cdx.json
+          if-no-files-found: error
+          retention-days: 90
+
+  # Holds the OIDC permission, so it runs no repo code: no checkout, no install, no scripts.
+  # It only publishes the tarballs the build job produced.
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: npm-tarballs
+          path: ${{ runner.temp }}/npm-tarballs
+      - name: Check npm supports trusted publishing
+        run: |
+          npm_version="$(npm --version)"
+          echo "npm $npm_version"
+          if [ "$(printf '%s\n' 11.5.1 "$npm_version" | sort -V | head -1)" != 11.5.1 ]; then
+            echo "::error::npm $npm_version is older than 11.5.1 and cannot publish with OIDC"
+            exit 1
+          fi
+      # npm trusted publishing (OIDC): no NPM_TOKEN. npm exchanges this job's GitHub OIDC token
+      # (`id-token: write`) for a short-lived publish token per package, matched against the
+      # trusted publisher configured on npmjs.com (repo quinnjr/high-performance-modular-web-server,
+      # workflow release.yml). Provenance is attached automatically only while the repo is public.
+      #
+      # Changesets fixed mode gives every package the tag's version. Versions already on npm are
+      # skipped, so a partly failed release can simply be re-run.
+      - name: Publish tarballs
+        working-directory: ${{ runner.temp }}/npm-tarballs
+        run: |
+          set -euo pipefail
+          want="${GITHUB_REF_NAME#v}"
+          shopt -s nullglob
+          tarballs=(*.tgz)
+          if [ "${#tarballs[@]}" -eq 0 ]; then echo "::error::no tarballs to publish"; exit 1; fi
+          # Validate every tarball before publishing any of them.
+          for tgz in "${tarballs[@]}"; do
+            manifest="$(tar -xzOf "$tgz" package/package.json)"
+            name="$(jq -r .name <<<"$manifest")"
+            version="$(jq -r .version <<<"$manifest")"
+            if [[ "$name" != @hpmws/* ]]; then
+              echo "::error::$tgz contains unexpected package $name"; exit 1
+            fi
+            if [ "$version" != "$want" ]; then
+              echo "::error::$name is at $version but the tag is $GITHUB_REF_NAME"; exit 1
+            fi
+          done
+          errlog="$RUNNER_TEMP/npm-stderr.log"
+          for tgz in "${tarballs[@]}"; do
+            manifest="$(tar -xzOf "$tgz" package/package.json)"
+            name="$(jq -r .name <<<"$manifest")"
+            version="$(jq -r .version <<<"$manifest")"
+            if published="$(npm view "$name@$version" version 2>"$errlog")"; then
+              if [ -n "$published" ]; then echo "skip $name@$version (already on npm)"; continue; fi
+            elif ! grep -q E404 "$errlog"; then
+              cat "$errlog"; echo "::error::could not query npm for $name@$version"; exit 1
+            fi
+            case "$version" in
+              *-*) pre="${version#*-}"; dist_tag="${pre%%.*}" ;;
+              *) dist_tag=latest ;;
+            esac
+            echo "publish $name@$version (dist-tag $dist_tag)"
+            if ! npm publish "./$tgz" --access public --tag "$dist_tag" --ignore-scripts 2>"$errlog"; then
+              cat "$errlog"
+              if grep -q 'previously published version' "$errlog"; then
+                echo "skip $name@$version (published concurrently)"; continue
+              fi
+              exit 1
+            fi
+            cat "$errlog"
+          done
