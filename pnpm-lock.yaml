@@ -264,16 +264,16 @@ importers:
   packages/graphql:
     dependencies:
       '@leaven-graphql/core':
-        specifier: ^0.2.1
+        specifier: 0.2.1
         version: 0.2.1(graphql@16.14.2)
       '@leaven-graphql/errors':
-        specifier: ^0.2.1
+        specifier: 0.2.1
         version: 0.2.1(graphql@16.14.2)
       '@leaven-graphql/playground':
-        specifier: ^0.2.1
+        specifier: 0.2.1
         version: 0.2.1
       '@leaven-graphql/ws':
-        specifier: ^0.2.1
+        specifier: 0.2.1
         version: 0.2.1(graphql@16.14.2)
       '@standard-schema/spec':
         specifier: ^1.1.0

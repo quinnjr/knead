@@ -60,4 +60,4 @@ class AppModule {}
 - **Bootstrap:** the schema is built and validated when the application is created. Errors name the class and field, for example `User.posts: type thunk returned undefined — is Post imported?`. In development, `emitSchemaFile` writes sorted SDL to `schema.graphql` by default.
 - **Testing:** `@hpmws/testing` provides `app.graphql(query, { variables })` and `app.graphqlSubscribe(query)`.
 
-`bun add @hpmws/core @hpmws/http @hpmws/graphql graphql` (`@hpmws/core`, `@hpmws/http` and `graphql@^16` are peer dependencies). Leaven is pre-1.0 and is pinned to `^0.2.1`. Licensed MIT OR Apache-2.0.
+`bun add @hpmws/core @hpmws/http @hpmws/graphql graphql` (`@hpmws/core`, `@hpmws/http` and `graphql@^16` are peer dependencies). Leaven is pre-1.0, so its packages are pinned to exactly `0.2.1`. Licensed MIT OR Apache-2.0.
