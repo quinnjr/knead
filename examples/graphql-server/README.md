@@ -96,7 +96,7 @@ pnpm --filter @hpmws/example-graphql-server smoke   # starts the real server and
 REDIS_URL=redis://localhost:6379 pnpm --filter @hpmws/example-graphql-server smoke   # with RedisPubSub
 ```
 
-The smoke test (`scripts/smoke.ts`) spawns `bun src/main.ts` on a free port with `NODE_ENV=development` and `RATE_LIMIT=40`. It checks `/health` (which returns only `{ "status": "ok" }`) and the PubSub engine the server reports at startup, queries, authenticated mutations, the playground and its CSP, security headers, a CORS preflight, a subscription event triggered by a mutation over HTTP, the depth limit, a dropped connection for an oversized WebSocket message, a 429 after the rate limit, and a 403 for a cross-origin WebSocket upgrade. It prints a `PASS`/`FAIL` line per check and exits nonzero on any failure.
+The smoke test (`scripts/smoke.ts`) spawns `bun src/main.ts` on a free port with `NODE_ENV=development` and `RATE_LIMIT=40`. It checks `/health` (which returns only `{ "status": "ok" }`) and the PubSub engine the server reports at startup, queries, authenticated mutations, the playground and its CSP, security headers, a CORS preflight, a subscription event triggered by a mutation over HTTP, the depth limit, a dropped connection for an oversized WebSocket message, a 429 after the rate limit, and a 403 for a cross-origin or `Origin: null` WebSocket upgrade. The server has no WebSocket endpoint besides `/graphql`, so the origin checks run there. It prints a `PASS`/`FAIL` line per check and exits nonzero on any failure.
 
 ## Notes
 

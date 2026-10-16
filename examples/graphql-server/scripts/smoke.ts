@@ -295,6 +295,44 @@ try {
     return `${evil.trim()}; allowed origin: ${allowed.trim()}`;
   });
 
+  await check('a query deeper than maxDepth (10) is rejected with DEPTH_LIMIT', async () => {
+    const nested =
+      'posts { author { posts { author { posts { author { posts { author { posts { author { name } } } } } } } } } }';
+    const { body } = await gql(`{ ${nested} }`);
+    const code = body.errors?.[0]?.extensions?.code;
+    assert(body.data === undefined && code === 'DEPTH_LIMIT', JSON.stringify(body));
+    return code;
+  });
+
+  await check('an oversized WebSocket message (over 64 KiB) drops the connection', async () => {
+    const ws = new WebSocket(`${base.replace('http', 'ws')}/graphql`, 'graphql-transport-ws');
+    let received = false;
+    const code = await new Promise<number>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('socket stayed open')), 5000);
+      ws.onopen = () =>
+        ws.send(JSON.stringify({ type: 'connection_init', payload: { token: 'grace-token' } }));
+      ws.onmessage = (message) => {
+        const msg = JSON.parse(String(message.data)) as { type: string };
+        if (msg.type === 'connection_ack') {
+          const query = `subscription { postPublished { id } }${' '.repeat(70_000)}`;
+          ws.send(JSON.stringify({ id: '1', type: 'subscribe', payload: { query } }));
+        } else if (msg.type !== 'ping') received = true;
+      };
+      ws.onclose = (e) => {
+        clearTimeout(timer);
+        resolve(e.code);
+      };
+    });
+    assert(code !== 1000 && !received, `close code ${code}, received ${received}`);
+    return `closed with ${code}`;
+  });
+
+  await check('a WebSocket upgrade with Origin: null is rejected with 403', async () => {
+    const status = await rawUpgrade('null');
+    assert(status.includes(' 403 '), status);
+    return status.trim();
+  });
+
   await check(`rate limit answers 429 after ${RATE_LIMIT} requests per minute`, async () => {
     for (let i = 0; i <= RATE_LIMIT; i++) {
       const res = await fetch(`${base}/graphql`, {
