@@ -16,7 +16,12 @@ export interface BatchLoader<K, V> {
   readonly options?: DataLoader.Options<K, V>;
 }
 
+/** Phantom key identifying a ResolverCtx (so the @Resolver parent check ignores other methods). */
+declare const RESOLVER_CTX: unique symbol;
+export type ResolverCtxKey = typeof RESOLVER_CTX;
+
 export interface ResolverCtx<A = {}, P = undefined> extends GraphQLContext {
+  readonly [RESOLVER_CTX]?: true;
   args: A;
   parent: P;
   info: GraphQLResolveInfo;

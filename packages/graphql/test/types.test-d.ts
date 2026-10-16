@@ -200,3 +200,28 @@ export class Defaults {
   // @ts-expect-error defaultValue must match the field type
   @Field(() => Int, { defaultValue: 'not a number' }) bad!: number;
 }
+
+@Resolver()
+export class InlineArgDefaults {
+  @Query(() => Int, { args: { first: { type: () => Int, defaultValue: 10 } } })
+  ok(ctx: ResolverCtx<{ first: number }>) {
+    return ctx.args.first;
+  }
+
+  // @ts-expect-error an inline arg defaultValue must match the arg type
+  @Query(() => Int, { args: { first: { type: () => Int, defaultValue: 'ten' } } })
+  bad(ctx: ResolverCtx<{ first: number }>) {
+    return ctx.args.first;
+  }
+}
+
+// An undecorated helper whose first parameter has a `parent` property is not a resolver method.
+@Resolver(() => User)
+export class WithHelper {
+  @ResolveField(() => Int) count(ctx: ResolverCtx<{}, User>) {
+    return this.size({ parent: ctx.parent.name });
+  }
+  size(input: { parent: string }): number {
+    return input.parent.length;
+  }
+}

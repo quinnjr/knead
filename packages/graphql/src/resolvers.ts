@@ -1,6 +1,11 @@
 import { appendMetadata, INJECTABLE, setMetadata } from '@hpmws/core';
 import type { GuardRef } from '@hpmws/http';
-import type { ResolverCtx, SubscriptionCtx, SubscriptionEventKey } from './context.js';
+import type {
+  ResolverCtx,
+  ResolverCtxKey,
+  SubscriptionCtx,
+  SubscriptionEventKey,
+} from './context.js';
 import {
   type ArgMap,
   RESOLVER,
@@ -45,6 +50,25 @@ export interface SubscriptionOptions<A extends ArgMap | Class = {}, N extends Nu
   }) => boolean | Promise<boolean>;
 }
 
+/** Inline argument names whose `defaultValue` is not a value of the argument's type. */
+export type BadArgDefaults<O> = O extends { args: infer A }
+  ? A extends abstract new (
+      ...args: any[]
+    ) => any
+    ? never
+    : {
+        [K in keyof A]: A[K] extends { type: () => infer R; defaultValue: infer D }
+          ? [D] extends [OutType<R, A[K] extends { nullable: infer Nl } ? Nl : false, true>]
+            ? never
+            : K
+          : never;
+      }[keyof A]
+  : never;
+
+type ArgDefaultsCheck<O> = [BadArgDefaults<O>] extends [never]
+  ? unknown
+  : { readonly 'inline argument defaultValue does not match its type': BadArgDefaults<O> };
+
 export type ResolverMethodDecorator<R, O extends ResolverOptions> = <
   This,
   F extends (
@@ -53,7 +77,7 @@ export type ResolverMethodDecorator<R, O extends ResolverOptions> = <
   ) => MaybePromise<OutType<R, O['nullable']>>,
 >(
   method: F,
-  context: ClassMethodDecoratorContext<This, F>,
+  context: ClassMethodDecoratorContext<This, F> & ArgDefaultsCheck<O>,
 ) => void;
 
 export type SubscriptionMethodDecorator<R, O extends { nullable?: Nullable }> = <
@@ -65,25 +89,27 @@ export type SubscriptionMethodDecorator<R, O extends { nullable?: Nullable }> = 
   ) => MaybePromise<OutType<R, O['nullable']> | undefined | void>,
 >(
   method: F,
-  context: ClassMethodDecoratorContext<This, F>,
+  context: ClassMethodDecoratorContext<This, F> & ArgDefaultsCheck<O>,
 ) => void;
 
 /**
  * Names of methods whose ResolverCtx parent is not satisfied by the resolver type T. Methods
- * without a parent (`undefined`, the ResolverCtx default) and subscription methods
- * (SubscriptionCtx) are not checked.
+ * without a parent (`undefined`, the ResolverCtx default), subscription methods
+ * (SubscriptionCtx) and methods whose first parameter is not a ResolverCtx are not checked.
  */
 export type ParentMismatches<I, T> = {
   [K in keyof I]: I[K] extends (ctx: infer C, ...rest: any[]) => any
-    ? SubscriptionEventKey extends keyof C
-      ? never
-      : C extends { parent: infer P }
-        ? [P] extends [undefined]
-          ? never
-          : [T] extends [P]
+    ? ResolverCtxKey extends keyof C
+      ? SubscriptionEventKey extends keyof C
+        ? never
+        : C extends { parent: infer P }
+          ? [P] extends [undefined]
             ? never
-            : K
-        : never
+            : [T] extends [P]
+              ? never
+              : K
+          : never
+      : never
     : never;
 }[keyof I];
 
