@@ -123,6 +123,21 @@ function track<T>(
   return tracked;
 }
 
+/**
+ * A per-operation view of the shared upgrade Ctx: its own empty `state`; everything else
+ * (headers, ip, query, ...) is read from the upgrade Ctx, with methods bound to it.
+ */
+export function operationView(http: Ctx): Ctx {
+  const state: Ctx['state'] = {};
+  return new Proxy(http, {
+    get(target, prop) {
+      if (prop === 'state') return state;
+      const value = Reflect.get(target, prop, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
+
 const asLeavenSocket = (facade: SocketFacade) =>
   facade as unknown as ServerWebSocket<WebSocketContext>;
 
@@ -289,7 +304,13 @@ export function createSubscriptionEndpoint(
       const state = stateOf(socket);
       const pending = requests.get(request);
       try {
-        const op = await runtime.createOperationContext(state.http, ['subscription'], state.extra);
+        // Each operation gets its own view of the upgrade Ctx with a fresh `state`, so one
+        // operation's ctx.http.state never leaks into the next.
+        const op = await runtime.createOperationContext(
+          operationView(state.http),
+          ['subscription'],
+          state.extra,
+        );
         op.operationName = request.operationName;
         if (pending) operations.set(op, { state, pending });
         return op;

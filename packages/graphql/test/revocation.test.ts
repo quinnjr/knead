@@ -170,3 +170,41 @@ describe('subscription revocation', () => {
     );
   });
 });
+
+describe('per-operation http state over WebSocket', () => {
+  const marks: unknown[] = [];
+  @Resolver()
+  class Marking {
+    @Query(() => Int) q() {
+      return 1;
+    }
+    @Subscription(() => Int, {
+      topic: 'mark',
+      guards: [
+        (ctx: ResolverCtx) => {
+          marks.push(ctx.http.state.mark);
+          ctx.http.state.mark = 'set by an earlier operation';
+          return true;
+        },
+      ],
+    })
+    mark() {}
+  }
+  @Module({ providers: [Marking] })
+  class MarkingModule {}
+
+  test('ctx.http.state written in one operation is not visible in the next', async () => {
+    marks.length = 0;
+    s = await startGraphQL([MarkingModule]);
+    const socket = open(s);
+    await socket.acked;
+    for (const id of ['a', 'b']) {
+      socket.ws.send(
+        JSON.stringify({ id, type: 'subscribe', payload: { query: 'subscription { mark }' } }),
+      );
+    }
+    await until(() => marks.length === 2);
+    expect(marks).toEqual([undefined, undefined]);
+    socket.ws.close();
+  });
+});
