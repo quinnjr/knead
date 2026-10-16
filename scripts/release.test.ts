@@ -3,11 +3,13 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  checkCommitIsRefHead,
   checkReleaseTag,
   checkRepositoryFields,
   checkVersionAtRef,
   publishablePackages,
   REPOSITORY_URL,
+  revParse,
   versionsAtRef,
 } from './release';
 
@@ -223,5 +225,42 @@ describe('release.yml dependency allowlist', () => {
       }),
     );
     expect(allowed).toEqual(actual);
+  });
+});
+
+describe('checkCommitIsRefHead', () => {
+  const a = 'a'.repeat(40);
+  const b = 'b'.repeat(40);
+
+  test('passes when the commit is the head of the ref', () => {
+    expect(checkCommitIsRefHead(a, a, 'origin/main')).toEqual([]);
+  });
+
+  test('fails for any other commit, such as an older main commit', () => {
+    expect(checkCommitIsRefHead(a, b, 'origin/main')).toEqual([
+      `the tagged commit ${a} is not the head of origin/main (${b}); tag main's HEAD`,
+    ]);
+  });
+
+  test('fails when the ref cannot be resolved', () => {
+    expect(checkCommitIsRefHead(a, undefined, 'origin/main')).toEqual([
+      'origin/main could not be resolved',
+    ]);
+  });
+});
+
+describe('revParse', () => {
+  test('resolves a ref to its commit, and undefined for an unknown ref', () => {
+    const root = workspace({ core: pkg('@hpmws/core', '1.0.0') });
+    const git = (...args: string[]) => {
+      const r = Bun.spawnSync(['git', ...args], { cwd: root, stdout: 'pipe', stderr: 'pipe' });
+      if (r.exitCode !== 0) throw new Error(r.stderr.toString());
+      return r.stdout.toString().trim();
+    };
+    git('init', '-q', '-b', 'main');
+    git('add', '.');
+    git('-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-qm', 'one');
+    expect(revParse(root, 'main')).toBe(git('rev-parse', 'HEAD'));
+    expect(revParse(root, 'no-such-ref')).toBeUndefined();
   });
 });

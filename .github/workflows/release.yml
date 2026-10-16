@@ -80,8 +80,8 @@ jobs:
             echo "::error::bun is $(bun --revision), expected $BUN_REVISION"; exit 1
           fi
       # Imports only node: builtins, so it runs before any dependency is installed. Also requires
-      # the tag's version to equal the version at origin/main HEAD, so an old main commit
-      # cannot be released.
+      # the tagged commit (GITHUB_SHA) to be origin/main's HEAD and the tag's version to equal the
+      # version there, so only the tip of main can be released.
       - name: Gate on tag matching package versions
         run: bun scripts/release.ts gate "$GITHUB_REF_NAME"
       - run: pnpm install --frozen-lockfile

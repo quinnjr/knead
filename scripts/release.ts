@@ -3,7 +3,9 @@
 //   bun scripts/release.ts gate <tag> [ref]  fail unless <tag> is vX.Y.Z and equals the version
 //                                            of every publishable package (Changesets fixed mode),
 //                                            both in the checkout and at <ref> (default
-//                                            origin/main), so only main's HEAD can be released
+//                                            origin/main), so only main's HEAD can be released;
+//                                            and the tagged commit ($GITHUB_SHA, else HEAD)
+//                                            must be the head of <ref>
 //   bun scripts/release.ts pack <out-dir>    pack every publishable package into <out-dir>
 //
 // Both commands also fail unless every publishable package's `repository` names this repository
@@ -110,6 +112,31 @@ export function checkVersionAtRef(
     );
 }
 
+/** The commit `ref` points at, or undefined when it cannot be resolved. */
+export function revParse(root: string, ref: string): string | undefined {
+  const r = Bun.spawnSync(['git', 'rev-parse', '--verify', '--quiet', `${ref}^{commit}`], {
+    cwd: root,
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+  return r.exitCode === 0 ? r.stdout.toString().trim() : undefined;
+}
+
+/**
+ * Problems that block releasing commit `sha` because it is not the head of `ref`. Together with
+ * checkVersionAtRef this means only the tip of main can ever be released.
+ */
+export function checkCommitIsRefHead(
+  sha: string,
+  refHead: string | undefined,
+  ref: string,
+): string[] {
+  if (refHead === undefined) return [`${ref} could not be resolved`];
+  if (sha !== refHead)
+    return [`the tagged commit ${sha} is not the head of ${ref} (${refHead}); tag main's HEAD`];
+  return [];
+}
+
 /** Problems with the packages' `repository` fields; empty when all point at this repository. */
 export function checkRepositoryFields(
   packages: readonly Pick<PublishablePackage, 'name' | 'relativeDir' | 'repository'>[],
@@ -170,6 +197,11 @@ if (import.meta.main) {
     const problems = [
       ...checkReleaseTag(arg, packages),
       ...checkVersionAtRef(arg, ref, versionsAtRef(root, ref, packages)),
+      ...checkCommitIsRefHead(
+        process.env.GITHUB_SHA || revParse(root, 'HEAD') || 'HEAD',
+        revParse(root, ref),
+        ref,
+      ),
       ...checkRepositoryFields(packages),
     ];
     if (problems.length > 0) fail('release gate', [...new Set(problems)]);
