@@ -273,16 +273,12 @@ export function createSubscriptionEndpoint(
       if (runtime.options.context) {
         try {
           state.base = await runtime.options.context(state.http);
-        } catch (error) {
-          logInternalError(
-            runtime.masking,
-            'GraphQL context factory threw on connection_init; rejecting the connection',
-            error,
-          );
-          accepted = false;
+        } catch {
+          // Every operation calls the factory again and reports the failure as a masked error
+          // (logged there), so the connection itself is not rejected here.
         }
       }
-      if (accepted && options.onConnect) {
+      if (options.onConnect) {
         try {
           const result = await options.onConnect(state.http, params ?? {});
           if (result === false) accepted = false;
