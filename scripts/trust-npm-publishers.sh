@@ -59,8 +59,9 @@ packages=$(cd "$root" && node -e '
 
 # Run npm outside pnpm's configuration: `pnpm run` exports its settings as
 # npm_config_* variables (including a globalconfig pointing at pnpm's config),
-# and the repo .npmrc holds pnpm-only keys. npm warns about every one of them.
-# The npm login in ~/.npmrc is still read.
+# and npm warns about every key it does not know. npm also runs from an empty
+# temporary directory, so no project-level config is picked up. The npm login
+# in ~/.npmrc is still read.
 while IFS= read -r var; do unset "$var"; done < <(env | grep -io '^npm_config_[^=]*' || true)
 workdir="$(mktemp -d)"
 trap 'rm -rf "$workdir"' EXIT
