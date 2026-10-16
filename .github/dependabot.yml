@@ -10,6 +10,11 @@ updates:
       default-days: 1
     commit-message:
       prefix: build(deps)
+    ignore:
+      # Leaven (@leaven-graphql/*) declares graphql ^16 as a peer; a new graphql major can only
+      # land once Leaven supports it. Remove this entry when it does.
+      - dependency-name: graphql
+        update-types: ['version-update:semver-major']
     groups:
       production:
         dependency-type: production
