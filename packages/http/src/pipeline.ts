@@ -49,9 +49,10 @@ export function composeMiddleware(
   return (ctx) => dispatch(0, ctx);
 }
 
+/** A guard passes only when it returns (or resolves to) exactly `true`; anything else is 403. */
 export async function runGuards(guards: readonly Guard<any>[], ctx: RequestContext): Promise<void> {
   for (const guard of guards) {
-    if (!(await guard.canActivate(ctx))) throw new ForbiddenException();
+    if ((await guard.canActivate(ctx)) !== true) throw new ForbiddenException();
   }
 }
 

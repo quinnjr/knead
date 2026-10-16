@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Module } from '@hpmws/core';
 import type { HttpApplication } from '../src/application.js';
-import { Controller, Post } from '../src/decorators.js';
+import { Controller, createRouteDecorator, Get, Post, UseGuards } from '../src/decorators.js';
 import type { Ctx } from '../src/types.js';
-import { start } from './helpers.js';
+import { makeCtx, start } from './helpers.js';
 
 let app: HttpApplication | undefined;
 afterEach(async () => {
@@ -40,5 +40,52 @@ describe('request body limit', () => {
       body: 'x'.repeat(1024 * 1024 + 1),
     });
     expect(res.status).toBe(200);
+  });
+});
+
+describe('guards', () => {
+  test('only a strict true passes; truthy values are denied', async () => {
+    const results: unknown[] = [1, 'yes', {}, [], Promise.resolve('true')];
+    let next: unknown;
+    @Controller('/guarded')
+    class Guarded {
+      @Get('/')
+      @UseGuards(() => next as boolean)
+      get() {
+        return 'ok';
+      }
+    }
+    @Module({ controllers: [Guarded] })
+    class M {}
+    app = await start(M);
+    const url = new URL('/guarded', app.url);
+    for (const value of results) {
+      next = value;
+      expect((await fetch(url)).status).toBe(403);
+    }
+    next = true;
+    expect((await fetch(url)).status).toBe(200);
+  });
+
+  test('ctx.meta aliases the route metadata, and is an empty frozen object without a route', async () => {
+    const Roles = createRouteDecorator<string[]>('roles');
+    let seen: unknown;
+    @Controller('/meta')
+    class Meta {
+      @Get('/')
+      @Roles(['admin'])
+      get(ctx: Ctx) {
+        seen = ctx.meta;
+        return 'ok';
+      }
+    }
+    @Module({ controllers: [Meta] })
+    class M {}
+    app = await start(M);
+    await fetch(new URL('/meta', app.url));
+    expect(seen).toEqual({ roles: ['admin'] });
+    const bare = makeCtx('/nowhere');
+    expect(bare.meta).toEqual({});
+    expect(Object.isFrozen(bare.meta)).toBe(true);
   });
 });

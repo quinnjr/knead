@@ -6,6 +6,19 @@ HTTP(S) for hpmws: `@Controller` and `@Get`/`@Post`/… compiled into Bun's nati
 const BearerGuard = (ctx: Ctx) => ctx.upgrade !== null || isValidToken(ctx.req.headers.get('authorization'));
 ```
 
+A guard passes only when it returns (or resolves to) exactly `true`; any other value, truthy or not, is a 403. `ctx.meta` is the matched route's metadata (`ctx.route?.meta`, from `createRouteDecorator()` and the `meta` option), or an empty frozen object on unmatched requests and upgrades. GraphQL resolver contexts expose the same `ctx.meta`, so one role guard works on routes and resolvers. Deny when required roles are present but unmet:
+
+```ts
+const Roles = createRouteDecorator<string[]>('roles');
+
+const RolesGuard = (ctx: Ctx) => {
+  const required = ctx.meta.roles as string[] | undefined;
+  if (!required?.length) return true;
+  const roles = currentUser(ctx)?.roles ?? []; // no user: no roles, so denied
+  return required.some((role) => roles.includes(role));
+};
+```
+
 Request bodies are capped at 1 MiB by default; larger bodies are answered with 413. Raise or lower the cap with `listen({ maxRequestBodySize })` (bytes).
 
 `reloadTls()` hot-swaps certificates via `SO_REUSEPORT` and is Linux-only.

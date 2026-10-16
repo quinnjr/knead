@@ -47,11 +47,17 @@ export class AuthGuard implements Guard {
 
 export const Roles = createRouteDecorator<string[]>('roles');
 
+/**
+ * Reads @Roles() through `ctx.meta`. When roles are required, it denies unless the authenticated
+ * user holds one of them (no user, or no matching role, is a 403).
+ */
 export class RolesGuard implements Guard {
   canActivate(ctx: Ctx): boolean {
-    const required = ctx.route?.meta.roles as string[] | undefined;
-    if (!required?.length) return true;
-    return required.some((role) => ctx.state.user?.roles.includes(role));
+    const required = ctx.meta.roles as readonly string[] | undefined;
+    if (required === undefined || required.length === 0) return true;
+    const user = ctx.state.user;
+    if (!user) return false;
+    return required.some((role) => user.roles.includes(role));
   }
 }
 

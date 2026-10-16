@@ -9,6 +9,8 @@ export interface NetConfig {
   tls: boolean;
 }
 
+const EMPTY_META: Readonly<Record<PropertyKey, unknown>> = Object.freeze({});
+
 export class RequestContext implements Ctx<any> {
   params: any;
   body: unknown = undefined;
@@ -29,6 +31,10 @@ export class RequestContext implements Ctx<any> {
     readonly upgrade: UpgradeInfo | null = null,
   ) {
     this.params = (req as BunRequest).params ?? {};
+  }
+
+  get meta(): Readonly<Record<PropertyKey, unknown>> {
+    return this.route?.meta ?? EMPTY_META;
   }
 
   get query(): any {
