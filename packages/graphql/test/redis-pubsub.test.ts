@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { inject, Module } from '@hpmws/core';
+import { MemoryLogger } from '@hpmws/http';
 import { RedisClient } from 'bun';
 import {
   Mutation,
@@ -34,6 +35,23 @@ describe.skipIf(!url)('RedisPubSub', () => {
     expect(received).toEqual([{ n: 1 }]);
     off();
     await until(async () => (await channelSubscribers('t')) === 0);
+    await pubsub.close();
+  });
+
+  test('a topic unsubscribed while SUBSCRIBE is in flight delivers each event once', async () => {
+    const logger = new MemoryLogger();
+    const pubsub = new RedisPubSub({ url, prefix, logger });
+    pubsub.subscribe('race', () => {})(); // unsubscribe before Redis confirmed the SUBSCRIBE
+    const received: unknown[] = [];
+    const off = pubsub.subscribe('race', (p) => received.push(p));
+    await until(async () => (await channelSubscribers('race')) === 1);
+    await pubsub.publish('race', { n: 1 });
+    await until(() => received.length === 1);
+    await Bun.sleep(50);
+    expect(received).toEqual([{ n: 1 }]);
+    expect(logger.entries.filter((e) => e.level !== 'info')).toEqual([]);
+    off();
+    await until(async () => (await channelSubscribers('race')) === 0);
     await pubsub.close();
   });
 

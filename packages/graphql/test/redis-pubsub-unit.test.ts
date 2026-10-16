@@ -60,4 +60,52 @@ describe('RedisPubSub failure handling', () => {
     await until(() => fake.subscribed.includes('hpmws:gql:a'));
     await pubsub.close();
   });
+
+  test('unsubscribing while SUBSCRIBE is in flight waits for it, so Redis never holds two', async () => {
+    // Mimics Bun's RedisClient: UNSUBSCRIBE outside subscriber mode throws, and each SUBSCRIBE
+    // call registers another message handler for the channel.
+    const ops: string[] = [];
+    const handlers = new Map<string, ((message: string) => void)[]>();
+    let release: (() => void) | undefined;
+    const subscriber = {
+      subscribe: async (channel: string, handler: (message: string) => void) => {
+        ops.push(`subscribe ${channel}`);
+        if (!release) await new Promise<void>((resolve) => (release = resolve));
+        handlers.set(channel, [...(handlers.get(channel) ?? []), handler]);
+        return 1;
+      },
+      unsubscribe: async (channel: string) => {
+        if (!handlers.has(channel)) throw new Error('not in subscriber mode');
+        ops.push(`unsubscribe ${channel}`);
+        handlers.delete(channel);
+      },
+      close: () => {},
+    };
+    const client = {
+      duplicate: async () => subscriber,
+      publish: async (channel: string, message: string) => {
+        for (const handler of handlers.get(channel) ?? []) handler(message);
+        return 1;
+      },
+      close: () => {},
+    } as unknown as RedisClient;
+    const logger = new MemoryLogger();
+    const pubsub = new RedisPubSub({ client, logger });
+    const off = pubsub.subscribe('t', () => {});
+    await until(() => ops.length === 1);
+    off();
+    const received: unknown[] = [];
+    pubsub.subscribe('t', (payload) => received.push(payload));
+    release?.();
+    await until(() => ops.length === 3);
+    expect(ops).toEqual([
+      'subscribe hpmws:gql:t',
+      'unsubscribe hpmws:gql:t',
+      'subscribe hpmws:gql:t',
+    ]);
+    await pubsub.publish('t', { n: 1 });
+    expect(received).toEqual([{ n: 1 }]);
+    expect(logger.entries.filter((e) => e.level !== 'info')).toEqual([]);
+    await pubsub.close();
+  });
 });

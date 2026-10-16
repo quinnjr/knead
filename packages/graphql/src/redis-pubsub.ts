@@ -29,6 +29,14 @@ export class RedisPubSub implements PubSubEngine {
   readonly #owned: boolean;
   readonly #prefix: string;
   readonly #topics = new Map<string, Set<Listener>>();
+  /**
+   * Per-topic queue of Redis SUBSCRIBE/UNSUBSCRIBE calls. They run one after another, so an
+   * UNSUBSCRIBE never overtakes the SUBSCRIBE it undoes (which would leave the channel
+   * subscribed, and a later SUBSCRIBE would then register a second handler).
+   */
+  readonly #redisOps = new Map<string, Promise<void>>();
+  /** Listener sets whose Redis SUBSCRIBE succeeded (and so need an UNSUBSCRIBE). */
+  readonly #subscribed = new WeakSet<Set<Listener>>();
   #logger: Logger;
   #explicitLogger: boolean;
   #subscriber: Promise<RedisClient> | undefined;
@@ -55,9 +63,10 @@ export class RedisPubSub implements PubSubEngine {
     if (this.#closed) throw new Error('RedisPubSub is closed.');
     let listeners = this.#topics.get(topic);
     if (!listeners) {
-      listeners = new Set();
-      this.#topics.set(topic, listeners);
-      void this.#redisSubscribe(topic, listeners);
+      const created = new Set<Listener>();
+      this.#topics.set(topic, created);
+      this.#enqueue(topic, () => this.#redisSubscribe(topic, created));
+      listeners = created;
     }
     const listener: Listener = { callback, onError };
     listeners.add(listener);
@@ -65,13 +74,7 @@ export class RedisPubSub implements PubSubEngine {
     return () => {
       if (!own.delete(listener) || own.size > 0 || this.#topics.get(topic) !== own) return;
       this.#topics.delete(topic);
-      const subscriber = this.#subscriber;
-      if (!subscriber) return;
-      void subscriber
-        .then((s) => s.unsubscribe(this.#prefix + topic))
-        .catch((error) =>
-          this.#logger.warn(`RedisPubSub failed to unsubscribe from ${topic}`, error),
-        );
+      this.#enqueue(topic, () => this.#redisUnsubscribe(topic, own));
     };
   }
 
@@ -90,6 +93,27 @@ export class RedisPubSub implements PubSubEngine {
     if (this.#owned) this.#publisher.close();
   }
 
+  /** Runs `op` after the topic's earlier Redis calls; `op` handles its own errors. */
+  #enqueue(topic: string, op: () => Promise<void>): void {
+    const next = (this.#redisOps.get(topic) ?? Promise.resolve()).then(op);
+    this.#redisOps.set(topic, next);
+    void next.then(() => {
+      if (this.#redisOps.get(topic) === next) this.#redisOps.delete(topic);
+    });
+  }
+
+  async #redisUnsubscribe(topic: string, listeners: Set<Listener>): Promise<void> {
+    // Nothing to undo when the SUBSCRIBE failed.
+    const subscriber = this.#subscriber;
+    if (this.#closed || !subscriber || !this.#subscribed.delete(listeners)) return;
+    try {
+      await (await subscriber).unsubscribe(this.#prefix + topic);
+    } catch (error) {
+      if (!this.#closed)
+        this.#logger.warn(`RedisPubSub failed to unsubscribe from ${topic}`, error);
+    }
+  }
+
   #subscriberClient(): Promise<RedisClient> {
     if (!this.#subscriber) {
       const pending = this.#publisher.duplicate();
@@ -103,6 +127,7 @@ export class RedisPubSub implements PubSubEngine {
   }
 
   async #redisSubscribe(topic: string, listeners: Set<Listener>): Promise<void> {
+    if (this.#closed) return;
     try {
       const subscriber = await this.#subscriberClient();
       await subscriber.subscribe(this.#prefix + topic, (message) => {
@@ -121,7 +146,9 @@ export class RedisPubSub implements PubSubEngine {
           }
         }
       });
+      this.#subscribed.add(listeners);
     } catch (error) {
+      if (this.#closed) return;
       this.#logger.error(`RedisPubSub failed to subscribe to ${topic}`, error);
       if (this.#topics.get(topic) === listeners) this.#topics.delete(topic);
       const failure = error instanceof Error ? error : new Error(String(error));
