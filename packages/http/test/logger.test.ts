@@ -131,6 +131,16 @@ describe('redactCredentials', () => {
     ],
     ['authorization: Bearer eyJhbGciOi.J9.x-_~+/=', 'authorization: Bearer ***'],
     ['Authorization: Basic dXNlcjpwYXNz', 'Authorization: Basic ***'],
+    ['authorization: bearer abc.def', 'authorization: bearer ***'],
+    ['AUTHORIZATION: BASIC dXNlcg==', 'AUTHORIZATION: BASIC ***'],
+    // Prefixed and suffixed keys, any case.
+    ['?access_token=at1&x=1', '?access_token=***&x=1'],
+    ['client_secret=cs1 client_id=pub', 'client_secret=*** client_id=pub'],
+    ['#id_token=eyJ.x.y&state=s', '#id_token=***&state=s'],
+    ['DB_PASSWORD=hunter2 DB_HOST=db', 'DB_PASSWORD=*** DB_HOST=db'],
+    ['PGPASSWORD=pg1;PGHOST=db', 'PGPASSWORD=***;PGHOST=db'],
+    ['x.Refresh-Token=r1', 'x.Refresh-Token=***'],
+    ['note=fine total=3', 'note=fine total=3'],
   ])('%s', (input, expected) => {
     expect(redactCredentials(input)).toBe(expected);
   });
@@ -151,6 +161,11 @@ describe('redactCredentials performance', () => {
     ['a='.repeat(MB / 2)],
     [`${'apikey'.repeat(MB / 6)}=`],
     ['Bearer\t'.repeat(MB / 7)],
+    [`${'_a'.repeat(MB / 2)}=`],
+    ['abcd='.repeat(MB / 5)],
+    ['token='.repeat(MB / 6)],
+    [`${'x'.repeat(MB - 1)}=`],
+    ['bearer '.repeat(MB / 7)],
   ])('pathological input %#: 1 MB in well under 50 ms', (input) => {
     redactCredentials(input.slice(0, 1000)); // warm up the regex
     const started = performance.now();

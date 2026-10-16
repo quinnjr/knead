@@ -15,11 +15,58 @@ const HOST_THEN_PATH = /[^:/@\s"'<>]+(?::\d*)?\//y;
 const USERINFO_WINDOW = 1024;
 /** Longest scheme recognized, in characters. */
 const MAX_SCHEME = 32;
-/** `password=…`-style pairs, in query strings and key=value connection strings. */
-const SECRET_PAIRS =
-  /\b(password|passwd|pwd|secret|token|apikey|api_key|accountkey|sslpassword)=[^&;\s]+/gi;
+/** Key words that mark a `key=value` pair as secret, anywhere in the (lowercased) key. */
+const SECRET_KEY = /password|passwd|pwd|secret|token|apikey|api_key|accountkey/i;
+/** Longest key looked at before an `=`, in characters. */
+const MAX_KEY_LENGTH = 64;
+
+/** `[A-Za-z0-9_.-]`: the characters of a key in `key=value`. */
+function isKeyChar(code: number): boolean {
+  const lower = code | 0x20;
+  return (
+    (lower >= 0x61 && lower <= 0x7a) ||
+    (code >= 0x30 && code <= 0x39) ||
+    code === 0x5f ||
+    code === 0x2e ||
+    code === 0x2d
+  );
+}
+
+/** `&`, `;` and whitespace end a value. */
+const VALUE_END = /[&;\s]/g;
+
+/**
+ * Redacts the values of `key=value` pairs whose key contains a secret key word, case-insensitive
+ * and with any prefix or suffix (`access_token=`, `client_secret=`, `DB_PASSWORD=`,
+ * `PGPASSWORD=`). Every `=` is found with indexOf and its key read backwards (at most 64
+ * characters), so the work is linear.
+ */
+function redactSecretPairs(text: string): string {
+  let out = '';
+  let copied = 0;
+  for (let eq = text.indexOf('='); eq !== -1; ) {
+    let start = eq;
+    while (start > 0 && eq - start < MAX_KEY_LENGTH && isKeyChar(text.charCodeAt(start - 1)))
+      start--;
+    let next = eq + 1;
+    // The shortest key word ('pwd') has 3 characters; shorter keys need no further look.
+    if (eq - start >= 3 && SECRET_KEY.test(text.slice(start, eq))) {
+      VALUE_END.lastIndex = eq + 1;
+      const end = VALUE_END.exec(text)?.index ?? text.length;
+      if (end > eq + 1) {
+        out += `${text.slice(copied, eq + 1)}***`;
+        copied = end;
+        next = end;
+      }
+    }
+    eq = text.indexOf('=', next);
+  }
+  return copied === 0 ? text : out + text.slice(copied);
+}
+
 /** HTTP Authorization credentials. */
-const AUTH_SCHEMES = /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/g;
+const AUTH_SCHEMES = /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi;
+const AUTH_HINT = /bearer|basic/i;
 
 /** Whitespace, quotes and angle brackets end a URL token. */
 const STOP = /[\s"'<>]/g;
@@ -91,9 +138,10 @@ function redactUrls(text: string): string {
 
 /**
  * Replaces credentials with `***`: URL userinfo (`redis://user:pass@host` becomes
- * `redis://***@host`), `password=`/`pwd=`/`secret=`/`token=`/`apikey=`/`api_key=`/
- * `accountkey=`/`sslpassword=` values in query strings and key=value connection strings, and
- * `Bearer`/`Basic` credentials. The userinfo runs to the LAST `@` within the first 1024
+ * `redis://***@host`), values of `key=value` pairs (query strings, connection strings, env
+ * dumps) whose key contains password/passwd/pwd/secret/token/apikey/api_key/accountkey in any
+ * case and with any prefix or suffix (`access_token=`, `DB_PASSWORD=`), and `Bearer`/`Basic`
+ * credentials in any case. The userinfo runs to the LAST `@` within the first 1024
  * characters of the URL, since passwords often contain unencoded `@` or `/`. Only http(s) URLs
  * starting `host[:port]/` are exempt (an `@` there is in the path), and credential URLs nested
  * inside them are still redacted. Passwords with spaces or quotes cannot appear unencoded in a
@@ -102,8 +150,8 @@ function redactUrls(text: string): string {
  */
 export function redactCredentials(text: string): string {
   let out = redactUrls(text);
-  if (out.includes('=')) out = out.replace(SECRET_PAIRS, '$1=***');
-  if (out.includes('Bearer') || out.includes('Basic')) out = out.replace(AUTH_SCHEMES, '$1 ***');
+  if (out.includes('=')) out = redactSecretPairs(out);
+  if (AUTH_HINT.test(out)) out = out.replace(AUTH_SCHEMES, '$1 ***');
   return out;
 }
 
