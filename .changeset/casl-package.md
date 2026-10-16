@@ -5,4 +5,4 @@
 
 Add `@knead-js/casl`: CASL authorization module (permission catalog first).
 
-`@knead-js/graphql`: add a `mapError` option that maps errors thrown by resolver code to an `HttpException` before masking.
+`@knead-js/graphql`: add a `mapError` option that maps errors thrown by resolver code to an `HttpException` before masking, and `@UseFieldGuards()` field guards on object types (`FIELD_GUARDS` route-meta key).
