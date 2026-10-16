@@ -19,7 +19,15 @@ import {
   ROUTE_META,
   WsRegistry,
 } from '@hpmws/http';
-import { type CompilerOptions, type ExecutionHooks, LeavenExecutor } from '@leaven-graphql/core';
+import {
+  type CompilerOptions,
+  type ExecutionHooks,
+  type ExecutionResult,
+  type GraphQLRequest,
+  type GraphQLResponse,
+  LeavenExecutor,
+  type SubscriptionIterator,
+} from '@leaven-graphql/core';
 import { type ErrorCode, LeavenError } from '@leaven-graphql/errors';
 import type { StandardSchemaV1 } from '@standard-schema/spec';
 import {
@@ -215,6 +223,49 @@ export function buildHooks(
   };
 }
 
+const OPERATION_NOT_FOUND = /^Operation "(.*)" not found(?: in document)?$/;
+
+/**
+ * Leaven's query compiler reports a missing or unknown operation as INTERNAL_ERROR; these are
+ * client mistakes, so they are reported as graphql-js does, with BAD_USER_INPUT.
+ */
+export function normalizeResponse<T>(response: GraphQLResponse<T>): GraphQLResponse<T> {
+  if (!response.errors?.some((e) => e.extensions?.code === 'INTERNAL_ERROR')) return response;
+  const errors = response.errors.map((error) => {
+    if (error.extensions?.code !== 'INTERNAL_ERROR') return error;
+    const named = OPERATION_NOT_FOUND.exec(error.message);
+    const message =
+      error.message === 'No operation found in document'
+        ? 'Must provide operation name if query contains multiple operations.'
+        : named
+          ? `Unknown operation named "${named[1]}".`
+          : undefined;
+    return message
+      ? { ...error, message, extensions: { ...error.extensions, code: 'BAD_USER_INPUT' } }
+      : error;
+  });
+  return { ...response, errors };
+}
+
+/** LeavenExecutor whose request-level errors are normalized (used for HTTP and WebSocket). */
+export class GraphQLExecutor extends LeavenExecutor {
+  override async execute<TData = Record<string, unknown>, TContext = unknown>(
+    request: GraphQLRequest,
+    context?: TContext,
+  ): Promise<ExecutionResult<TData>> {
+    const result = await super.execute<TData, TContext>(request, context);
+    return { ...result, response: normalizeResponse(result.response) };
+  }
+
+  override async subscribe<TData = Record<string, unknown>, TContext = unknown>(
+    request: GraphQLRequest,
+    context?: TContext,
+  ): Promise<SubscriptionIterator<TData> | GraphQLResponse<TData>> {
+    const result = await super.subscribe<TData, TContext>(request, context);
+    return Symbol.asyncIterator in result ? result : normalizeResponse(result);
+  }
+}
+
 /** Owns the schema, the Leaven executor and the subscription endpoint. */
 export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
   readonly options: ResolvedGraphQLOptions = resolveOptions(
@@ -252,7 +303,7 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
     this.#schema = this.#build();
     const calculator = complexityCalculator(this.#schema);
     const { compilerOptions, hooks, ...executor } = this.options.executor;
-    this.#executor = new LeavenExecutor({
+    this.#executor = new GraphQLExecutor({
       ...executor,
       schema: this.#schema,
       introspection: this.options.introspection,

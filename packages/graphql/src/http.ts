@@ -88,8 +88,6 @@ function jsonParam(params: URLSearchParams, name: string): unknown {
   }
 }
 
-const INTERNAL_CODES = new Set(['INTERNAL_SERVER_ERROR', 'INTERNAL_ERROR']);
-
 async function execute(
   runtime: GraphQLRuntime,
   ctx: Ctx,
@@ -109,10 +107,11 @@ async function execute(
   }
   const graphqlJson = prefersGraphQLResponse(ctx.req.headers.get('accept'));
   // application/json: always 200. application/graphql-response+json: no data entry is 400 for
-  // a request error and 500 when the server failed.
+  // a request error and 500 only for a genuine server failure (INTERNAL_SERVER_ERROR; Leaven's
+  // own INTERNAL_ERROR comes from compiling or validating the request).
   let status = 200;
   if (graphqlJson && response.data === undefined) {
-    const internal = response.errors?.some((e) => INTERNAL_CODES.has(String(e.extensions?.code)));
+    const internal = response.errors?.some((e) => e.extensions?.code === 'INTERNAL_SERVER_ERROR');
     status = internal ? 500 : 400;
   }
   return new Response(JSON.stringify(response), {

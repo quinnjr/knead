@@ -69,6 +69,36 @@ describe('operation type checks run on the document Leaven executes', () => {
   });
 });
 
+describe('operation selection errors', () => {
+  for (const options of [{}, { maxComplexity: 100 }]) {
+    const label = JSON.stringify(options);
+    test(`a multi-operation document without operationName is BAD_USER_INPUT (${label})`, async () => {
+      s = await startGraphQL([M], options);
+      const res = await s.app.graphql('query A { n } query B { n }', {
+        headers: { accept: 'application/graphql-response+json' },
+      });
+      expect(res.status).toBe(400);
+      expect(res.errors?.[0]).toMatchObject({
+        message: 'Must provide operation name if query contains multiple operations.',
+        extensions: { code: 'BAD_USER_INPUT' },
+      });
+    });
+
+    test(`an unknown operationName is BAD_USER_INPUT (${label})`, async () => {
+      s = await startGraphQL([M], options);
+      const res = await s.app.graphql('query A { n }', {
+        operationName: 'Nope',
+        headers: { accept: 'application/graphql-response+json' },
+      });
+      expect(res.status).toBe(400);
+      expect(res.errors?.[0]).toMatchObject({
+        message: 'Unknown operation named "Nope".',
+        extensions: { code: 'BAD_USER_INPUT' },
+      });
+    });
+  }
+});
+
 describe('errors outside resolvers are masked', () => {
   test('a throwing execution hook does not leak its message', async () => {
     s = await startGraphQL([M], {
