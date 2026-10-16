@@ -8,6 +8,7 @@ import {
 } from './exceptions.js';
 import type { Logger } from './logger.js';
 import { CATCH } from './metadata.js';
+import { requestUrl } from './request.js';
 import type { ExceptionFilter, Guard, Middleware } from './types.js';
 
 export type Handler = (ctx: RequestContext) => Promise<Response>;
@@ -67,7 +68,7 @@ export function defaultErrorResponse(
   logger: Logger,
   development: boolean,
 ): Response {
-  const instance = new URL(ctx.req.url).pathname;
+  const instance = requestUrl(ctx.req).pathname;
   if (error instanceof HttpException) {
     if (error.status < 500) return problemResponse(error.toProblem(instance), error.headers);
     logger.error(`${error.status} on ${ctx.req.method} ${instance}`, error);

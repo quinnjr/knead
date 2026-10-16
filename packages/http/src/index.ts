@@ -12,6 +12,7 @@ export * from './exceptions.js';
 export * from './logger.js';
 export * from './metadata.js';
 export { formatIp, normalizeIp, parseIp, type TrustProxy } from './net.js';
+export { requestUrl } from './request.js';
 export { withHeaders } from './response.js';
 export * from './tokens.js';
 export type * from './types.js';

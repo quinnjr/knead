@@ -10,6 +10,7 @@ import { type CompiledApp, compileApplication, type RouteTableEntry } from './co
 import { HttpConfigError } from './exceptions.js';
 import { ConsoleLogger, LOGGER, type Logger } from './logger.js';
 import { compileTrust, parseIp, type TrustProxy } from './net.js';
+import { requestUrl } from './request.js';
 import { resolveFilter, resolveGuard, resolveMiddleware } from './resolve.js';
 import { APP_FILTER, APP_GUARD, APP_MIDDLEWARE, HTTP_DEVELOPMENT } from './tokens.js';
 import type { FilterRef, GlobalMiddleware, GuardRef, MiddlewareRef } from './types.js';
@@ -98,7 +99,18 @@ const CANONICAL_HOST =
  * the request's Host is ignored; a port in `host` overrides `httpsPort`.
  */
 export function redirectToHttps(req: Request, httpsPort: number, host?: string): Response {
-  const url = new URL(req.url);
+  if (host === undefined && !URL.canParse(req.url)) {
+    // The Host header did not form a URL, and there is no canonical host to send the client to.
+    return new Response('Invalid Host header', {
+      status: 400,
+      headers: {
+        'content-type': 'text/plain; charset=utf-8',
+        'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff',
+      },
+    });
+  }
+  const url = requestUrl(req);
   url.protocol = 'https:';
   let port = String(httpsPort);
   if (host !== undefined) {

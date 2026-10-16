@@ -26,6 +26,7 @@ import {
   type Handler,
   runGuards,
 } from './pipeline.js';
+import { requestUrl } from './request.js';
 import { resolveFilter, resolveGuard, resolveMiddleware } from './resolve.js';
 import { toResponse } from './response.js';
 import type { ExceptionFilter, Guard, HttpMethod, Middleware, RouteInfo } from './types.js';
@@ -268,7 +269,7 @@ export function compileApplication(input: CompileInput): CompiledApp {
 
   const unmatched: Handler = async (ctx) => {
     try {
-      const pathname = new URL(ctx.req.url).pathname;
+      const pathname = requestUrl(ctx.req).pathname;
       const methods = new Set<string>();
       for (const { matcher, methods: m } of allowed.values()) {
         if (matcher.test(pathname)) for (const x of m) methods.add(x);
@@ -289,7 +290,7 @@ export function compileApplication(input: CompileInput): CompiledApp {
   const fetch: BunHandler = async (req, server) => {
     checkForwarded(req);
     if (isUpgrade(req)) {
-      const pathname = new URL(req.url).pathname;
+      const pathname = requestUrl(req).pathname;
       const ws = wsHandlers.get(pathname);
       if (ws) return runUpgrade(pathname, ws, req, server, net);
     }

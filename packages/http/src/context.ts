@@ -1,6 +1,6 @@
 import type { BunRequest, Server } from 'bun';
 import { type CompiledTrust, resolveClientIp, resolveSecure } from './net.js';
-import { headersToObject, parseBody, parseQuery } from './request.js';
+import { headersToObject, parseBody, parseQuery, requestUrl } from './request.js';
 import type { Ctx, ResponseDraft, RouteInfo, UpgradeInfo } from './types.js';
 
 export interface NetConfig {
@@ -38,7 +38,7 @@ export class RequestContext implements Ctx<any> {
   }
 
   get query(): any {
-    this.#query ??= parseQuery(new URL(this.req.url).searchParams);
+    this.#query ??= parseQuery(requestUrl(this.req).searchParams);
     return this.#query;
   }
   set query(value: any) {
