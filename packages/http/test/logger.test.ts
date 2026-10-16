@@ -314,3 +314,12 @@ describe('redactValue robustness', () => {
     }
   });
 });
+
+test('redactValue walks own Symbol keys', () => {
+  const key = Symbol('conn');
+  const out = redactValue({ [key]: 'redis://u:p@h', plain: 1 }) as Record<PropertyKey, unknown>;
+  expect(out[key]).toBe('redis://***@h');
+  expect(out.plain).toBe(1);
+  const error = Object.assign(new Error('x'), { [key]: 'postgres://a:b@db' });
+  expect(redactValue(error) as string).not.toContain('a:b@');
+});

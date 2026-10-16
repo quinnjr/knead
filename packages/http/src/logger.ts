@@ -196,18 +196,26 @@ function isPlainObject(value: object): boolean {
 
 const UNREADABLE = '[unreadable]';
 
-/** Own enumerable properties, each read on its own: a throwing getter becomes '[unreadable]'. */
-function readProps(value: object, state: Walk): [string, unknown][] {
-  let keys: string[];
+/**
+ * Own enumerable properties, string and Symbol keys alike, each read on its own: a throwing
+ * getter becomes '[unreadable]'.
+ */
+function readProps(value: object, state: Walk): [PropertyKey, unknown][] {
+  let keys: PropertyKey[];
   try {
-    keys = Object.keys(value);
+    keys = [
+      ...Object.keys(value),
+      ...Object.getOwnPropertySymbols(value).filter((symbol) =>
+        Object.prototype.propertyIsEnumerable.call(value, symbol),
+      ),
+    ];
   } catch {
     state.changed = true;
     return [[UNREADABLE, UNREADABLE]];
   }
   return keys.map((key) => {
     try {
-      return [key, (value as Record<string, unknown>)[key]];
+      return [key, (value as Record<PropertyKey, unknown>)[key]];
     } catch {
       state.changed = true;
       return [key, UNREADABLE];
@@ -245,10 +253,12 @@ interface Walk {
 function ownProps(
   error: Error,
   state: Walk = { changed: false, seen: new WeakSet() },
-): [string, unknown][] {
-  const entries = readProps(error, state).filter(([key]) => !ERROR_TEXT_KEYS.has(key));
+): [PropertyKey, unknown][] {
+  const entries = readProps(error, state).filter(
+    ([key]) => typeof key !== 'string' || !ERROR_TEXT_KEYS.has(key),
+  );
   // AggregateError keeps `errors` as a non-enumerable own property.
-  if (error instanceof AggregateError && !Object.hasOwn(Object.fromEntries(entries), 'errors')) {
+  if (error instanceof AggregateError && !entries.some(([key]) => key === 'errors')) {
     entries.push(['errors', error.errors]);
   }
   return entries;
@@ -300,9 +310,12 @@ function walk(value: unknown, depth: number, state: Walk): unknown {
     const outer = state.changed;
     if (isError) state.changed = false;
     const entries = isError ? ownProps(value, state) : readProps(value, state);
-    const out: Record<string, unknown> = isError ? {} : Object.create(Object.getPrototypeOf(value));
+    const out: Record<PropertyKey, unknown> = isError
+      ? {}
+      : Object.create(Object.getPrototypeOf(value));
     for (const [key, item] of entries) {
-      if (SENSITIVE_KEYS.has(key.toLowerCase()) && item !== undefined && item !== null) {
+      const sensitive = typeof key === 'string' && SENSITIVE_KEYS.has(key.toLowerCase());
+      if (sensitive && item !== undefined && item !== null) {
         out[key] = '***';
         state.changed = true;
       } else out[key] = walk(item, depth + 1, state);
