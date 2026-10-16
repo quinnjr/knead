@@ -256,10 +256,53 @@ describe('redirectToHttps hardening', () => {
     await app.close();
   });
 
+  test('redirectToHttps rejects a canonical host that does not round-trip', () => {
+    const req = new Request('http://evil.example/a', { headers: { host: 'evil.example' } });
+    for (const host of ['1.2.3.256', '[1.2.3.4]', '[.]', '[:::]', 'xn--a', 'a:99999']) {
+      expect(() => redirectToHttps(req, 443, host)).toThrow(HttpConfigError);
+    }
+  });
+
+  test('good canonical hosts produce the exact Location', () => {
+    const req = new Request('http://evil.example/p/q?x=1&y=%20', {
+      headers: { host: 'evil.example' },
+    });
+    const cases: [string, number, string][] = [
+      ['Example.COM', 443, 'https://example.com/p/q?x=1&y=%20'],
+      ['example.com', 8443, 'https://example.com:8443/p/q?x=1&y=%20'],
+      ['example.com:9443', 8443, 'https://example.com:9443/p/q?x=1&y=%20'],
+      ['example.com:443', 8443, 'https://example.com/p/q?x=1&y=%20'],
+      ['10.0.0.1:8443', 443, 'https://10.0.0.1:8443/p/q?x=1&y=%20'],
+      ['[2001:DB8::1]', 443, 'https://[2001:db8::1]/p/q?x=1&y=%20'],
+      ['[::1]:8443', 443, 'https://[::1]:8443/p/q?x=1&y=%20'],
+    ];
+    for (const [host, port, location] of cases) {
+      expect(redirectToHttps(req, port, host).headers.get('location')).toBe(location);
+    }
+  });
+
   test.skipIf(!hasOpenssl)('an invalid redirectHttp.host is a configuration error', async () => {
     @Module({})
     class M {}
-    for (const host of ['https://example.com', 'example.com/path', 'a b', 'user@example.com', '']) {
+    const bad = [
+      'https://example.com',
+      'example.com/path',
+      'a b',
+      'user@example.com',
+      '',
+      // Values a host pattern accepts but the URL parser rejects or rewrites.
+      '1.2.3.256',
+      '[1.2.3.4]',
+      '[.]',
+      '[:::]',
+      'xn--a',
+      'example.com:99999',
+      'example.com:0',
+      'example.com:08443',
+      '0x7f.1',
+      '[::0001]',
+    ];
+    for (const host of bad) {
       const app = await HpmwsFactory.create(M, { logger: new MemoryLogger(), development: false });
       await expect(
         app.listen({

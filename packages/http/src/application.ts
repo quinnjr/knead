@@ -94,39 +94,88 @@ function isLoopback(hostname: string): boolean {
 const CANONICAL_HOST =
   /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*|\[[0-9a-f:.]+\])(?::\d{1,5})?$/i;
 
+/** A `host[:port]` that the URL parser keeps exactly as written. */
+interface CanonicalHost {
+  /** Lowercased host name, or bracketed IPv6 literal. */
+  readonly hostname: string;
+  /** The explicit port (1-65535), if any. */
+  readonly port: string | undefined;
+}
+
+/**
+ * Parses a plain `host[:port]`. The URL parser silently rejects or rewrites many values a
+ * pattern accepts (`1.2.3.256`, `[1.2.3.4]`, `xn--a`, `0x7f.1`, `[::0001]`, `:99999`), so the
+ * host must round-trip: the parsed hostname and port equal the ones written (after lowercasing),
+ * and an explicit port is 1-65535 without leading zeros. Anything else is undefined.
+ */
+function parseCanonicalHost(host: string): CanonicalHost | undefined {
+  if (!CANONICAL_HOST.test(host)) return undefined;
+  const [, name = '', port] = /^(\[[^\]]*\]|[^:]+)(?::(\d+))?$/.exec(host) ?? [];
+  let url: URL;
+  try {
+    url = new URL(`https://${host}`);
+  } catch {
+    return undefined;
+  }
+  const hostname = name.toLowerCase();
+  if (url.hostname !== hostname) return undefined;
+  if (port !== undefined) {
+    const n = Number(port);
+    if (String(n) !== port || n < 1 || n > 65535 || (url.port || '443') !== port) return undefined;
+  }
+  return { hostname, port };
+}
+
+/** `https://host[:port]`, omitting the default port 443. */
+function httpsOrigin(hostname: string, port: string): string {
+  return `https://${hostname}${port === '443' ? '' : `:${port}`}`;
+}
+
+const REDIRECT_HEADERS = {
+  'cache-control': 'no-store',
+  'x-content-type-options': 'nosniff',
+} as const;
+
+/** 308 to `origin` + the request's path and query; the request URL itself is never modified. */
+function redirectTo(req: Request, origin: string): Response {
+  const url = requestUrl(req);
+  return new Response(null, {
+    status: 308,
+    headers: { location: `${origin}${url.pathname}${url.search}`, ...REDIRECT_HEADERS },
+  });
+}
+
+function badHost(): Response {
+  return new Response('Invalid Host header', {
+    status: 400,
+    headers: { 'content-type': 'text/plain; charset=utf-8', ...REDIRECT_HEADERS },
+  });
+}
+
+/**
+ * The redirect origin for a canonical `redirectHttp.host`: a port in `host` overrides
+ * `httpsPort`. Throws HttpConfigError unless `host` is a plain, round-tripping `host[:port]`.
+ */
+function canonicalOrigin(host: string, httpsPort: number): string {
+  const parsed = parseCanonicalHost(host);
+  if (!parsed) {
+    throw new HttpConfigError(
+      `redirectHttp.host must be a plain host[:port], got ${JSON.stringify(host)}.`,
+    );
+  }
+  return httpsOrigin(parsed.hostname, parsed.port ?? String(httpsPort));
+}
+
 /**
  * 308 redirect to the same URL on the HTTPS listener. With `host` (a canonical `host[:port]`),
  * the request's Host is ignored; a port in `host` overrides `httpsPort`.
+ * @throws HttpConfigError for a `host` that is not a plain, round-tripping `host[:port]`.
  */
 export function redirectToHttps(req: Request, httpsPort: number, host?: string): Response {
-  if (host === undefined && !URL.canParse(req.url)) {
-    // The Host header did not form a URL, and there is no canonical host to send the client to.
-    return new Response('Invalid Host header', {
-      status: 400,
-      headers: {
-        'content-type': 'text/plain; charset=utf-8',
-        'cache-control': 'no-store',
-        'x-content-type-options': 'nosniff',
-      },
-    });
-  }
-  const url = requestUrl(req);
-  url.protocol = 'https:';
-  let port = String(httpsPort);
-  if (host !== undefined) {
-    const [, name, explicitPort] = /^(.+?)(?::(\d+))?$/.exec(host) ?? [];
-    url.hostname = name ?? host;
-    if (explicitPort !== undefined) port = explicitPort;
-  }
-  url.port = port === '443' ? '' : port;
-  return new Response(null, {
-    status: 308,
-    headers: {
-      location: url.toString(),
-      'cache-control': 'no-store',
-      'x-content-type-options': 'nosniff',
-    },
-  });
+  if (host !== undefined) return redirectTo(req, canonicalOrigin(host, httpsPort));
+  // The Host header did not form a URL, and there is no canonical host to send the client to.
+  if (!URL.canParse(req.url)) return badHost();
+  return redirectTo(req, httpsOrigin(new URL(req.url).hostname, String(httpsPort)));
 }
 
 export class HttpApplication {
@@ -333,11 +382,8 @@ export class HttpApplication {
       throw new HttpConfigError('redirectHttp requires tls.');
     }
     const canonicalHost = options.redirectHttp?.host;
-    if (canonicalHost !== undefined && !CANONICAL_HOST.test(canonicalHost)) {
-      throw new HttpConfigError(
-        `redirectHttp.host must be a plain host[:port], got ${JSON.stringify(canonicalHost)}.`,
-      );
-    }
+    // Validated before anything binds; the origin is computed once the HTTPS port is known.
+    if (canonicalHost !== undefined) canonicalOrigin(canonicalHost, 443);
     const root = this.context.root.injector;
     const entries = [
       ...this.context
@@ -425,10 +471,13 @@ export class HttpApplication {
     if (httpsPort === undefined) {
       throw new HttpConfigError('redirectHttp requires a TCP listener.');
     }
+    const host = options.redirectHttp.host;
+    const origin = host === undefined ? undefined : canonicalOrigin(host, httpsPort);
     return Bun.serve({
       port: options.redirectHttp.port,
       hostname: options.redirectHttp.hostname ?? options.hostname ?? '0.0.0.0',
-      fetch: (req) => redirectToHttps(req, httpsPort, options.redirectHttp?.host),
+      fetch: (req) =>
+        origin === undefined ? redirectToHttps(req, httpsPort) : redirectTo(req, origin),
     });
   }
 
