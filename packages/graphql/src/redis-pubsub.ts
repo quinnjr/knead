@@ -443,13 +443,29 @@ export class RedisPubSub implements PubSubEngine {
     throw new Error('No encryption key authenticates the message.');
   }
 
-  /** Runs `op` after the topic's earlier Redis calls; `op` handles its own errors. */
+  /**
+   * Runs `op` after the topic's earlier Redis calls. A failing op is logged and never stalls
+   * the queue, and the topic's entry is removed once its last op has settled.
+   */
   #enqueue(topic: string, op: () => Promise<void>): void {
-    const next = (this.#redisOps.get(topic) ?? Promise.resolve()).then(op);
+    const next = (this.#redisOps.get(topic) ?? Promise.resolve())
+      .then(op)
+      .catch((error) => {
+        try {
+          this.#logError(`RedisPubSub operation on ${JSON.stringify(topic)} failed`, error);
+        } catch {
+          // A throwing logger must not leave the queue rejected.
+        }
+      })
+      .finally(() => {
+        if (this.#redisOps.get(topic) === next) this.#redisOps.delete(topic);
+      });
     this.#redisOps.set(topic, next);
-    void next.then(() => {
-      if (this.#redisOps.get(topic) === next) this.#redisOps.delete(topic);
-    });
+  }
+
+  /** @internal Topics with queued Redis operations (for tests). */
+  get pendingOperations(): number {
+    return this.#redisOps.size;
   }
 
   async #redisUnsubscribe(topic: string, listeners: Set<Listener>): Promise<void> {
@@ -488,10 +504,21 @@ export class RedisPubSub implements PubSubEngine {
       this.#subscribed.add(listeners);
     } catch (error) {
       if (this.#closed) return;
-      this.#logError(`RedisPubSub failed to subscribe to ${JSON.stringify(topic)}`, error);
+      // State first, so a failing logger or callback cannot leave the topic stuck.
       if (this.#topics.get(topic) === listeners) this.#topics.delete(topic);
       const failure = error instanceof Error ? error : new Error(String(error));
-      for (const listener of listeners) listener.onError?.(failure);
+      for (const listener of listeners) {
+        try {
+          listener.onError?.(failure);
+        } catch (callbackError) {
+          // One throwing callback must not keep the others from hearing about the failure.
+          this.#logError(
+            `RedisPubSub onError callback for ${JSON.stringify(topic)} threw`,
+            callbackError,
+          );
+        }
+      }
+      this.#logError(`RedisPubSub failed to subscribe to ${JSON.stringify(topic)}`, error);
     }
   }
 }

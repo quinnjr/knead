@@ -216,6 +216,22 @@ test('redirectHttp without tls is a configuration error', async () => {
   await app.close();
 });
 
+test('a listener whose graceful stop rejects is logged, and close() still completes', async () => {
+  @Module({})
+  class M {}
+  const app = await start(M);
+  const server = app.server;
+  const stop = server.stop.bind(server);
+  (server as { stop: (force?: boolean) => Promise<void> }).stop = (force?: boolean) =>
+    force ? stop(true) : Promise.reject(new Error('stop failed'));
+  await app.close();
+  await Bun.sleep(5);
+  const logged = (app.logger as MemoryLogger).entries.some(
+    (e) => e.level === 'error' && e.message.includes('Stopping a listener failed'),
+  );
+  expect(logged).toBe(true);
+});
+
 describe('trustProxy hop count on a wildcard address', () => {
   const warned = (app: { logger: unknown }) =>
     (app.logger as MemoryLogger).entries.some(

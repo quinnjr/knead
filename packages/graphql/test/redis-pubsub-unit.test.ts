@@ -204,6 +204,64 @@ describe('RedisPubSub hardening', () => {
     }
   });
 
+  test('a throwing onError callback is logged and the other listeners still hear', async () => {
+    const client = {
+      duplicate: async () => Promise.reject(new Error('no connection')),
+      close: () => {},
+    } as unknown as RedisClient;
+    const logger = new MemoryLogger();
+    const pubsub = new RedisPubSub({ client, logger });
+    const heard: string[] = [];
+    pubsub.subscribe(
+      't',
+      () => {},
+      () => {
+        heard.push('first');
+        throw new Error('callback bug');
+      },
+    );
+    pubsub.subscribe(
+      't',
+      () => {},
+      (error) => heard.push(`second: ${error.message}`),
+    );
+    await until(() => heard.length === 2);
+    expect(heard).toEqual(['first', 'second: no connection']);
+    await until(() => logger.entries.some((e) => e.message.includes('onError callback')));
+    await until(() => pubsub.pendingOperations === 0);
+    await pubsub.close();
+  });
+
+  test('a failing queued operation never stalls the topic queue', async () => {
+    let subscribes = 0;
+    const subscriber = {
+      subscribe: async () => {
+        subscribes++;
+        if (subscribes === 1) throw new Error('first subscribe fails');
+        return 1;
+      },
+      unsubscribe: async () => {},
+      close: () => {},
+      connected: false,
+    };
+    const client = { duplicate: async () => subscriber, close: () => {} } as unknown as RedisClient;
+    let calls = 0;
+    // A logger that throws once makes the subscribe op itself reject.
+    const logger = new MemoryLogger();
+    const original = logger.error.bind(logger);
+    logger.error = (message: string, ...meta: unknown[]) => {
+      if (calls++ === 0) throw new Error('logger down');
+      original(message, ...meta);
+    };
+    const pubsub = new RedisPubSub({ client, logger });
+    pubsub.subscribe('t', () => {});
+    await until(() => pubsub.pendingOperations === 0);
+    pubsub.subscribe('t', () => {});
+    await until(() => subscribes === 2);
+    await until(() => pubsub.pendingOperations === 0);
+    await pubsub.close();
+  });
+
   test('requireTls: a plaintext remote URL throws at construction', () => {
     expect(() => new RedisPubSub({ url: 'redis://cache.internal', requireTls: true })).toThrow(
       HttpConfigError,

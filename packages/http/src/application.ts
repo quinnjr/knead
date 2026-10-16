@@ -368,7 +368,11 @@ export class HttpApplication {
     try {
       const servers = [...this.#retired, ...(this.#server ? [this.#server] : [])];
       if (servers.length > 0) {
-        for (const server of servers) void server.stop(false);
+        for (const server of servers) {
+          server.stop(false).catch((error: unknown) => {
+            logError(this, 'Stopping a listener failed', error);
+          });
+        }
         this.#redirect?.stop(true);
         const deadline = Date.now() + this.shutdownTimeout;
         const pending = () => servers.reduce((n, server) => n + server.pendingRequests, 0);
