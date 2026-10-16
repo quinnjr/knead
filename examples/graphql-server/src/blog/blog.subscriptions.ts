@@ -26,10 +26,13 @@ export class BlogSubscriptions {
   })
   postPublished() {}
 
+  // recheckGuards: PostVisibleGuard runs again before every comment, so a subscriber stops
+  // receiving comments once the post is deleted or no longer visible to them.
   @Subscription(() => Comment, {
     args: { postId: ID },
     topic: (ctx) => commentTopic(ctx.args.postId),
     resolve: reviveComment,
+    recheckGuards: true,
   })
   @UseGuards(PostVisibleGuard)
   commentAdded() {}

@@ -17,11 +17,8 @@ describe('REST next to GraphQL', () => {
   test('GET /health is a plain controller route', async () => {
     const res = await s.app.request('GET', '/health', { headers: { origin: frontend } });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({
-      status: 'ok',
-      posts: 3, // published posts only: the count does not reveal drafts
-      pubsub: process.env.REDIS_URL ? 'redis' : 'memory',
-    });
+    // Only the status: no counts, versions or infrastructure details for anonymous callers.
+    expect(await res.json()).toEqual({ status: 'ok' });
     expect(res.headers.get('access-control-allow-origin')).toBe(frontend);
     expect(res.headers.get('x-frame-options')).toBe('DENY');
     // @SkipRateLimit(): health checks never use up the budget.

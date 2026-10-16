@@ -9,6 +9,7 @@ import {
   InterfaceType,
   ObjectType,
 } from '@hpmws/graphql';
+import type { CommentEvent, PostEvent } from './blog.events.js';
 import { DateTime } from './date-time.scalar.js';
 
 export enum PostStatus {
@@ -80,14 +81,29 @@ export class PostsArgs extends PageArgs {
   since?: Date | null;
 }
 
-/** Rebuilds a Post from an event payload, which is plain JSON when it came through Redis. */
-export function revivePost(payload: Post): Post {
-  return Object.assign(new Post(), payload, {
-    createdAt: new Date(payload.createdAt),
-    publishedAt: payload.publishedAt ? new Date(payload.publishedAt) : null,
-  });
+/**
+ * Rebuilds a Post from an event payload, which is plain JSON when it came through Redis. Only
+ * the known fields are copied: a payload is never Object.assign-ed onto an entity.
+ */
+export function revivePost(payload: PostEvent): Post {
+  const post = new Post();
+  post.id = String(payload.id);
+  post.authorId = String(payload.authorId);
+  post.title = String(payload.title);
+  post.body = String(payload.body);
+  post.status = payload.status === PostStatus.PUBLISHED ? PostStatus.PUBLISHED : PostStatus.DRAFT;
+  post.tags = Array.isArray(payload.tags) ? payload.tags.map(String) : [];
+  post.createdAt = new Date(payload.createdAt);
+  post.publishedAt = payload.publishedAt ? new Date(payload.publishedAt) : null;
+  return post;
 }
 
-export function reviveComment(payload: Comment): Comment {
-  return Object.assign(new Comment(), payload, { createdAt: new Date(payload.createdAt) });
+export function reviveComment(payload: CommentEvent): Comment {
+  const comment = new Comment();
+  comment.id = String(payload.id);
+  comment.postId = String(payload.postId);
+  comment.authorId = String(payload.authorId);
+  comment.body = String(payload.body);
+  comment.createdAt = new Date(payload.createdAt);
+  return comment;
 }

@@ -4,6 +4,7 @@ import { ForbiddenException, UseGuards } from '@hpmws/http';
 import { sanitize } from '@hpmws/sanitize';
 import * as v from 'valibot';
 import { Authenticated, Roles, RolesGuard } from '../auth/auth.js';
+import { toCommentEvent, toPostEvent } from './blog.events.js';
 import { BlogService } from './blog.service.js';
 import { Comment, CreatePostInput, Post } from './blog.types.js';
 import { commentTopic, POST_PUBLISHED } from './topics.js';
@@ -38,7 +39,7 @@ export class BlogMutations {
     // `validate` has replaced the coerced input with the schema's output.
     const input = ctx.args.input as v.InferOutput<typeof CreatePost>;
     const post = this.#blog.createPost(ctx.currentUser!.id, input);
-    if (post.publishedAt) void this.#pubsub.publish(POST_PUBLISHED, post);
+    if (post.publishedAt) void this.#pubsub.publish(POST_PUBLISHED, toPostEvent(post));
     return post;
   }
 
@@ -51,7 +52,7 @@ export class BlogMutations {
     }
     const wasPublished = existing.publishedAt != null;
     const post = this.#blog.publish(ctx.args.id);
-    if (!wasPublished) void this.#pubsub.publish(POST_PUBLISHED, post);
+    if (!wasPublished) void this.#pubsub.publish(POST_PUBLISHED, toPostEvent(post));
     return post;
   }
 
@@ -63,11 +64,11 @@ export class BlogMutations {
     const user = ctx.currentUser!;
     this.#blog.requireVisible(ctx.args.postId, user);
     const comment = this.#blog.addComment(ctx.args.postId, user.id, ctx.args.body);
-    void this.#pubsub.publish(commentTopic(comment.postId), comment);
+    void this.#pubsub.publish(commentTopic(comment.postId), toCommentEvent(comment));
     return comment;
   }
 
-  /** Admin only: RolesGuard reads @Roles() through ctx.meta and returns false (FORBIDDEN). */
+  /** Admin only: RolesGuard reads @Roles() through ctx.meta and denies (FORBIDDEN) otherwise. */
   @Mutation(() => Boolean, { args: { id: ID } })
   @UseGuards(RolesGuard)
   @Roles('admin')

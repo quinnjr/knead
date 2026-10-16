@@ -10,9 +10,10 @@ describe('RolesGuard', () => {
   const admin: User = { id: 'u1', name: 'Admin', roles: ['admin'] };
   const regular: User = { id: 'u2', name: 'Regular', roles: [] };
 
-  test('passes when no roles are required', () => {
-    expect(guard.canActivate(ctx({}))).toBe(true);
-    expect(guard.canActivate(ctx({ roles: [] }))).toBe(true);
+  test('strict: without @Roles() metadata it denies', () => {
+    const admin: User = { id: 'u1', name: 'Admin', roles: ['admin'] };
+    expect(guard.canActivate(ctx({}, admin))).toBe(false);
+    expect(guard.canActivate(ctx({ roles: [] }, admin))).toBe(false);
   });
 
   test('reads required roles from ctx.meta and denies when they are unmet', () => {

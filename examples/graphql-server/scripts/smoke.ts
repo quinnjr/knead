@@ -148,11 +148,21 @@ try {
   await waitForReady();
   let pubsub = 'unknown';
 
-  await check('GET /health', async () => {
+  await check('GET /health returns only the status', async () => {
     const res = await fetch(`${base}/health`);
-    const body = (await res.json()) as { status: string; pubsub: string };
-    assert(res.status === 200 && body.status === 'ok', `got ${res.status} ${JSON.stringify(body)}`);
-    pubsub = body.pubsub;
+    const body = await res.text();
+    assert(res.status === 200 && body === '{"status":"ok"}', `got ${res.status} ${body}`);
+  });
+
+  await check('PubSub engine reported at startup', async () => {
+    const deadline = Date.now() + 5000;
+    const reported = () => /PubSub: (\w+)/.exec(output.join(''));
+    let match = reported();
+    while (!match && Date.now() < deadline) {
+      await Bun.sleep(20);
+      match = reported();
+    }
+    pubsub = match?.[1] ?? 'unknown';
     const expected = process.env.REDIS_URL ? 'redis' : 'memory';
     assert(pubsub === expected, `pubsub is ${pubsub}, expected ${expected}`);
     return `pubsub=${pubsub}`;

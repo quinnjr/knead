@@ -1,6 +1,6 @@
 # hpmws GraphQL server example
 
-A small blog (authors, posts and comments, kept in memory and seeded at startup) served over GraphQL with every hpmws package working together: code-first types, DataLoader-batched field resolvers, valibot argument validation, bearer-token auth with resolver guards and role metadata, subscriptions over `graphql-transport-ws` (in memory or on Redis), CORS, rate limiting, security headers and HTML sanitization, plus a plain REST `GET /health` route next to `/graphql`. Private; not published.
+A small blog (authors, posts and comments, kept in memory and seeded at startup) served over GraphQL with every hpmws package working together: code-first types, DataLoader-batched field resolvers, valibot argument validation, bearer-token auth with resolver guards and role metadata, subscriptions over `graphql-transport-ws` (in memory or on Redis), CORS, rate limiting, security headers and HTML sanitization, plus a plain REST `GET /health` route next to `/graphql` that returns only `{ "status": "ok" }`. Private; not published.
 
 ## Run
 
@@ -12,15 +12,16 @@ pnpm --filter @hpmws/example-graphql-server start   # production defaults
 
 | Variable | Default | Effect |
 | --- | --- | --- |
+| `HOST` | `127.0.0.1` | Listening address; set `0.0.0.0` to accept connections from the network (for example in a container) |
 | `PORT` | `3000` | Listening port |
-| `NODE_ENV` | | `development` turns on the playground, introspection and unmasked errors, and writes `schema.graphql` |
+| `NODE_ENV` | | `development` turns on the playground, introspection and unmasked errors, and writes `schema.graphql`. `production` refuses to start: the demo tokens are public |
 | `REDIS_URL` | | Use `RedisPubSub` for subscriptions, so several instances share events |
 | `RATE_LIMIT` | `100` | Requests per client IP per minute (`/health` is exempt) |
 | `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated browser origins for CORS and subscription sockets |
 
 In development, open <http://localhost:3000/graphql> in a browser for the playground. Development runs also write the schema SDL to `schema.graphql` (gitignored).
 
-Demo bearer tokens (hard-coded and public, demo only):
+Demo bearer tokens (hard-coded and public, demo only; the demo `AuthService` throws at startup when `NODE_ENV=production`):
 
 | Token | User | Roles |
 | --- | --- | --- |
@@ -47,7 +48,7 @@ curl -G localhost:3000/graphql -H 'x-graphql-request: 1' --data-urlencode 'query
 
 ## Mutations
 
-Drafts are visible only to their author and to admins: everyone else sees published posts only, and someone else's draft is reported as not found (`post`, `node`, `Author.posts`, `addComment`, `publishPost` and the `commentAdded` subscription alike). Every mutation needs a token (`UNAUTHENTICATED` otherwise). `deletePost` is admin-only (`FORBIDDEN` for `grace-token`).
+Drafts are visible only to their author and to admins: everyone else sees published posts only, and someone else's draft is reported as not found (`post`, `node`, `Author.posts`, `addComment`, `publishPost` and the `commentAdded` subscription alike). Every mutation needs a token (`UNAUTHENTICATED` otherwise). `deletePost` is admin-only (`FORBIDDEN` for `grace-token`): `RolesGuard` reads `@Roles()` through `ctx.meta` and passes only a signed-in user holding one of the roles, and it also denies a resolver that uses it without `@Roles()`.
 
 ```bash
 curl localhost:3000/graphql -H 'content-type: application/json' -H 'authorization: Bearer grace-token' \
@@ -85,7 +86,7 @@ websocat -n --protocol graphql-transport-ws ws://localhost:3000/graphql
 {"id":"1","type":"subscribe","payload":{"query":"subscription { commentAdded(postId: \"p1\") { body author { name } } }"}}
 ```
 
-Run the `addComment` curl above in another terminal to see the event. To share events between instances, start each with `REDIS_URL=redis://localhost:6379`.
+Run the `addComment` curl above in another terminal to see the event. `commentAdded` uses `recheckGuards: true`, so the post's visibility is checked again before every comment and the subscription ends with an error once the subscriber can no longer see the post (for example after `deletePost`). Events are published as DTOs with explicit fields (`blog.events.ts`), never as entities, and `revivePost`/`reviveComment` copy only the known fields back. To share events between instances, start each with `REDIS_URL=redis://localhost:6379`.
 
 ## Test
 
@@ -95,8 +96,8 @@ pnpm --filter @hpmws/example-graphql-server smoke   # starts the real server and
 REDIS_URL=redis://localhost:6379 pnpm --filter @hpmws/example-graphql-server smoke   # with RedisPubSub
 ```
 
-The smoke test (`scripts/smoke.ts`) spawns `bun src/main.ts` on a free port with `NODE_ENV=development` and `RATE_LIMIT=40`. It checks `/health`, queries, authenticated mutations, the playground and its CSP, security headers, a CORS preflight, a subscription event triggered by a mutation over HTTP, a 429 after the rate limit, and a 403 for a cross-origin WebSocket upgrade. It prints a `PASS`/`FAIL` line per check and exits nonzero on any failure.
+The smoke test (`scripts/smoke.ts`) spawns `bun src/main.ts` on a free port with `NODE_ENV=development` and `RATE_LIMIT=40`. It checks `/health` (which returns only `{ "status": "ok" }`) and the PubSub engine the server reports at startup, queries, authenticated mutations, the playground and its CSP, security headers, a CORS preflight, a subscription event triggered by a mutation over HTTP, the depth limit, a dropped connection for an oversized WebSocket message, a 429 after the rate limit, and a 403 for a cross-origin WebSocket upgrade. It prints a `PASS`/`FAIL` line per check and exits nonzero on any failure.
 
 ## Notes
 
-The CORS origin `http://localhost:5173` is a placeholder for a local front-end; set `CORS_ORIGINS` to your real origin(s). Behind a reverse proxy, configure `app.listen({ trustProxy })` so rate limiting sees client IPs.
+The CORS origin `http://localhost:5173` is a placeholder for a local front-end; set `CORS_ORIGINS` to your real origin(s). Behind a reverse proxy, uncomment `trustProxy` in `src/main.ts` (the number of proxy hops, or the proxy's CIDRs) so rate limiting sees client IPs. `src/app.module.ts` spells out the GraphQL limits (`maxDepth`, `maxComplexity`, `maxAliases`, `maxQueryLength`, `parseOptions.maxTokens`); raise them deliberately rather than disabling them.

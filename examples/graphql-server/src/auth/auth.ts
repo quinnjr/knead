@@ -21,6 +21,15 @@ declare module '@hpmws/graphql' {
  * provider) in a real application.
  */
 export class AuthService {
+  constructor() {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'The demo AuthService accepts hard-coded, public demo tokens and refuses to start with ' +
+          'NODE_ENV=production. Replace it with real authentication before deploying.',
+      );
+    }
+  }
+
   readonly #tokens = new Map<string, CurrentUser>([
     ['ada-token', { id: 'a1', name: 'Ada Lovelace', roles: ['admin'] }],
     ['grace-token', { id: 'a2', name: 'Grace Hopper', roles: [] }],
@@ -42,17 +51,23 @@ export function Authenticated(ctx: ResolverCtx): boolean {
   return true;
 }
 
-const ROLES = Symbol('roles');
+/** The `ctx.meta` key @Roles() writes. */
+export const ROLES = Symbol('roles');
 const rolesMeta = createRouteDecorator<readonly string[]>(ROLES);
 
 /** Role metadata read by RolesGuard through `ctx.meta`. */
 export const Roles = (...roles: string[]) => rolesMeta(roles);
 
-/** Resolver guard: `false` (FORBIDDEN) unless the user has one of the @Roles() roles. */
+/**
+ * Resolver guard reading @Roles() through `ctx.meta`: `true` only when a signed-in user holds one
+ * of the required roles. Everything else is `false` (FORBIDDEN), including a resolver that uses
+ * the guard without @Roles(): a missing annotation fails closed.
+ */
 export function RolesGuard(ctx: ResolverCtx): boolean {
-  const required = ctx.meta[ROLES] as readonly string[] | undefined;
-  if (!required?.length) return true;
-  return required.some((role) => ctx.currentUser?.roles.includes(role));
+  const required = ctx.meta[ROLES];
+  const user = ctx.currentUser;
+  if (!Array.isArray(required) || required.length === 0 || !user) return false;
+  return required.some((role) => user.roles.includes(role));
 }
 
 @Module({ providers: [AuthService], exports: [AuthService] })
