@@ -30,6 +30,7 @@ const stepEnv = Object.fromEntries(
 
 const REGISTRY_FLAGS = '--registry=https://registry.npmjs.org/ --loglevel=notice';
 
+// view <name> name: prints the name unless it is in FAKE_MISSING (E404) or FAKE_PREFLIGHT_ERROR is set.
 // view <name>@<version> version: prints the version for specs in FAKE_EXISTING.
 // view <name> dist-tags.latest: prints the version from FAKE_LATEST ("name=version ...").
 // Otherwise fails with FAKE_VIEW_ERROR (default E404).
@@ -37,7 +38,11 @@ const fakeNpm = `#!/usr/bin/env bash
 echo "npm $*" >> "$FAKE_LOG"
 case "$1" in
   view)
-    if [ "$3" = dist-tags.latest ]; then
+    if [ "$3" = name ]; then
+      if [ -n "\${FAKE_PREFLIGHT_ERROR:-}" ]; then echo "npm error code $FAKE_PREFLIGHT_ERROR" >&2; exit 1; fi
+      if [[ " \${FAKE_MISSING:-} " == *" $2 "* ]]; then echo "npm error code E404" >&2; exit 1; fi
+      echo "$2"; exit 0
+    elif [ "$3" = dist-tags.latest ]; then
       for entry in $FAKE_LATEST; do
         if [ "\${entry%=*}" = "$2" ]; then echo "\${entry#*=}"; exit 0; fi
       done
@@ -368,7 +373,7 @@ describe('release.yml publish step', () => {
       expect(r.publishes).toEqual([publishCmd(`hpmws-core-${version}.tgz`, distTag)]);
     });
 
-    test('a package that is not on npm yet takes latest', () => {
+    test('a package without a latest dist-tag takes latest', () => {
       const r = publish('v0.1.0', [['@hpmws/core', '0.1.0']]);
       expect(r.exitCode).toBe(0);
       expect(r.publishes).toEqual([publishCmd('hpmws-core-0.1.0.tgz', 'latest')]);
@@ -409,6 +414,30 @@ describe('release.yml publish step', () => {
       env: { FAKE_VIEW_ERROR: 'ETIMEDOUT' },
     });
     expectRejected(r, 'could not query npm');
+  });
+
+  describe('registry preflight', () => {
+    test('checks every package exists on npm before publishing any', () => {
+      const r = publish('v1.2.3', []);
+      expect(r.exitCode).toBe(0);
+      const preflight = r.calls.filter((c) => / name --registry=/.test(c));
+      expect(preflight).toHaveLength(ALLOWED.length);
+      const firstPublish = r.calls.findIndex((c) => c.startsWith('npm publish'));
+      const lastPreflight = r.calls.findLastIndex((c) => / name --registry=/.test(c));
+      expect(lastPreflight).toBeLessThan(firstPublish);
+      expect(preflight[0]).toBe(`npm view ${ALLOWED[0]} name ${REGISTRY_FLAGS}`);
+    });
+
+    test('publishes nothing when a package does not exist on npm yet', () => {
+      const r = publish('v1.2.3', [], { env: { FAKE_MISSING: '@hpmws/testing' } });
+      expectRejected(r, '@hpmws/testing is not on npm yet');
+      expect(r.output).toContain('trust:npm');
+    });
+
+    test('publishes nothing when the preflight query fails', () => {
+      const r = publish('v1.2.3', [], { env: { FAKE_PREFLIGHT_ERROR: 'ETIMEDOUT' } });
+      expectRejected(r, 'could not query npm for @hpmws/core');
+    });
   });
 
   describe('full set', () => {

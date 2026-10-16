@@ -421,6 +421,17 @@ jobs:
           [ "${#missing[@]}" -eq 0 ] || fail "packages missing from the artifact: ${missing[*]}"
           [ "${#seen[@]}" -eq "${#allowed[@]}" ] || fail "expected ${#allowed[@]} packages, found ${#seen[@]}"
 
+          # Preflight: every package must already exist on npm. A brand-new package has no trusted
+          # publisher yet, so its OIDC publish would fail after the others went out.
+          for n in "${allowed[@]}"; do
+            if ! npm_registry view "$n" name >/dev/null 2>"$errlog"; then
+              if grep -q E404 "$errlog"; then
+                fail "$n is not on npm yet. Publish it once by hand and register the trusted publisher with pnpm trust:npm (see Releasing in README.md), then re-run this workflow"
+              fi
+              cat "$errlog"; fail "could not query npm for $n"
+            fi
+          done
+
           # 3. Publish.
           for tgz in "${tarballs[@]}"; do
             manifest="$(cat "$work/$tgz.json")"
