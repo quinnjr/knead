@@ -7,5 +7,5 @@
     "declarationMap": false,
     "sourceMap": false
   },
-  "include": ["packages/*/src", "packages/*/test", "examples/*/src", "examples/*/test"]
+  "include": ["packages/*/src", "packages/*/test", "examples/*/src", "examples/*/test", "scripts"]
 }
