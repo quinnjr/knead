@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { AuthService } from '../src/auth/auth.js';
 import { ada, grace, nextEvent, type Started, start } from './helpers.js';
 
 let s: Started;
@@ -66,6 +67,26 @@ describe('subscriptions', () => {
       author: { name: 'Ada Lovelace' },
     });
     await sub.close();
+  });
+
+  test('revoking the token ends a recheckGuards subscription at its next event', async () => {
+    // Its own app: the revocation must not affect the other tests.
+    const own = await start();
+    type Event = { commentAdded: { postId: string } };
+    const sub = await own.app.graphqlSubscribe<Event>(
+      'subscription { commentAdded(postId: "p2") { postId } }',
+      { connectionParams: { token: 'grace-token' } },
+    );
+    const comment = () =>
+      own.app.graphql('mutation { addComment(postId: "p2", body: "hi") { id } }', { headers: ada });
+    expect((await nextEvent(sub, comment)).data?.commentAdded).toEqual({ postId: 'p2' });
+    expect(own.mod.get(AuthService).revoke('grace-token')).toBe(true);
+    await comment();
+    const denied = await sub.next();
+    expect(denied.value?.errors?.[0]?.extensions?.code).toBe('FORBIDDEN');
+    expect((await sub.next()).done).toBe(true);
+    await sub.close();
+    await own.mod.close();
   });
 
   test("commentAdded on someone else's draft is refused at subscribe time", async () => {

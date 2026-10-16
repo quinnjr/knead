@@ -893,9 +893,23 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
         },
       );
       if (!sub.recheckGuards) return events;
-      return recheckEvents(events, () =>
-        runGuards(guards, createResolverCtx(op, injector, meta, ctx.args, parent, info)),
-      );
+      const subscriptions = this.options.subscriptions;
+      const refresh = subscriptions === false ? undefined : subscriptions.refreshContext;
+      return recheckEvents(events, async () => {
+        if (refresh) {
+          let refreshed: object | false;
+          try {
+            refreshed = await refresh({ http: op.http, context: op.user });
+          } catch (error) {
+            throw toSafeError(error, this.masking, 'subscriptions.refreshContext');
+          }
+          if (refreshed === false) throw new ForbiddenException();
+          if (typeof refreshed === 'object' && refreshed !== null) {
+            op.user = { ...op.user, ...refreshed };
+          }
+        }
+        await runGuards(guards, createResolverCtx(op, injector, meta, ctx.args, parent, info));
+      });
     });
     spec.resolve = marked(async (payload, args, op: OperationContext, info) => {
       if (payload instanceof RevokedEvent) throw payload.error;

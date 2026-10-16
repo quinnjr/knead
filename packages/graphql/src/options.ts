@@ -35,6 +35,17 @@ export interface SubscriptionOptions {
     http: Ctx,
     connectionParams: ConnectionParams,
   ) => boolean | ConnectContext | Promise<boolean | ConnectContext>;
+  /**
+   * Called before every recheck of a `recheckGuards: true` subscription, with the operation's
+   * upgrade Ctx and current user context. An object is merged over that context (the guards and
+   * the event's resolvers see it); `false` ends the subscription with FORBIDDEN. Without it,
+   * rechecked guards see the identity from connect time: use it for a live lookup (for example
+   * re-verifying the session) so that a revoked credential ends the subscription.
+   */
+  refreshContext?: (connection: {
+    http: Ctx;
+    context: Readonly<Record<PropertyKey, unknown>>;
+  }) => ConnectContext | false | Promise<ConnectContext | false>;
   /** ms to wait for `connection_init` (Leaven default 3000). */
   connectionInitTimeout?: number;
   /** ms between server pings; 0 disables (Leaven default 12000). */

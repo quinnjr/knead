@@ -69,7 +69,7 @@ curl localhost:3000/graphql -H 'content-type: application/json' -H 'authorizatio
 
 ## Subscriptions
 
-`postPublished(authorId: ID)` and `commentAdded(postId: ID!)` run over a `graphql-transport-ws` WebSocket on `/graphql`. Browsers cannot send an `Authorization` header on a WebSocket, so the token goes in `connectionParams`; a missing or unknown token closes the socket with `4403`.
+`postPublished(authorId: ID)` and `commentAdded(postId: ID!)` run over a `graphql-transport-ws` WebSocket on `/graphql`. Browsers cannot send an `Authorization` header on a WebSocket, so the token goes in `connectionParams`; a missing or unknown token closes the socket with `4403`. `commentAdded` rechecks its guards before every comment, and `subscriptions.refreshContext` re-verifies the connection's token with a live `AuthService` lookup first, so revoking a token (`AuthService.revoke`) ends the subscription with `FORBIDDEN` at its next event.
 
 In the playground (development), set the connection params to `{ "token": "grace-token" }` and run:
 

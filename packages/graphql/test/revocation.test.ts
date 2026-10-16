@@ -251,3 +251,50 @@ describe('GraphQLSubscriptions.closeWhere sees the merged connection context', (
     grace.ws.close();
   });
 });
+
+describe('subscriptions.refreshContext', () => {
+  test('runs before each recheck: merged over the context, false ends with FORBIDDEN', async () => {
+    let live: string | false = 'ada';
+    const guardSaw: unknown[] = [];
+    @Resolver()
+    class Live {
+      @Query(() => Int) q() {
+        return 1;
+      }
+      @Subscription(() => Int, {
+        topic: 'live',
+        recheckGuards: true,
+        guards: [
+          (ctx: ResolverCtx) => {
+            guardSaw.push(ctx.connectedAs);
+            return true;
+          },
+        ],
+      })
+      live() {}
+    }
+    @Module({ providers: [Live] })
+    class LiveModule {}
+    s = await startGraphQL([LiveModule], {
+      subscriptions: {
+        onConnect: () => ({ connectedAs: 'connect-time' }),
+        refreshContext: ({ context }) => {
+          expect(context.connectedAs).toBeDefined();
+          return live === false ? false : { connectedAs: live };
+        },
+      },
+    });
+    const pubsub = s.mod.get(PUBSUB);
+    const sub = await s.app.graphqlSubscribe('subscription { live }');
+    await Bun.sleep(30);
+    await pubsub.publish('live', 1);
+    expect((await sub.next()).value).toEqual({ data: { live: 1 } });
+    // Subscribe-time guards saw the connect-time identity; the recheck saw the refreshed one.
+    expect(guardSaw).toEqual(['connect-time', 'ada']);
+    live = false;
+    await pubsub.publish('live', 2);
+    expect((await sub.next()).value?.errors?.[0]?.extensions?.code).toBe('FORBIDDEN');
+    expect((await sub.next()).done).toBe(true);
+    await sub.close();
+  });
+});

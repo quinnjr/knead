@@ -36,6 +36,7 @@ import { HealthController } from './health/health.controller.js';
           maxAliases: 30,
           maxQueryLength: 100 * 1024,
           maxFields: 1000,
+          maxIntrospectionDepth: 15,
           parseOptions: { maxTokens: 3000 },
           // HTTP: the bearer token. Over WebSocket this runs on the upgrade request, and the
           // object onConnect returned is merged over it.
@@ -46,6 +47,13 @@ import { HealthController } from './health/health.controller.js';
             // Browsers cannot set Authorization on a WebSocket: the token is a connectionParam.
             onConnect: (_http, params) => {
               const currentUser = auth.verify(params.token);
+              return currentUser ? { currentUser, sessionToken: params.token as string } : false;
+            },
+            // Rechecked subscriptions (commentAdded) re-verify the token with a live lookup
+            // before every event, so a revoked token ends them instead of the connect-time
+            // identity staying valid for the life of the socket.
+            refreshContext: ({ context }) => {
+              const currentUser = auth.verify(context.sessionToken);
               return currentUser ? { currentUser } : false;
             },
             allowedOrigins: config.corsOrigins,
