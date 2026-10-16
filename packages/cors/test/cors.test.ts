@@ -222,7 +222,8 @@ describe('WebSocket upgrades', () => {
   class Gateway implements OnModuleInit {
     readonly ws = inject(WsRegistry);
     onModuleInit() {
-      this.ws.register('/live', { upgrade: () => ({}) });
+      // '*' turns off WsRegistry's own same-origin check, so these tests exercise CORS alone.
+      this.ws.register('/live', { upgrade: () => ({}) }, { allowedOrigins: '*' });
     }
   }
 

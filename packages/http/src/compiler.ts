@@ -66,12 +66,14 @@ function isUpgrade(req: Request): boolean {
 function upgradeChain(
   path: string,
   endpoint: WsEndpoint,
+  registry: WsRegistry,
   globalMiddleware: readonly Middleware[],
   globalGuards: readonly Guard<any>[],
   onError: ErrorHandler,
 ): Handler {
   const terminal: Handler = async (ctx) => {
     try {
+      registry.checkOrigin(path, ctx);
       // Global guards protect upgrades like any route; ctx.route is null here.
       await runGuards(globalGuards, ctx);
       const data = await endpoint.upgrade(ctx);
@@ -131,7 +133,14 @@ export function compileApplication(input: CompileInput): CompiledApp {
   for (const [path, endpoint] of input.ws.entries()) {
     wsHandlers.set(
       path,
-      upgradeChain(path, endpoint, input.globalMiddleware, input.globalGuards, globalOnError),
+      upgradeChain(
+        path,
+        endpoint,
+        input.ws,
+        input.globalMiddleware,
+        input.globalGuards,
+        globalOnError,
+      ),
     );
   }
 

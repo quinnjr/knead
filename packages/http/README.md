@@ -43,6 +43,14 @@ Request bodies are capped at 1 MiB by default; larger bodies are answered with 4
 
 The `redirectHttp` listener answers with a `308` (`cache-control: no-store`) to the same path on the HTTPS listener. By default the Location host comes from the request's `Host` header; set `redirectHttp: { port: 80, host: 'example.com' }` to always redirect to a canonical host (`host` may carry a port, `example.com:8443`, which overrides the HTTPS listener's port). `host` must be a plain `host[:port]`, or `listen()` rejects.
 
+WebSocket endpoints check the upgrade's `Origin` before global guards and the endpoint's `upgrade()` run: by default only the same origin is accepted (same scheme, from `ctx.secure`, and the same host and port as the `Host` header, with default ports 80/443 normalized). Upgrades without an `Origin` (non-browser clients) are allowed, `Origin: null` is rejected, and anything else is a 403. List other origins per endpoint, or pass `'*'` to turn the check off:
+
+```ts
+ws.register('/live', endpoint, { allowedOrigins: ['https://app.example'] });
+```
+
+`CorsModule` also rejects disallowed origins on upgrades, so a cross-origin client must be allowed by both. `originAllowed(origin, host, secure, allowed?)` is exported for transports that check origins themselves.
+
 `reloadTls()` hot-swaps certificates via `SO_REUSEPORT` and is Linux-only.
 
 A `listen()` that failed to bind (for example, the port is taken) binds nothing and can be retried, but the application context stays open. If you give up instead, call `await app.close()` so shutdown hooks run and resources are released. A `listen()` that failed because a lifecycle hook threw (such as `onModuleInit` of a middleware, guard or filter, which runs at `listen()`) has already closed the application and cannot be retried. `listen()` always rejects once `close()` has started, including a `close()` issued while `listen()` is still initializing:

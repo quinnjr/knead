@@ -46,7 +46,8 @@ class ItController {
 class Gateway implements OnModuleInit {
   readonly ws = inject(WsRegistry);
   onModuleInit() {
-    this.ws.register('/live', { upgrade: () => ({}) });
+    // Cross-origin browsers need both CORS and the endpoint's own Origin allowlist.
+    this.ws.register('/live', { upgrade: () => ({}) }, { allowedOrigins: [ALLOWED] });
   }
 }
 

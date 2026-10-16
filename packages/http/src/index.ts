@@ -16,4 +16,11 @@ export { withHeaders } from './response.js';
 export * from './tokens.js';
 export type * from './types.js';
 export { ValidationException, type ValidationIssue, type ValidationSource } from './validation.js';
-export { type WsData, type WsEndpoint, WsRegistry, type WsSocket } from './ws.js';
+export {
+  originAllowed,
+  type WsData,
+  type WsEndpoint,
+  type WsEndpointOptions,
+  WsRegistry,
+  type WsSocket,
+} from './ws.js';

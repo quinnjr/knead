@@ -351,7 +351,9 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
     }
     const subscriptions = this.options.subscriptions;
     if (subscriptions !== false && this.#schema.getSubscriptionType()) {
-      this.#ws.register(this.options.path, createSubscriptionEndpoint(this, subscriptions));
+      this.#ws.register(this.options.path, createSubscriptionEndpoint(this, subscriptions), {
+        allowedOrigins: subscriptions.allowedOrigins,
+      });
     }
   }
 
