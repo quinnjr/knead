@@ -53,14 +53,28 @@ pnpm lint && pnpm typecheck && pnpm build && pnpm test
 REDIS_URL=redis://localhost:6379 pnpm test   # include RedisStore tests
 ```
 
-Work follows git-flow: feature branches from `develop`, squash-merged by pull request. To release:
+Work follows git-flow: feature branches from `develop`, squash-merged by pull request.
+
+### Releasing
+
+All `@hpmws/*` packages share one version (Changesets fixed mode). To release:
 1. `git flow release start <version>`
 2. `pnpm version-packages`
 3. `git commit -am "chore: release v<version>"`
-4. `git flow release finish <version>` (this tags `v<version>`)
-5. `git push origin main develop --follow-tags`. CI publishes to npm from the tag.
+4. `git flow release finish <version>` (this tags `v<version>` on `main`)
+5. `git push origin main develop --follow-tags`. The tag starts `.github/workflows/release.yml`.
 
-CI authenticates to npm with [trusted publishing](https://docs.npmjs.com/trusted-publishers) (OIDC) rather than a stored token. Each `@hpmws/*` package on npmjs.com must trust this repository's `release.yml` workflow. A new package needs one manual publish first (`pnpm publish --access public --otp <code>` from its directory). After that, register the workflow for every public package while logged in to npm with 2FA: `pnpm trust:npm` (add `--dry-run` to preview).
+The release workflow has two jobs:
+- **build** (read-only token, no OIDC, no dependency cache) refuses the tag unless its commit is on `main` and `v<version>` equals every publishable package's version (`bun scripts/release.ts gate v<version>`). It then runs install, lint, typecheck, test, clean, build and `check:pack`, packs each package (`bun scripts/release.ts pack <dir>`), generates CycloneDX SBOMs with `pnpm sbom`, and uploads the tarballs and SBOMs as workflow artifacts.
+- **publish** is the only job with `id-token: write`. It checks out nothing and runs no repo scripts: it downloads the tarballs, checks each one's name and version against the tag, and runs `npm publish <tarball> --access public` with the runner's npm (11.5.1 or newer, required for trusted publishing). Versions already on npm are skipped, so a release that failed part-way can be re-run from the Actions tab. Prereleases (`v1.0.0-next.0`) publish under their identifier's dist-tag (`next`).
+
+To check a release locally without publishing: `bun scripts/release.ts gate v<version>`, then `bun scripts/release.ts pack /tmp/hpmws-tarballs` after `pnpm build`.
+
+CI authenticates to npm with [trusted publishing](https://docs.npmjs.com/trusted-publishers) (OIDC) rather than a stored token. Each `@hpmws/*` package on npmjs.com must trust this repository's `release.yml` workflow. A new package needs one manual publish first (`pnpm publish --access public --otp <code>` from its directory). After that, register the workflow for every public package while logged in to npm with 2FA: `pnpm trust:npm` (add `--dry-run` to preview). npm attaches provenance only while the repository is public.
+
+The release job does not use a GitHub deployment environment yet, because environments with protection rules are not available to private repositories on the free plan. Once the repository is public (or the plan allows it), add `environment: npm-publish` to the `publish` job, protect that environment with required reviewers and a `v*` tag rule, and re-register the trusted publishers with `pnpm trust:npm --env npm-publish`.
+
+Security issues: see [SECURITY.md](SECURITY.md).
 
 ## License
 
