@@ -6,6 +6,7 @@ import {
   Get,
   MethodNotAllowedException,
   Post,
+  requestUrl,
   UnsupportedMediaTypeException,
 } from '@hpmws/http';
 import type { GraphQLRequest } from '@leaven-graphql/core';
@@ -84,6 +85,20 @@ function mediaType(header: string | null): string {
   return (header ?? '').split(';')[0]!.trim().toLowerCase();
 }
 
+/** A plain `host[:port]` or bracketed IPv6 literal with an optional port, and nothing else. */
+const PLAIN_HOST =
+  /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*|\[[0-9a-f:.]+\])(?::\d{1,5})?$/i;
+
+/**
+ * The playground's WebSocket URL: from the Host header only when it is a plain host[:port]
+ * (anything else could inject into the page), otherwise the relative path.
+ */
+export function subscriptionUrl(ctx: Ctx, path: string): string {
+  const host = ctx.req.headers.get('host');
+  if (host === null || !PLAIN_HOST.test(host)) return path;
+  return `${ctx.secure ? 'wss' : 'ws'}://${host.toLowerCase()}${path}`;
+}
+
 function jsonParam(params: URLSearchParams, name: string): unknown {
   const raw = params.get(name);
   if (raw === null) return undefined;
@@ -142,12 +157,9 @@ export async function handlePost(runtime: GraphQLRuntime, ctx: Ctx): Promise<Res
 export async function handleGet(runtime: GraphQLRuntime, ctx: Ctx): Promise<Response> {
   const { options } = runtime;
   if (options.playground && acceptQuality(ctx.req.headers.get('accept'), 'text/html', true) > 0) {
-    const url = new URL(options.path, ctx.req.url);
-    let ws: string | undefined;
-    if (runtime.subscriptionsEnabled) {
-      url.protocol = ctx.secure ? 'wss:' : 'ws:';
-      ws = url.toString();
-    }
+    const ws = runtime.subscriptionsEnabled
+      ? (options.playgroundSubscriptionEndpoint ?? subscriptionUrl(ctx, options.path))
+      : undefined;
     return runtime.playground.serve(options.path, ws);
   }
   if (options.csrf !== false) {
@@ -158,7 +170,7 @@ export async function handleGet(runtime: GraphQLRuntime, ctx: Ctx): Promise<Resp
       );
     }
   }
-  const params = new URL(ctx.req.url).searchParams;
+  const params = requestUrl(ctx.req).searchParams;
   const request = parseGraphQLParams(
     {
       query: params.get('query'),

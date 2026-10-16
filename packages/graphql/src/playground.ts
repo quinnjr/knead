@@ -6,6 +6,10 @@ import { renderPlayground } from '@leaven-graphql/playground';
  * npm versions are immutable. When Leaven changes these URLs the playground refuses to render
  * until the new URLs are added here (test/playground.test.ts fails first).
  * Computed with: curl -sSfL <url> | openssl dgst -sha384 -binary | base64
+ *
+ * NOTE: these hashes match @leaven-graphql/playground 0.2.1. When the dependency is bumped to
+ * 0.2.2 (the Leaven hardening release), recompute every hash here for the URLs the new page
+ * loads; test/playground.test.ts fails until they match.
  */
 export const PLAYGROUND_ASSETS: Readonly<Record<string, string>> = Object.freeze({
   'https://cdn.jsdelivr.net/npm/graphql-playground-react@1.7.26/build/static/js/middleware.js':
@@ -94,6 +98,7 @@ export function playgroundResponse(page: PlaygroundPage): Response {
     headers: {
       'content-type': 'text/html; charset=utf-8',
       'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
       'content-security-policy': page.csp,
     },
   });
@@ -128,7 +133,11 @@ export class PlaygroundGate {
     if (!this.#available) {
       return new Response('GraphQL playground unavailable', {
         status: 503,
-        headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' },
+        headers: {
+          'content-type': 'text/plain; charset=utf-8',
+          'cache-control': 'no-store',
+          'x-content-type-options': 'nosniff',
+        },
       });
     }
     return playgroundResponse(playgroundPage(endpoint, subscriptionEndpoint, this.#assets));

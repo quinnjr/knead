@@ -16,6 +16,7 @@ export {
   GRAPHQL_LIMITS,
   GRAPHQL_OPTIONS,
   type GraphQLModuleOptions,
+  type PlaygroundOptions,
   type ResolvedGraphQLOptions,
   resolveOptions,
   type SubscriptionOptions as GraphQLSubscriptionOptions,

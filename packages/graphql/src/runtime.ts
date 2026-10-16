@@ -16,6 +16,7 @@ import {
   GUARDS,
   type Guard,
   type GuardRef,
+  HTTP_DEVELOPMENT,
   LOGGER,
   ROUTE_META,
   WsRegistry,
@@ -383,6 +384,9 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
   );
   readonly pubsub = inject(PUBSUB);
   readonly logger = inject(LOGGER);
+  /** The application's development flag (HTTP_DEVELOPMENT), else NODE_ENV === 'development'. */
+  readonly development: boolean =
+    inject(HTTP_DEVELOPMENT, { optional: true }) ?? process.env.NODE_ENV === 'development';
   readonly #modules = inject(MODULES);
   readonly #ws = inject(WsRegistry);
   #schema: GraphQLSchema | undefined;
@@ -439,7 +443,15 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
       this.masking,
     );
     (this.pubsub as { useLogger?: (logger: unknown) => void }).useLogger?.(this.logger);
-    if (this.options.playground) this.#playground = new PlaygroundGate(this.logger);
+    if (this.options.playground) {
+      this.#playground = new PlaygroundGate(this.logger);
+      if (!this.development) {
+        this.logger.warn(
+          'The GraphQL playground is enabled outside development: it exposes the schema ' +
+            '(introspection follows it) to anyone who can reach the endpoint.',
+        );
+      }
+    }
     if (this.options.emitSchemaFile !== false) {
       await Bun.write(this.options.emitSchemaFile, printSortedSchema(this.#schema));
     }

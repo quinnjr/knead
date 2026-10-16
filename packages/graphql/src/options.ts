@@ -60,13 +60,22 @@ export interface SubscriptionOptions {
   maxConnectionLifetime?: number;
 }
 
+export interface PlaygroundOptions {
+  subscriptionEndpoint?: string;
+}
+
 export interface GraphQLModuleOptions {
   /** Default '/graphql'. Also the WebSocket path for subscriptions. */
   path?: string;
   /** Builds the user part of each operation's context; merged onto ResolverCtx. */
   context?: (http: Ctx) => object | Promise<object>;
-  /** Default: NODE_ENV === 'development'. */
-  playground?: boolean;
+  /**
+   * Serves GraphQL Playground to browsers. Default: NODE_ENV === 'development'. An object enables
+   * it with options: `subscriptionEndpoint` is the WebSocket URL the page connects to (a
+   * `ws://`/`wss://` URL or an absolute path). Without it, the URL is derived from the request's
+   * Host header when that is a plain `host[:port]`, and is the relative path otherwise.
+   */
+  playground?: boolean | PlaygroundOptions;
   /** Default: NODE_ENV === 'development', or true when `playground: true`. */
   introspection?: boolean;
   /** Deepest selection allowed (fragments expanded). Default 10; `Infinity` or `false` disables. */
@@ -120,6 +129,8 @@ export interface ResolvedGraphQLOptions {
   readonly path: string;
   readonly context: GraphQLModuleOptions['context'];
   readonly playground: boolean;
+  /** The playground's configured subscription endpoint, if any. */
+  readonly playgroundSubscriptionEndpoint: string | undefined;
   readonly introspection: boolean;
   readonly maskErrors: boolean;
   readonly emitSchemaFile: string | false;
@@ -187,6 +198,13 @@ export function validateGraphQLOptions(options: GraphQLModuleOptions): void {
   limit('maxQueryLength', options.maxQueryLength, 1);
   limit('maxAliases', options.maxAliases, 1);
   limit('parseOptions.maxTokens', options.parseOptions?.maxTokens, 1);
+  const endpoint =
+    typeof options.playground === 'object' ? options.playground.subscriptionEndpoint : undefined;
+  if (endpoint !== undefined && !/^(?:wss?:\/\/[^\s"'<>]+|\/[^\s"'<>]*)$/i.test(endpoint)) {
+    throw new HttpConfigError(
+      `playground.subscriptionEndpoint must be a ws:// or wss:// URL or an absolute path; got ${JSON.stringify(endpoint)}`,
+    );
+  }
   const csrf = options.csrf;
   if (csrf && csrf.requiredHeaders !== undefined && csrf.requiredHeaders.length === 0) {
     throw new HttpConfigError(
@@ -207,8 +225,12 @@ export function resolveOptions(
   return {
     path,
     context: options.context,
-    playground: options.playground ?? dev,
-    introspection: options.introspection ?? (dev || options.playground === true),
+    playground: options.playground === undefined ? dev : options.playground !== false,
+    playgroundSubscriptionEndpoint:
+      typeof options.playground === 'object' ? options.playground.subscriptionEndpoint : undefined,
+    introspection:
+      options.introspection ??
+      (dev || (options.playground !== undefined && options.playground !== false)),
     maskErrors: options.maskErrors ?? !dev,
     emitSchemaFile: options.emitSchemaFile ?? (dev ? 'schema.graphql' : false),
     cacheControl: options.cacheControl ?? 'no-store',
