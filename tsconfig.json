@@ -1,0 +1,13 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/core" },
+    { "path": "packages/http" },
+    { "path": "packages/testing" },
+    { "path": "packages/cors" },
+    { "path": "packages/rate-limit" },
+    { "path": "packages/security-headers" },
+    { "path": "packages/sanitize" },
+    { "path": "packages/graphql" }
+  ]
+}

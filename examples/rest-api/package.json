@@ -1,0 +1,23 @@
+{
+  "name": "@knead-js/example-rest-api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun src/main.ts",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@knead-js/core": "workspace:^",
+    "@knead-js/cors": "workspace:^",
+    "@knead-js/graphql": "workspace:^",
+    "@knead-js/http": "workspace:^",
+    "@knead-js/rate-limit": "workspace:^",
+    "@knead-js/sanitize": "workspace:^",
+    "@knead-js/security-headers": "workspace:^",
+    "graphql": "^16.14.2",
+    "valibot": "^1.5.0"
+  },
+  "devDependencies": {
+    "@knead-js/testing": "workspace:^"
+  }
+}

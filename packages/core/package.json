@@ -1,0 +1,43 @@
+{
+  "name": "@knead-js/core",
+  "version": "0.1.0",
+  "description": "Dependency injection and module system for the Knead framework",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/quinnjr/knead.git",
+    "directory": "packages/core"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
+  ],
+  "sideEffects": [
+    "./src/polyfill.ts",
+    "./src/copy-guard.ts",
+    "./dist/polyfill.js",
+    "./dist/copy-guard.js"
+  ],
+  "engines": {
+    "bun": ">=1.4.3"
+  },
+  "scripts": {
+    "test": "bun test",
+    "prepack": "bun ../../scripts/copy-licenses.ts"
+  },
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
+  }
+}
