@@ -2,11 +2,11 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { InjectionToken, inject, Module } from '@knead/core';
-import { APP_GUARD, type Ctx, HttpConfigError } from '@knead/http';
-import { RateLimitModule } from '@knead/rate-limit';
-import { SecurityHeadersModule } from '@knead/security-headers';
-import { Test } from '@knead/testing';
+import { InjectionToken, inject, Module } from '@knead-js/core';
+import { APP_GUARD, type Ctx, HttpConfigError } from '@knead-js/http';
+import { RateLimitModule } from '@knead-js/rate-limit';
+import { SecurityHeadersModule } from '@knead-js/security-headers';
+import { Test } from '@knead-js/testing';
 import {
   GraphQLModule,
   GraphQLRuntime,

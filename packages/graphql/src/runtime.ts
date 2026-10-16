@@ -8,7 +8,7 @@ import {
   type OnModuleDestroy,
   type OnModuleInit,
   type Type,
-} from '@knead/core';
+} from '@knead-js/core';
 import {
   assertGuardRef,
   BadRequestException,
@@ -22,7 +22,7 @@ import {
   ROUTE_META,
   WsRegistry,
   type WsSocket,
-} from '@knead/http';
+} from '@knead-js/http';
 import {
   type CompilerOptions,
   type ExecutionHooks,

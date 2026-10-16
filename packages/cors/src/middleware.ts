@@ -1,5 +1,11 @@
-import { inject } from '@knead/core';
-import { type Ctx, ForbiddenException, type Middleware, type Next, withHeaders } from '@knead/http';
+import { inject } from '@knead-js/core';
+import {
+  type Ctx,
+  ForbiddenException,
+  type Middleware,
+  type Next,
+  withHeaders,
+} from '@knead-js/http';
 import { CORS_OPTIONS } from './options.js';
 
 const DEFAULT_METHODS = ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE'];

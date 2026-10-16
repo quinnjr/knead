@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { Module } from '@knead/core';
-import { Test } from '@knead/testing';
+import { Module } from '@knead-js/core';
+import { Test } from '@knead-js/testing';
 import { GraphQLScalarType } from 'graphql';
 import {
   ArgsType,

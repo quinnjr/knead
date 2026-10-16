@@ -1,5 +1,5 @@
 {
-  "name": "@knead/testing",
+  "name": "@knead-js/testing",
   "version": "0.0.0",
   "description": "Testing utilities for Knead applications",
   "license": "MIT OR Apache-2.0",
@@ -27,12 +27,12 @@
     "prepack": "bun ../../scripts/copy-licenses.ts"
   },
   "peerDependencies": {
-    "@knead/core": "workspace:^",
-    "@knead/http": "workspace:^"
+    "@knead-js/core": "workspace:^",
+    "@knead-js/http": "workspace:^"
   },
   "devDependencies": {
-    "@knead/core": "workspace:^",
-    "@knead/http": "workspace:^"
+    "@knead-js/core": "workspace:^",
+    "@knead-js/http": "workspace:^"
   },
   "publishConfig": {
     "access": "public",

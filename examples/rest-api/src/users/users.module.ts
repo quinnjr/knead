@@ -1,4 +1,4 @@
-import { Module } from '@knead/core';
+import { Module } from '@knead-js/core';
 import { AuthModule } from '../auth/auth.js';
 import { UsersController } from './users.controller.js';
 import { UsersResolver } from './users.resolver.js';

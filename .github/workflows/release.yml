@@ -181,25 +181,25 @@ jobs:
           SUMS_SHA256: ${{ needs.build.outputs.sums-sha256 }}
           # Exactly the publishable workspace packages (scripts/release.test.ts checks this).
           ALLOWED_PACKAGES: >-
-            @knead/core
-            @knead/cors
-            @knead/graphql
-            @knead/http
-            @knead/rate-limit
-            @knead/sanitize
-            @knead/security-headers
-            @knead/testing
+            @knead-js/core
+            @knead-js/cors
+            @knead-js/graphql
+            @knead-js/http
+            @knead-js/rate-limit
+            @knead-js/sanitize
+            @knead-js/security-headers
+            @knead-js/testing
           # Per package, the only names allowed in dependencies, optionalDependencies and
           # peerDependencies (scripts/release.test.ts keeps this equal to the workspace manifests).
           ALLOWED_DEPENDENCIES: |
-            @knead/core:
-            @knead/cors: @knead/core @knead/http
-            @knead/graphql: @knead/core @knead/http @leaven-graphql/core @leaven-graphql/errors @leaven-graphql/playground @leaven-graphql/ws @standard-schema/spec dataloader graphql
-            @knead/http: @knead/core @standard-schema/spec
-            @knead/rate-limit: @knead/core @knead/http
-            @knead/sanitize: @standard-schema/spec sanitize-html
-            @knead/security-headers: @knead/core @knead/http
-            @knead/testing: @knead/core @knead/http
+            @knead-js/core:
+            @knead-js/cors: @knead-js/core @knead-js/http
+            @knead-js/graphql: @knead-js/core @knead-js/http @leaven-graphql/core @leaven-graphql/errors @leaven-graphql/playground @leaven-graphql/ws @standard-schema/spec dataloader graphql
+            @knead-js/http: @knead-js/core @standard-schema/spec
+            @knead-js/rate-limit: @knead-js/core @knead-js/http
+            @knead-js/sanitize: @standard-schema/spec sanitize-html
+            @knead-js/security-headers: @knead-js/core @knead-js/http
+            @knead-js/testing: @knead-js/core @knead-js/http
         run: |
           set -euo pipefail
           registry=https://registry.npmjs.org/

@@ -1,5 +1,5 @@
-import { appendMetadata, INJECTABLE, setMetadata } from '@knead/core';
-import { createRouteDecorator, type GuardRef } from '@knead/http';
+import { appendMetadata, INJECTABLE, setMetadata } from '@knead-js/core';
+import { createRouteDecorator, type GuardRef } from '@knead-js/http';
 import type {
   ResolverCtx,
   ResolverCtxKey,

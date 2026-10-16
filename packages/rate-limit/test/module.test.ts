@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
-import type { ModuleImport } from '@knead/core';
-import { CorsModule } from '@knead/cors';
-import { Controller, type Ctx, Get } from '@knead/http';
-import { Test, type TestApp, type TestingModule } from '@knead/testing';
+import type { ModuleImport } from '@knead-js/core';
+import { CorsModule } from '@knead-js/cors';
+import { Controller, type Ctx, Get } from '@knead-js/http';
+import { Test, type TestApp, type TestingModule } from '@knead-js/testing';
 import type { RedisClient } from 'bun';
 import {
   MemoryStore,

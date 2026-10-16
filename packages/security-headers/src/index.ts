@@ -24,7 +24,7 @@ export {
   validateSecurityHeadersOptions,
 } from './options.js';
 
-declare module '@knead/http' {
+declare module '@knead-js/http' {
   interface CtxState {
     /** Set by SecurityHeadersModule when CSP nonces are enabled. */
     cspNonce?: string;

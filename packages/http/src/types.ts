@@ -1,4 +1,4 @@
-import type { AbstractType, Type } from '@knead/core';
+import type { AbstractType, Type } from '@knead-js/core';
 import type { StandardSchemaV1 } from '@standard-schema/spec';
 import type { Server } from 'bun';
 
@@ -6,7 +6,7 @@ export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 
 
 /**
  * Augment to type `ctx.state`:
- * `declare module '@knead/http' { interface CtxState { user?: User } }`
+ * `declare module '@knead-js/http' { interface CtxState { user?: User } }`
  */
 // biome-ignore lint/suspicious/noEmptyInterface: augmentation point
 export interface CtxState {}

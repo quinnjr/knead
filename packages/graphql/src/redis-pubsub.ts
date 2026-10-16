@@ -14,7 +14,7 @@ import {
   type Logger,
   logError,
   plaintextRedisHost,
-} from '@knead/http';
+} from '@knead-js/http';
 import type { PubSubEngine } from '@leaven-graphql/ws';
 import { RedisClient } from 'bun';
 import { deepFreeze } from './pubsub.js';

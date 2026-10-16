@@ -140,14 +140,14 @@ function smokeTest(dir: string): void {
 
 function consumerApp(): string {
   return `
-import { inject, Module } from '@knead/core';
-import { CorsModule } from '@knead/cors';
-import { Field, GraphQLModule, ID, ObjectType, Query, Resolver, type ResolverCtx } from '@knead/graphql';
-import { Controller, type Ctx, Get, KneadFactory, MemoryLogger } from '@knead/http';
-import { RateLimitModule } from '@knead/rate-limit';
-import { sanitize, type SanitizePolicy } from '@knead/sanitize';
-import { SecurityHeadersModule } from '@knead/security-headers';
-import type { TestingModuleBuilder } from '@knead/testing';
+import { inject, Module } from '@knead-js/core';
+import { CorsModule } from '@knead-js/cors';
+import { Field, GraphQLModule, ID, ObjectType, Query, Resolver, type ResolverCtx } from '@knead-js/graphql';
+import { Controller, type Ctx, Get, KneadFactory, MemoryLogger } from '@knead-js/http';
+import { RateLimitModule } from '@knead-js/rate-limit';
+import { sanitize, type SanitizePolicy } from '@knead-js/sanitize';
+import { SecurityHeadersModule } from '@knead-js/security-headers';
+import type { TestingModuleBuilder } from '@knead-js/testing';
 
 class Greeter {
   greet(name: string): string {

@@ -1,4 +1,4 @@
-import { inject, type Type } from '@knead/core';
+import { inject, type Type } from '@knead-js/core';
 import {
   BadRequestException,
   Controller,
@@ -8,7 +8,7 @@ import {
   Post,
   requestUrl,
   UnsupportedMediaTypeException,
-} from '@knead/http';
+} from '@knead-js/http';
 import type { GraphQLRequest } from '@leaven-graphql/core';
 import type { OperationKind } from './context.js';
 import { queryTooLongMessage } from './options.js';

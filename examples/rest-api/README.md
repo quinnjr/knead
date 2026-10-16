@@ -6,7 +6,7 @@ A small users API showing CORS, rate limiting, security headers, guards, schema 
 
 ```bash
 pnpm install
-pnpm --filter @knead/example-rest-api start   # listens on HOST:PORT (default 127.0.0.1:3000)
+pnpm --filter @knead-js/example-rest-api start   # listens on HOST:PORT (default 127.0.0.1:3000)
 ```
 
 Demo bearer tokens (hard-coded, demo only): `admin-token` and `user-token`. The demo `AuthService` throws at startup when `NODE_ENV=production`. Set `HOST=0.0.0.0` to accept connections from the network. Creating and deleting users requires the admin role:
@@ -24,7 +24,7 @@ curl -X POST localhost:3000/graphql -H 'content-type: application/json' -d '{"qu
 ## Test
 
 ```bash
-pnpm --filter @knead/example-rest-api test
+pnpm --filter @knead-js/example-rest-api test
 ```
 
 ## Notes

@@ -1,4 +1,4 @@
-import { NotFoundException } from '@knead/http';
+import { NotFoundException } from '@knead-js/http';
 
 export interface UserRecord {
   id: string;

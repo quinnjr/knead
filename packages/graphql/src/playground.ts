@@ -1,4 +1,4 @@
-import type { Logger } from '@knead/http';
+import type { Logger } from '@knead-js/http';
 import { renderPlayground } from '@leaven-graphql/playground';
 
 /**

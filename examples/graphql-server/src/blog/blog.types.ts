@@ -8,8 +8,8 @@ import {
   Int,
   InterfaceType,
   ObjectType,
-} from '@knead/graphql';
-import { sanitize } from '@knead/sanitize';
+} from '@knead-js/graphql';
+import { sanitize } from '@knead-js/sanitize';
 import type { CommentEvent, PostEvent } from './blog.events.js';
 import { DateTime } from './date-time.scalar.js';
 

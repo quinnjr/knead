@@ -1,6 +1,6 @@
-import { Module } from '@knead/core';
-import type { ResolverCtx } from '@knead/graphql';
-import { createRouteDecorator, UnauthorizedException } from '@knead/http';
+import { Module } from '@knead-js/core';
+import type { ResolverCtx } from '@knead-js/graphql';
+import { createRouteDecorator, UnauthorizedException } from '@knead-js/http';
 
 /** The signed-in user. Each user is also an author of the blog (same id). */
 export interface CurrentUser {
@@ -9,7 +9,7 @@ export interface CurrentUser {
   roles: string[];
 }
 
-declare module '@knead/graphql' {
+declare module '@knead-js/graphql' {
   interface GraphQLContext {
     currentUser?: CurrentUser;
     /** Subscriptions: the connection's token, re-verified by subscriptions.refreshContext. */

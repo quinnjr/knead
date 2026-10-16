@@ -1,5 +1,5 @@
-import type { OnModuleInit } from '@knead/core';
-import { NotFoundException } from '@knead/http';
+import type { OnModuleInit } from '@knead-js/core';
+import { NotFoundException } from '@knead-js/http';
 import type { CurrentUser } from '../auth/auth.js';
 import { Author, Comment, type Node, Post, PostStatus } from './blog.types.js';
 

@@ -1,5 +1,5 @@
 {
-  "name": "@knead/rate-limit",
+  "name": "@knead-js/rate-limit",
   "version": "0.0.0",
   "description": "Rate limiting with memory and Redis stores for the Knead framework",
   "license": "MIT OR Apache-2.0",
@@ -27,14 +27,14 @@
     "prepack": "bun ../../scripts/copy-licenses.ts"
   },
   "peerDependencies": {
-    "@knead/core": "workspace:^",
-    "@knead/http": "workspace:^"
+    "@knead-js/core": "workspace:^",
+    "@knead-js/http": "workspace:^"
   },
   "devDependencies": {
-    "@knead/core": "workspace:^",
-    "@knead/cors": "workspace:^",
-    "@knead/http": "workspace:^",
-    "@knead/testing": "workspace:^"
+    "@knead-js/core": "workspace:^",
+    "@knead-js/cors": "workspace:^",
+    "@knead-js/http": "workspace:^",
+    "@knead-js/testing": "workspace:^"
   },
   "publishConfig": {
     "access": "public",

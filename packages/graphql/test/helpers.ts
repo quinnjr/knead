@@ -1,5 +1,5 @@
-import type { ModuleImport, Provider } from '@knead/core';
-import { Test, type TestApp, type TestingModule } from '@knead/testing';
+import type { ModuleImport, Provider } from '@knead-js/core';
+import { Test, type TestApp, type TestingModule } from '@knead-js/testing';
 import {
   GraphQLModule,
   type GraphQLModuleOptions,

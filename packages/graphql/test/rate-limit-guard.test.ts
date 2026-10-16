@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { Module } from '@knead/core';
-import { UseGuards } from '@knead/http';
-import { RateLimit, RateLimitGuard, RateLimitModule } from '@knead/rate-limit';
+import { Module } from '@knead-js/core';
+import { UseGuards } from '@knead-js/http';
+import { RateLimit, RateLimitGuard, RateLimitModule } from '@knead-js/rate-limit';
 import { Int, Query, Resolver } from '../src/index.js';
 import { type Started, startGraphQL } from './helpers.js';
 

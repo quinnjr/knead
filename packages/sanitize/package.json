@@ -1,5 +1,5 @@
 {
-  "name": "@knead/sanitize",
+  "name": "@knead-js/sanitize",
   "version": "0.0.0",
   "description": "Opt-in allowlist HTML sanitization as a Standard Schema wrapper",
   "license": "MIT OR Apache-2.0",

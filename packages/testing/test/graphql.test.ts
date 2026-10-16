@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { inject, Module, type OnModuleInit } from '@knead/core';
-import { Controller, type Ctx, Post, WsRegistry } from '@knead/http';
+import { inject, Module, type OnModuleInit } from '@knead-js/core';
+import { Controller, type Ctx, Post, WsRegistry } from '@knead-js/http';
 import { Test, type TestingModule } from '../src/index.js';
 
 // A stand-in GraphQL server: echoes POST bodies and speaks just enough graphql-transport-ws.

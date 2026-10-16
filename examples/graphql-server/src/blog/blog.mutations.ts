@@ -1,7 +1,7 @@
-import { inject } from '@knead/core';
-import { ID, Mutation, PUBSUB, Resolver, type ResolverCtx } from '@knead/graphql';
-import { ForbiddenException, UseGuards } from '@knead/http';
-import { sanitize } from '@knead/sanitize';
+import { inject } from '@knead-js/core';
+import { ID, Mutation, PUBSUB, Resolver, type ResolverCtx } from '@knead-js/graphql';
+import { ForbiddenException, UseGuards } from '@knead-js/http';
+import { sanitize } from '@knead-js/sanitize';
 import * as v from 'valibot';
 import { Authenticated, Roles, RolesGuard } from '../auth/auth.js';
 import { toCommentEvent, toPostEvent } from './blog.events.js';

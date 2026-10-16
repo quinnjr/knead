@@ -1,5 +1,5 @@
-import { InjectionToken, KneadError } from '@knead/core';
-import type { Ctx } from '@knead/http';
+import { InjectionToken, KneadError } from '@knead-js/core';
+import type { Ctx } from '@knead-js/http';
 
 export type CorsOrigin =
   | string

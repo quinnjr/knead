@@ -1,5 +1,5 @@
-import { inject } from '@knead/core';
-import { WsRegistry } from '@knead/http';
+import { inject } from '@knead-js/core';
+import { WsRegistry } from '@knead-js/http';
 import { GraphQLRuntime } from './runtime.js';
 import type { GraphQLConnection } from './subscriptions.js';
 

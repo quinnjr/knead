@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { createConnection } from 'node:net';
-import { Module } from '@knead/core';
-import { HttpConfigError } from '@knead/http';
-import { Test } from '@knead/testing';
+import { Module } from '@knead-js/core';
+import { HttpConfigError } from '@knead-js/http';
+import { Test } from '@knead-js/testing';
 import { GraphQLModule, Int, Query, Resolver, Subscription } from '../src/index.js';
 import { type Started, startGraphQL } from './helpers.js';
 

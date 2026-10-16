@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { Module } from '@knead/core';
+import { Module } from '@knead-js/core';
 import { Int, Mutation, Query, Resolver, Subscription } from '../src/index.js';
 import { type Started, startGraphQL } from './helpers.js';
 

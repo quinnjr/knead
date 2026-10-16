@@ -1,5 +1,5 @@
 {
-  "name": "@knead/graphql",
+  "name": "@knead-js/graphql",
   "version": "0.0.0",
   "description": "Code-first GraphQL on Leaven for the Knead framework",
   "license": "MIT OR Apache-2.0",
@@ -35,16 +35,16 @@
     "dataloader": "2.2.3"
   },
   "peerDependencies": {
-    "@knead/core": "workspace:^",
-    "@knead/http": "workspace:^",
+    "@knead-js/core": "workspace:^",
+    "@knead-js/http": "workspace:^",
     "graphql": "^16.14.2"
   },
   "devDependencies": {
-    "@knead/core": "workspace:^",
-    "@knead/http": "workspace:^",
-    "@knead/rate-limit": "workspace:^",
-    "@knead/security-headers": "workspace:^",
-    "@knead/testing": "workspace:^",
+    "@knead-js/core": "workspace:^",
+    "@knead-js/http": "workspace:^",
+    "@knead-js/rate-limit": "workspace:^",
+    "@knead-js/security-headers": "workspace:^",
+    "@knead-js/testing": "workspace:^",
     "graphql": "^16.14.2"
   },
   "publishConfig": {

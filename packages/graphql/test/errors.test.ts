@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { Module } from '@knead/core';
-import { MemoryLogger } from '@knead/http';
+import { Module } from '@knead-js/core';
+import { MemoryLogger } from '@knead-js/http';
 import { GraphQLError } from 'graphql';
 import { createErrorFormatter, Query, Resolver } from '../src/index.js';
 import { startGraphQL } from './helpers.js';

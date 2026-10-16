@@ -1,4 +1,4 @@
-import { inject } from '@knead/core';
+import { inject } from '@knead-js/core';
 import { LOGGER, type Logger, logValue, redactCredentials, redactValue } from './logger.js';
 import { HTTP_DEVELOPMENT } from './tokens.js';
 

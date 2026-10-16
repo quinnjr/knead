@@ -1,11 +1,11 @@
-import type { ModuleInjector, Type } from '@knead/core';
-import type { Ctx } from '@knead/http';
+import type { ModuleInjector, Type } from '@knead-js/core';
+import type { Ctx } from '@knead-js/http';
 import DataLoader from 'dataloader';
 import type { GraphQLResolveInfo } from 'graphql';
 
 /**
  * Augment to type the object returned by `GraphQLModule.forRoot({ context })`:
- * `declare module '@knead/graphql' { interface GraphQLContext { user?: User } }`
+ * `declare module '@knead-js/graphql' { interface GraphQLContext { user?: User } }`
  */
 // biome-ignore lint/suspicious/noEmptyInterface: augmentation point
 export interface GraphQLContext {}

@@ -1,4 +1,4 @@
-import type { ModuleOptions, Provider, Token, Type } from '@knead/core';
+import type { ModuleOptions, Provider, Token, Type } from '@knead-js/core';
 import {
   type ExceptionFilter,
   type Guard,
@@ -9,7 +9,7 @@ import {
   type Logger,
   MemoryLogger,
   type Middleware,
-} from '@knead/http';
+} from '@knead-js/http';
 import {
   type GraphQLRequestOptions,
   type GraphQLResult,

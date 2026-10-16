@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { createConnection } from 'node:net';
-import { Module } from '@knead/core';
+import { Module } from '@knead-js/core';
 import { type HttpApplication, KneadFactory, type ListenOptions } from '../src/application.js';
 import { Controller, Get } from '../src/decorators.js';
 import { HttpConfigError } from '../src/exceptions.js';

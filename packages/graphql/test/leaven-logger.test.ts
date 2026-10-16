@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { LOGGER, type Logger } from '@knead/http';
-import { Test, type TestingModule } from '@knead/testing';
+import { LOGGER, type Logger } from '@knead-js/http';
+import { Test, type TestingModule } from '@knead-js/testing';
 import { GraphQLModule, PUBSUB, Query, Resolver } from '../src/index.js';
 
 @Resolver()

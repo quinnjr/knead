@@ -1,7 +1,7 @@
-// Cross-package integration: every @knead/* package working together in one application.
+// Cross-package integration: every @knead-js/* package working together in one application.
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { inject, Module, type OnModuleDestroy, type OnModuleInit } from '@knead/core';
-import { CorsModule } from '@knead/cors';
+import { inject, Module, type OnModuleDestroy, type OnModuleInit } from '@knead-js/core';
+import { CorsModule } from '@knead-js/cors';
 import {
   Controller,
   type Ctx,
@@ -10,11 +10,11 @@ import {
   type Next,
   UseMiddleware,
   WsRegistry,
-} from '@knead/http';
-import { RateLimit, RateLimitModule, SkipRateLimit } from '@knead/rate-limit';
-import { sanitize } from '@knead/sanitize';
-import { SecurityHeadersModule } from '@knead/security-headers';
-import { Test, type TestApp, type TestingModule } from '@knead/testing';
+} from '@knead-js/http';
+import { RateLimit, RateLimitModule, SkipRateLimit } from '@knead-js/rate-limit';
+import { sanitize } from '@knead-js/sanitize';
+import { SecurityHeadersModule } from '@knead-js/security-headers';
+import { Test, type TestApp, type TestingModule } from '@knead-js/testing';
 
 const ALLOWED = 'https://app.example';
 const lifecycle: string[] = [];

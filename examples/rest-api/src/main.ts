@@ -1,4 +1,4 @@
-import { KneadFactory } from '@knead/http';
+import { KneadFactory } from '@knead-js/http';
 import { AppModule } from './app.module.js';
 import { listenOptions } from './config.js';
 

@@ -1,5 +1,5 @@
-import { type DynamicModule, inject, Module } from '@knead/core';
-import { APP_MIDDLEWARE } from '@knead/http';
+import { type DynamicModule, inject, Module } from '@knead-js/core';
+import { APP_MIDDLEWARE } from '@knead-js/http';
 import { SECURITY_HEADERS_OPTIONS, SecurityHeadersMiddleware } from './middleware.js';
 import { type SecurityHeadersOptions, validateSecurityHeadersOptions } from './options.js';
 

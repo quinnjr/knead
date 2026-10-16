@@ -74,7 +74,7 @@ jobs:
       - run: pnpm build
       - run: pnpm check:pack
       - run: pnpm test
-      - run: pnpm --filter @knead/example-graphql-server smoke
+      - run: pnpm --filter @knead-js/example-graphql-server smoke
 
   # Scans the full git history for committed secrets with a pinned, checksum-verified gitleaks.
   secrets:

@@ -1,4 +1,4 @@
-import type { ModuleInjector, Type } from '@knead/core';
+import type { ModuleInjector, Type } from '@knead-js/core';
 import { HttpConfigError } from './exceptions.js';
 import type {
   Ctx,

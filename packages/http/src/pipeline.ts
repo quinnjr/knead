@@ -1,4 +1,4 @@
-import { getMetadata } from '@knead/core';
+import { getMetadata } from '@knead-js/core';
 import type { RequestContext } from './context.js';
 import { logError } from './error-log.js';
 import {
