@@ -125,11 +125,22 @@ function resolveGuard(ref: GuardRef<any>, injector: ModuleInjector): Guard<any> 
   return ref;
 }
 
-/** Rejects computed topics containing a wildcard ("*" or "#") with BAD_USER_INPUT. */
+/** Longest computed subscription topic, in characters. */
+export const MAX_TOPIC_LENGTH = 256;
+
+/**
+ * Rejects computed topics containing a wildcard ("*" or "#") or longer than 256 characters with
+ * BAD_USER_INPUT.
+ */
 export function rejectWildcards(topics: string | readonly string[]): void {
   for (const topic of typeof topics === 'string' ? [topics] : topics) {
     if (/[*#]/.test(topic)) {
       throw new BadRequestException('Subscription topics cannot contain "*" or "#".');
+    }
+    if (topic.length > MAX_TOPIC_LENGTH) {
+      throw new BadRequestException(
+        `Subscription topics cannot be longer than ${MAX_TOPIC_LENGTH} characters.`,
+      );
     }
   }
 }

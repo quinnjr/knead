@@ -43,6 +43,20 @@ describe('topic safety', () => {
     });
   }
 
+  test('a computed topic longer than 256 characters is BAD_USER_INPUT', async () => {
+    s = await startGraphQL([M]);
+    const sub = await s.app.graphqlSubscribe('subscription($r: ID!) { room(room: $r) }', {
+      variables: { r: 'x'.repeat(252) }, // "room." + 252 = 257
+    });
+    const first = await sub.next();
+    expect(first.value?.errors?.[0]).toMatchObject({
+      message: 'Subscription topics cannot be longer than 256 characters.',
+      extensions: { code: 'BAD_USER_INPUT' },
+    });
+    await sub.close();
+    expect((s.mod.get(PUBSUB) as PubSub).getTopics()).toEqual([]);
+  });
+
   test('ordinary topics subscribe; static topics may use wildcards', async () => {
     s = await startGraphQL([M]);
     const sub = await s.app.graphqlSubscribe('subscription { room(room: "r1") }');
