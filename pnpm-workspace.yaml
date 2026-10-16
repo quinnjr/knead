@@ -1,3 +1,9 @@
 packages:
   - packages/*
   - examples/*
+minimumReleaseAgeExclude:
+  - '@leaven-graphql/context@0.2.1'
+  - '@leaven-graphql/core@0.2.1'
+  - '@leaven-graphql/errors@0.2.1'
+  - '@leaven-graphql/playground@0.2.1'
+  - '@leaven-graphql/ws@0.2.1'

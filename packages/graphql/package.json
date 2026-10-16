@@ -1,0 +1,54 @@
+{
+  "name": "@hpmws/graphql",
+  "version": "0.0.0",
+  "description": "Code-first GraphQL on Leaven for the hpmws framework",
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "bun": ">=1.4.0"
+  },
+  "scripts": {
+    "test": "bun test",
+    "prepack": "bun ../../scripts/copy-licenses.ts"
+  },
+  "dependencies": {
+    "@leaven-graphql/core": "^0.2.1",
+    "@leaven-graphql/errors": "^0.2.1",
+    "@leaven-graphql/playground": "^0.2.1",
+    "@leaven-graphql/ws": "^0.2.1",
+    "@standard-schema/spec": "^1.1.0",
+    "dataloader": "^2.2.3"
+  },
+  "peerDependencies": {
+    "@hpmws/core": "workspace:^",
+    "@hpmws/http": "workspace:^",
+    "graphql": "^16.14.2"
+  },
+  "devDependencies": {
+    "@hpmws/core": "workspace:^",
+    "@hpmws/http": "workspace:^",
+    "@hpmws/rate-limit": "workspace:^",
+    "@hpmws/security-headers": "workspace:^",
+    "@hpmws/testing": "workspace:^",
+    "graphql": "^16.14.2"
+  },
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
+  }
+}

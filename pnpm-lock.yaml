@@ -187,6 +187,9 @@ importers:
       '@hpmws/cors':
         specifier: workspace:^
         version: link:../../packages/cors
+      '@hpmws/graphql':
+        specifier: workspace:^
+        version: link:../../packages/graphql
       '@hpmws/http':
         specifier: workspace:^
         version: link:../../packages/http
@@ -199,6 +202,9 @@ importers:
       '@hpmws/security-headers':
         specifier: workspace:^
         version: link:../../packages/security-headers
+      graphql:
+        specifier: ^16.14.2
+        version: 16.14.2
       valibot:
         specifier: ^1.5.0
         version: 1.5.0(typescript@7.0.2)
@@ -220,6 +226,46 @@ importers:
       '@hpmws/testing':
         specifier: workspace:^
         version: link:../testing
+
+  packages/graphql:
+    dependencies:
+      '@leaven-graphql/core':
+        specifier: ^0.2.1
+        version: 0.2.1(graphql@16.14.2)
+      '@leaven-graphql/errors':
+        specifier: ^0.2.1
+        version: 0.2.1(graphql@16.14.2)
+      '@leaven-graphql/playground':
+        specifier: ^0.2.1
+        version: 0.2.1
+      '@leaven-graphql/ws':
+        specifier: ^0.2.1
+        version: 0.2.1(graphql@16.14.2)
+      '@standard-schema/spec':
+        specifier: ^1.1.0
+        version: 1.1.0
+      dataloader:
+        specifier: ^2.2.3
+        version: 2.2.3
+    devDependencies:
+      '@hpmws/core':
+        specifier: workspace:^
+        version: link:../core
+      '@hpmws/http':
+        specifier: workspace:^
+        version: link:../http
+      '@hpmws/rate-limit':
+        specifier: workspace:^
+        version: link:../rate-limit
+      '@hpmws/security-headers':
+        specifier: workspace:^
+        version: link:../security-headers
+      '@hpmws/testing':
+        specifier: workspace:^
+        version: link:../testing
+      graphql:
+        specifier: ^16.14.2
+        version: 16.14.2
 
   packages/http:
     dependencies:
@@ -414,6 +460,27 @@ packages:
     resolution: {integrity: sha512-dlT1m5e/0yUL0kRNcQn7yGLVThkgbB0Ga/1AmfDDC/8ik6AIiSf2QLQO2zPYvefsHP0aFgxO93cVLCCfDp7kzQ==}
     engines: {node: '>= 20.12.0'}
 
+  '@leaven-graphql/context@0.2.1':
+    resolution: {integrity: sha512-QUyIFbMS8s7BAWj56eN+AumuRkQ+gS7JBZ6RNk1iS6S1zBGmFnw1bzwqxc0x4pu1KRSVGUX3P1wbXEe9DOcDdg==}
+
+  '@leaven-graphql/core@0.2.1':
+    resolution: {integrity: sha512-ttCH21tWmqpocz7Rj++LjoUSyx2donmguJBEAjEveoLI1WUUm3lGNzO37L6WnZUluFRftiYEv+dCGzKOhu4Qvg==}
+    peerDependencies:
+      graphql: ^16.0.0
+
+  '@leaven-graphql/errors@0.2.1':
+    resolution: {integrity: sha512-zummXnp/JHr/2rnfVcghFfRZjUSAOZDeuGgu6KhrWHGuHDsxW8CgfOf8g5a5grJOr0BVkdDrBkA0PNpuVv9xMA==}
+    peerDependencies:
+      graphql: ^16.0.0
+
+  '@leaven-graphql/playground@0.2.1':
+    resolution: {integrity: sha512-2t21AeyXHoRP4lH+IJRPjqbkPQNcJvLpQJhr9UtDOtTWWx0xXNFEsFhWzow0SAcskMzTvaWGuGeZxmFcJhaTAg==}
+
+  '@leaven-graphql/ws@0.2.1':
+    resolution: {integrity: sha512-b/hGnb7ae75oFifPT8uyaIu8GbzPANLILyhYJBcJvlGxiMBvVN9qhRG6J+9V950oC7qphYSR4aiRd8XLMmHwDQ==}
+    peerDependencies:
+      graphql: ^16.0.0
+
   '@manypkg/find-root@3.1.0':
     resolution: {integrity: sha512-BcSqCyKhBVZ5YkSzOiheMCV41kqAFptW6xGqYSTjkVTl9XQpr+pqHhwgGCOHQtjDCv7Is6EFyA14Sm5GVbVABA==}
     engines: {node: '>=20.0.0'}
@@ -569,6 +636,9 @@ packages:
     resolution: {integrity: sha512-LMDU/U2yA4IPIY8KT0NsNPWEYZvAMkbgyspxJ6btJaYV+WMDOHAZCmB0lsTObiHaRS1V/ztKAl7+TSkTqXyeoA==}
     engines: {node: '>=20.19.0'}
 
+  dataloader@2.2.3:
+    resolution: {integrity: sha512-y2krtASINtPFS1rSDjacrFgn1dcUuoREVabwlOGOe4SdxenREqwjwjElAdwvbGM7kgZz9a3KVicWR7vcz8rnzA==}
+
   dayjs@1.11.23:
     resolution: {integrity: sha512-QDTCU0M0MxR3hQfnlDJfwekQiaanm1ubOD231u73WBckQ/fsamwRLiE2GBz6D3a/xF1NgfiDLJjXBa1hYOYTtQ==}
 
@@ -613,6 +683,10 @@ packages:
     peerDependenciesMeta:
       picomatch:
         optional: true
+
+  graphql@16.14.2:
+    resolution: {integrity: sha512-Chq1s4CY7jmh8gO2qvLIJyfCDIN+EHLFW/9iShnp1z8FjBQMoodWP1kDC36VAMXXIvAjj4ARa7ntfAV2BrjsbA==}
+    engines: {node: ^12.22.0 || ^14.16.0 || ^16.0.0 || >=17.0.0}
 
   htmlparser2@12.0.0:
     resolution: {integrity: sha512-Tz7u1i95/g2x2jz81+x0FBVhBhY5aRTvD3tXXdFaljuNdzDLJ8UGNRrTcj2cgQvAg3iW/h77Fz15nLW0L0CrZw==}
@@ -868,6 +942,26 @@ snapshots:
       fast-wrap-ansi: 0.2.2
       sisteransi: 1.0.5
 
+  '@leaven-graphql/context@0.2.1': {}
+
+  '@leaven-graphql/core@0.2.1(graphql@16.14.2)':
+    dependencies:
+      '@leaven-graphql/errors': 0.2.1(graphql@16.14.2)
+      graphql: 16.14.2
+
+  '@leaven-graphql/errors@0.2.1(graphql@16.14.2)':
+    dependencies:
+      graphql: 16.14.2
+
+  '@leaven-graphql/playground@0.2.1': {}
+
+  '@leaven-graphql/ws@0.2.1(graphql@16.14.2)':
+    dependencies:
+      '@leaven-graphql/context': 0.2.1
+      '@leaven-graphql/core': 0.2.1(graphql@16.14.2)
+      '@leaven-graphql/errors': 0.2.1(graphql@16.14.2)
+      graphql: 16.14.2
+
   '@manypkg/find-root@3.1.0':
     dependencies:
       '@manypkg/tools': 2.1.2
@@ -966,6 +1060,8 @@ snapshots:
 
   cac@7.1.0: {}
 
+  dataloader@2.2.3: {}
+
   dayjs@1.11.23: {}
 
   dom-serializer@3.1.1:
@@ -1003,6 +1099,8 @@ snapshots:
   fdir@6.5.0(picomatch@4.0.7):
     optionalDependencies:
       picomatch: 4.0.7
+
+  graphql@16.14.2: {}
 
   htmlparser2@12.0.0:
     dependencies:
