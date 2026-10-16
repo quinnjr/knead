@@ -1,6 +1,6 @@
 import { appendMetadata, INJECTABLE, setMetadata } from '@hpmws/core';
 import type { GuardRef } from '@hpmws/http';
-import type { ResolverCtx } from './context.js';
+import type { ResolverCtx, SubscriptionCtx, SubscriptionEventKey } from './context.js';
 import {
   type ArgMap,
   RESOLVER,
@@ -32,15 +32,16 @@ export interface ResolverOptions extends Omit<ResolverMethodOptions, 'guards' | 
   guards?: readonly GuardRef<ResolverCtx<any, any>>[];
 }
 
-export interface SubscriptionOptions<A = any>
-  extends Omit<SubscriptionMethodOptions, 'guards' | 'args' | 'topic' | 'filter'> {
-  args?: ArgMap | Class;
+export interface SubscriptionOptions<A extends ArgMap | Class = {}, N extends Nullable = false>
+  extends Omit<SubscriptionMethodOptions, 'guards' | 'args' | 'topic' | 'filter' | 'nullable'> {
+  args?: A;
+  nullable?: N;
   guards?: readonly GuardRef<ResolverCtx<any, any>>[];
-  topic: string | ((ctx: ResolverCtx<A, undefined>) => string | readonly string[]);
+  topic: string | ((ctx: SubscriptionCtx<ArgsTs<A>, undefined>) => string | readonly string[]);
   filter?: (event: {
     payload: any;
-    args: A;
-    ctx: ResolverCtx<A, any>;
+    args: ArgsTs<A>;
+    ctx: SubscriptionCtx<ArgsTs<A>, any>;
   }) => boolean | Promise<boolean>;
 }
 
@@ -59,7 +60,7 @@ export type SubscriptionMethodDecorator<R, O extends { nullable?: Nullable }> = 
   This,
   F extends (
     this: This,
-    ctx: ResolverCtx<ArgsOf<O>, any>,
+    ctx: SubscriptionCtx<ArgsOf<O>, any>,
     // biome-ignore lint/suspicious/noConfusingVoidType: an empty method body returns void
   ) => MaybePromise<OutType<R, O['nullable']> | undefined | void>,
 >(
@@ -67,12 +68,47 @@ export type SubscriptionMethodDecorator<R, O extends { nullable?: Nullable }> = 
   context: ClassMethodDecoratorContext<This, F>,
 ) => void;
 
+/**
+ * Names of methods whose ResolverCtx parent is not satisfied by the resolver type T. Methods
+ * without a parent (`undefined`, the ResolverCtx default) and subscription methods
+ * (SubscriptionCtx) are not checked.
+ */
+export type ParentMismatches<I, T> = {
+  [K in keyof I]: I[K] extends (ctx: infer C, ...rest: any[]) => any
+    ? SubscriptionEventKey extends keyof C
+      ? never
+      : C extends { parent: infer P }
+        ? [P] extends [undefined]
+          ? never
+          : [T] extends [P]
+            ? never
+            : K
+        : never
+    : never;
+}[keyof I];
+
+export type ResolverDecorator<T> = <C extends abstract new (...args: any[]) => any>(
+  target: C,
+  context: ClassDecoratorContext<C> &
+    ([T] extends [undefined]
+      ? unknown
+      : [ParentMismatches<InstanceType<C>, T>] extends [never]
+        ? unknown
+        : {
+            readonly '@ResolveField parent type does not match the @Resolver type': ParentMismatches<
+              InstanceType<C>,
+              T
+            >;
+          }),
+) => void;
+
 /** Marks a provider as a resolver (implies a singleton @Injectable). `type` enables @ResolveField. */
-export function Resolver(type?: () => Class) {
-  return (_target: Function, context: ClassDecoratorContext): void => {
+export function Resolver<T = undefined>(type?: () => Class<T>): ResolverDecorator<T> {
+  const decorator = (_target: Function, context: ClassDecoratorContext): void => {
     setMetadata(context.metadata, INJECTABLE, { scope: 'singleton' });
     setMetadata(context.metadata, RESOLVER, { type });
   };
+  return decorator as ResolverDecorator<T>;
 }
 
 function method(kind: ResolverKind, label: string, type: () => TypeThunkResult, options: object) {
@@ -117,9 +153,16 @@ export function ResolveField<const R extends TypeThunkResult, const O extends Re
  * A subscription field fed by PUBSUB `topic`. Each event (after `resolve`) is `ctx.parent`; the
  * method may return a transformed value or nothing (the event is then the result).
  */
-export function Subscription<const R extends TypeThunkResult, const O extends SubscriptionOptions>(
+export function Subscription<
+  const R extends TypeThunkResult,
+  const A extends ArgMap | Class = {},
+  const N extends Nullable = false,
+>(
   type: () => R,
-  options: O,
-): SubscriptionMethodDecorator<R, O> {
-  return method('subscription', 'Subscription', type, options) as SubscriptionMethodDecorator<R, O>;
+  options: SubscriptionOptions<A, N>,
+): SubscriptionMethodDecorator<R, { args: A; nullable: N }> {
+  return method('subscription', 'Subscription', type, options) as SubscriptionMethodDecorator<
+    R,
+    { args: A; nullable: N }
+  >;
 }

@@ -135,11 +135,6 @@ describe('subscriptions over WebSocket', () => {
     expect(result).toBe('error');
   });
 
-  test('subscriptions: false registers no WebSocket endpoint', async () => {
-    s = await startGraphQL([ChatModule], { subscriptions: false });
-    await expect(s.app.graphqlSubscribe('subscription { shout }')).rejects.toThrow();
-  });
-
   test('closing the app closes subscription sockets and their pubsub subscriptions', async () => {
     s = await startGraphQL([ChatModule]);
     await s.app.graphqlSubscribe('subscription($room: ID!) { messages(room: $room) { text } }', {

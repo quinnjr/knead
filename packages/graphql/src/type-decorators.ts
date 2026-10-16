@@ -67,9 +67,21 @@ type Accept<V, R, Nl> = [V] extends [OutType<R, Nl, true>]
     : false
   : false;
 
+/** True unless `defaultValue` is given and is not a value of the GraphQL type. */
+type DefaultOk<R, O> = O extends { defaultValue: infer D }
+  ? [D] extends [OutType<R, O extends { nullable: infer Nl } ? Nl : false, true>]
+    ? true
+    : false
+  : true;
+
 export type FieldDecorator<R, O extends FieldOptions> = <This, V>(
   value: undefined,
   context: ClassFieldDecoratorContext<This, V> &
+    (DefaultOk<R, O> extends true
+      ? unknown
+      : {
+          readonly 'defaultValue does not match the GraphQL field type': OutType<R, O['nullable']>;
+        }) &
     (Accept<V, R, O['nullable']> extends true
       ? unknown
       : {

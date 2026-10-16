@@ -52,3 +52,44 @@ export async function until(
     await Bun.sleep(5);
   }
 }
+
+/** Sends a raw graphql-transport-ws upgrade request and returns the HTTP status code. */
+export function upgradeStatus(app: TestApp, headers: Record<string, string> = {}): Promise<number> {
+  const port = Number(app.url.port);
+  return new Promise((resolve, reject) => {
+    let buf = '';
+    Bun.connect({
+      hostname: '127.0.0.1',
+      port,
+      socket: {
+        open(sock) {
+          const extra = Object.entries(headers).map(([k, v]) => `${k}: ${v}`);
+          sock.write(
+            [
+              'GET /graphql HTTP/1.1',
+              `Host: 127.0.0.1:${port}`,
+              'Upgrade: websocket',
+              'Connection: Upgrade',
+              'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
+              'Sec-WebSocket-Version: 13',
+              'Sec-WebSocket-Protocol: graphql-transport-ws',
+              ...extra,
+              '',
+              '',
+            ].join('\r\n'),
+          );
+        },
+        data(sock, chunk) {
+          buf += chunk.toString();
+          if (buf.includes('\r\n')) {
+            resolve(Number(buf.split(' ')[1]));
+            sock.end();
+          }
+        },
+        error(_s, e) {
+          reject(e);
+        },
+      },
+    }).catch(reject);
+  });
+}

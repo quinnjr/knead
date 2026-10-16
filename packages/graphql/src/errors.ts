@@ -8,7 +8,7 @@ import {
   TooManyRequestsException,
   UnauthorizedException,
 } from '@hpmws/http';
-import { isLeavenError } from '@leaven-graphql/errors';
+import { type ErrorCode, isLeavenError, LeavenError } from '@leaven-graphql/errors';
 import { GraphQLError, type GraphQLFormattedError } from 'graphql';
 
 /** Thrown while building the schema at bootstrap; the message names the class and field. */
@@ -45,39 +45,91 @@ function withCode(json: GraphQLFormattedError, fallback: string): GraphQLFormatt
   };
 }
 
+/** Errors thrown by resolver code (guards, validation, the method) rather than by graphql-js. */
+const RESOLVER_ERRORS = new WeakSet<object>();
+
+/** @internal Records that `error` came from resolver code, then returns it for rethrowing. */
+export function markResolverError(error: unknown): unknown {
+  if (typeof error === 'object' && error !== null) RESOLVER_ERRORS.add(error);
+  return error;
+}
+
+function httpCode(error: HttpException): string | undefined {
+  return HTTP_CODES.find(([type]) => error instanceof type)?.[1];
+}
+
+export interface ErrorMaskingOptions {
+  maskErrors: boolean;
+  logger: Logger;
+}
+
+/**
+ * Converts an error raised outside resolvers (hooks, context factories, subscription filters)
+ * into a LeavenError that is safe to send: framework client errors keep their code and message;
+ * anything else is logged and becomes INTERNAL_SERVER_ERROR, masked when `maskErrors`.
+ */
+export function toSafeError(
+  error: unknown,
+  options: ErrorMaskingOptions,
+  where: string,
+): LeavenError {
+  if (isLeavenError(error)) return error;
+  if (error instanceof HttpException) {
+    const code = httpCode(error);
+    if (code) {
+      return new LeavenError(error.message, code as ErrorCode, {
+        extensions: { ...error.extensions },
+      });
+    }
+  }
+  options.logger.error(`GraphQL error in ${where}`, error);
+  const message = options.maskErrors || !(error instanceof Error) ? MASKED_MESSAGE : error.message;
+  return new LeavenError(message, 'INTERNAL_SERVER_ERROR' as ErrorCode, { statusCode: 500 });
+}
+
 /**
  * Leaven `formatExecutionError`: maps framework exceptions to `extensions.code` while the
  * original error is still attached, and masks unexpected errors.
  */
-export function createErrorFormatter(options: {
-  maskErrors: boolean;
-  logger: Logger;
-}): (error: GraphQLError) => GraphQLFormattedError {
-  return (error) => {
-    const json = error.toJSON();
-    const original = error.originalError;
-    // No path: a request-level error such as variable coercion. Always the client's input.
-    if (error.path === undefined) return withCode(json, 'BAD_USER_INPUT');
-    // graphql-js argument coercion, or a GraphQLError a resolver threw on purpose.
-    if (original === undefined || original instanceof GraphQLError) {
-      return withCode(json, 'BAD_USER_INPUT');
-    }
-    if (isLeavenError(original)) return { ...json, extensions: { ...original.extensions } };
-    if (original instanceof HttpException) {
-      const entry = HTTP_CODES.find(([type]) => original instanceof type);
-      if (entry) {
-        return {
-          ...json,
-          message: original.message,
-          extensions: { ...original.extensions, code: entry[1] },
-        };
-      }
-    }
-    options.logger.error(`GraphQL resolver error at ${error.path.join('.')}`, original);
+export function createErrorFormatter(
+  options: ErrorMaskingOptions,
+): (error: GraphQLError) => GraphQLFormattedError {
+  const internal = (error: GraphQLError, json: GraphQLFormattedError): GraphQLFormattedError => {
+    options.logger.error(
+      `GraphQL resolver error at ${error.path?.join('.') ?? '(no path)'}`,
+      error.originalError ?? error,
+    );
     return {
       ...json,
       message: options.maskErrors ? MASKED_MESSAGE : json.message,
       extensions: { code: 'INTERNAL_SERVER_ERROR' },
     };
+  };
+  return (error) => {
+    const json = error.toJSON();
+    const original = error.originalError;
+    // No path: a request-level error such as variable coercion. Always the client's input.
+    if (error.path === undefined) return withCode(json, 'BAD_USER_INPUT');
+    if (original instanceof GraphQLError) {
+      // A GraphQLError a resolver threw on purpose is shown as is.
+      if (RESOLVER_ERRORS.has(original)) return withCode(json, 'BAD_USER_INPUT');
+      // graphql-js argument coercion is the client's input; anything else (for example output
+      // serialization, which may echo resolver data) is internal.
+      if (original.message.startsWith('Argument "')) return withCode(json, 'BAD_USER_INPUT');
+      return internal(error, json);
+    }
+    if (original === undefined) return internal(error, json);
+    if (isLeavenError(original)) return { ...json, extensions: { ...original.extensions } };
+    if (original instanceof HttpException) {
+      const code = httpCode(original);
+      if (code) {
+        return {
+          ...json,
+          message: original.message,
+          extensions: { ...original.extensions, code },
+        };
+      }
+    }
+    return internal(error, json);
   };
 }

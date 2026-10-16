@@ -1,7 +1,14 @@
-import { BadRequestException, type Ctx, type WsEndpoint, type WsSocket } from '@hpmws/http';
+import {
+  BadRequestException,
+  type Ctx,
+  ForbiddenException,
+  type WsEndpoint,
+  type WsSocket,
+} from '@hpmws/http';
 import { type WebSocketContext, WebSocketHandler } from '@leaven-graphql/ws';
 import type { ServerWebSocket } from 'bun';
 import type { OperationContext } from './context.js';
+import { toSafeError } from './errors.js';
 import type { SubscriptionOptions } from './options.js';
 import type { GraphQLRuntime } from './runtime.js';
 
@@ -24,6 +31,21 @@ interface SocketFacade {
 interface SocketState {
   http: Ctx;
   extra: object | undefined;
+}
+
+/** Same origin (Origin host equals Host), an allowed origin, or no Origin header at all. */
+export function originAllowed(
+  origin: string | null,
+  host: string | null,
+  allowed: SubscriptionOptions['allowedOrigins'],
+): boolean {
+  if (origin === null || allowed === '*') return true;
+  if (allowed?.includes(origin)) return true;
+  try {
+    return host !== null && new URL(origin).host === host.toLowerCase();
+  } catch {
+    return false;
+  }
 }
 
 const asLeavenSocket = (facade: SocketFacade) =>
@@ -65,9 +87,16 @@ export function createSubscriptionEndpoint(
         return false;
       }
     },
-    context: (socket) => {
+    context: async (socket, request) => {
       const state = stateOf(socket);
-      return runtime.createOperationContext(state.http, state.extra);
+      try {
+        const op = await runtime.createOperationContext(state.http, ['subscription'], state.extra);
+        op.operationName = request.operationName;
+        return op;
+      } catch (error) {
+        // Leaven sends a thrown error's message to the client verbatim.
+        throw toSafeError(error, runtime.masking, 'the subscription context factory');
+      }
     },
   });
   return {
@@ -75,6 +104,10 @@ export function createSubscriptionEndpoint(
       const offered = (ctx.req.headers.get('sec-websocket-protocol') ?? '')
         .split(',')
         .map((p) => p.trim());
+      const headers = ctx.req.headers;
+      if (!originAllowed(headers.get('origin'), headers.get('host'), options.allowedOrigins)) {
+        throw new ForbiddenException('Cross-origin GraphQL WebSocket connections are not allowed.');
+      }
       if (!offered.includes(GRAPHQL_TRANSPORT_WS)) {
         throw new BadRequestException(
           `GraphQL subscriptions require the ${GRAPHQL_TRANSPORT_WS} WebSocket subprotocol.`,

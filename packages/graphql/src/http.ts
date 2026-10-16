@@ -9,9 +9,9 @@ import {
   UnsupportedMediaTypeException,
 } from '@hpmws/http';
 import type { GraphQLRequest } from '@leaven-graphql/core';
-import { getOperationAST, parse } from 'graphql';
+import type { OperationKind } from './context.js';
 import { playgroundPage, playgroundResponse } from './playground.js';
-import { GraphQLRuntime } from './runtime.js';
+import { GraphQLRuntime, rejectionMessage } from './runtime.js';
 
 export const GRAPHQL_RESPONSE_JSON = 'application/graphql-response+json';
 
@@ -47,14 +47,31 @@ export function parseGraphQLParams(body: unknown): GraphQLRequest {
   return request;
 }
 
-/** The operation type, or undefined when the document does not parse (Leaven reports that). */
-export function operationTypeOf(request: GraphQLRequest): string | undefined {
-  try {
-    return getOperationAST(parse(request.query, { noLocation: true }), request.operationName)
-      ?.operation;
-  } catch {
-    return undefined;
+/** The q value Accept gives `type`: an exact range wins over a type wildcard, then any. */
+export function acceptQuality(accept: string | null, type: string, exact = false): number {
+  if (accept === null || accept.trim() === '') return type === 'application/json' ? 1 : 0;
+  const major = `${type.split('/')[0]}/*`;
+  let best = -1;
+  let specificity = -1;
+  for (const part of accept.split(',')) {
+    const [range, ...params] = part.split(';').map((p) => p.trim().toLowerCase());
+    const rank = range === type ? 2 : exact ? -1 : range === major ? 1 : range === '*/*' ? 0 : -1;
+    if (rank < specificity || rank < 0) continue;
+    const q = params.find((p) => p.startsWith('q='));
+    const quality = q ? Number(q.slice(2)) : 1;
+    if (rank > specificity || quality > best) best = Number.isFinite(quality) ? quality : 0;
+    specificity = rank;
   }
+  return Math.max(best, 0);
+}
+
+/**
+ * True when the client names application/graphql-response+json explicitly and does not prefer
+ * application/json; wildcards alone keep the legacy application/json.
+ */
+export function prefersGraphQLResponse(accept: string | null): boolean {
+  const graphql = acceptQuality(accept, GRAPHQL_RESPONSE_JSON, true);
+  return graphql > 0 && graphql >= acceptQuality(accept, 'application/json');
 }
 
 function mediaType(header: string | null): string {
@@ -71,16 +88,33 @@ function jsonParam(params: URLSearchParams, name: string): unknown {
   }
 }
 
+const INTERNAL_CODES = new Set(['INTERNAL_SERVER_ERROR', 'INTERNAL_ERROR']);
+
 async function execute(
   runtime: GraphQLRuntime,
   ctx: Ctx,
   request: GraphQLRequest,
+  allowed: readonly OperationKind[],
 ): Promise<Response> {
-  const op = await runtime.createOperationContext(ctx);
+  const op = await runtime.createOperationContext(ctx, allowed);
+  op.operationName = request.operationName;
   const { response } = await runtime.executor.execute(request, op);
-  const graphqlJson = (ctx.req.headers.get('accept') ?? '').includes(GRAPHQL_RESPONSE_JSON);
-  // application/json: always 200. application/graphql-response+json: 400 when no data entry.
-  const status = graphqlJson && response.data === undefined ? 400 : 200;
+  // The operation type is checked by a Leaven onExecute hook on the document Leaven parsed.
+  if (op.rejectedOperation) {
+    const message = rejectionMessage(op.rejectedOperation, allowed);
+    if (op.rejectedOperation === 'subscription' && ctx.req.method !== 'GET') {
+      throw new BadRequestException(message);
+    }
+    throw new MethodNotAllowedException(message, { headers: { allow: 'POST' } });
+  }
+  const graphqlJson = prefersGraphQLResponse(ctx.req.headers.get('accept'));
+  // application/json: always 200. application/graphql-response+json: no data entry is 400 for
+  // a request error and 500 when the server failed.
+  let status = 200;
+  if (graphqlJson && response.data === undefined) {
+    const internal = response.errors?.some((e) => INTERNAL_CODES.has(String(e.extensions?.code)));
+    status = internal ? 500 : 400;
+  }
   return new Response(JSON.stringify(response), {
     status,
     headers: {
@@ -96,15 +130,12 @@ export async function handlePost(runtime: GraphQLRuntime, ctx: Ctx): Promise<Res
     );
   }
   const request = parseGraphQLParams(await ctx.json());
-  if (operationTypeOf(request) === 'subscription') {
-    throw new BadRequestException('Subscriptions are only available over WebSocket.');
-  }
-  return execute(runtime, ctx, request);
+  return execute(runtime, ctx, request, ['query', 'mutation']);
 }
 
 export async function handleGet(runtime: GraphQLRuntime, ctx: Ctx): Promise<Response> {
   const { options } = runtime;
-  if (options.playground && (ctx.req.headers.get('accept') ?? '').includes('text/html')) {
+  if (options.playground && acceptQuality(ctx.req.headers.get('accept'), 'text/html', true) > 0) {
     const url = new URL(options.path, ctx.req.url);
     let ws: string | undefined;
     if (runtime.subscriptionsEnabled) {
@@ -128,13 +159,7 @@ export async function handleGet(runtime: GraphQLRuntime, ctx: Ctx): Promise<Resp
     operationName: params.get('operationName'),
     extensions: jsonParam(params, 'extensions'),
   });
-  const operation = operationTypeOf(request);
-  if (operation === 'mutation' || operation === 'subscription') {
-    throw new MethodNotAllowedException(`A ${operation} cannot be sent over GET; use POST.`, {
-      headers: { allow: 'POST' },
-    });
-  }
-  return execute(runtime, ctx, request);
+  return execute(runtime, ctx, request, ['query']);
 }
 
 /** The controller is built per module instance so the path stays configurable. */

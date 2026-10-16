@@ -29,15 +29,43 @@ export interface ResolverCtx<A = {}, P = undefined> extends GraphQLContext {
   loader<K, V>(cls: Type<BatchLoader<K, V>>): DataLoader<K, V>;
 }
 
+export type OperationKind = 'query' | 'mutation' | 'subscription';
+
+/** Phantom key marking a subscription method's ctx (its parent is the event payload). */
+declare const SUBSCRIPTION_EVENT: unique symbol;
+export type SubscriptionEventKey = typeof SUBSCRIPTION_EVENT;
+
+/**
+ * The ctx of a @Subscription method: `parent` is the event (after `resolve`). Use it instead of
+ * ResolverCtx in typed resolvers, whose ResolverCtx parents must match the @Resolver type.
+ */
+export interface SubscriptionCtx<A = {}, P = unknown> extends ResolverCtx<A, P> {
+  readonly [SUBSCRIPTION_EVENT]?: true;
+}
+
 /** @internal One per GraphQL operation; graphql-js passes it to every resolver as contextValue. */
 export class OperationContext {
   readonly state: Record<PropertyKey, unknown> = {};
   readonly #loaders = new Map<Function, DataLoader<unknown, unknown>>();
+  /** The operation to run (checked against `allowedOperations` before execution). */
+  operationName: string | undefined;
+  /** Set when the executed document's operation was not allowed on this transport. */
+  rejectedOperation: OperationKind | undefined;
 
   constructor(
     readonly http: Ctx,
     readonly user: Readonly<Record<PropertyKey, unknown>>,
+    readonly allowedOperations: readonly OperationKind[],
   ) {}
+
+  /**
+   * Starts a new subscription event: loaders and state are per event, so a long-lived
+   * subscription neither serves stale cached values nor grows without bound.
+   */
+  resetForEvent(): void {
+    this.#loaders.clear();
+    for (const key of Reflect.ownKeys(this.state)) delete this.state[key];
+  }
 
   loader<K, V>(cls: Type<BatchLoader<K, V>>, injector: ModuleInjector): DataLoader<K, V> {
     let loader = this.#loaders.get(cls);

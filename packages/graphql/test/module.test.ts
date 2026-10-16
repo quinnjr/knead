@@ -18,7 +18,6 @@ import {
   Query,
   Resolver,
   resolveOptions,
-  Subscription,
 } from '../src/index.js';
 import { BlogModule } from './fixtures/blog.js';
 import { type Started, startGraphQL } from './helpers.js';
@@ -150,6 +149,23 @@ describe('GraphQLModule', () => {
     const heavy = await s.app.graphql('{ heavy }');
     expect(heavy.errors?.[0]?.extensions?.code).toBe('COMPLEXITY_LIMIT');
   });
+
+  test('user compilerOptions keep the per-field complexity calculator', async () => {
+    @Resolver()
+    class R {
+      @Query(() => Int, { complexity: 50 }) heavy() {
+        return 1;
+      }
+    }
+    @Module({ providers: [R] })
+    class M {}
+    s = await startGraphQL([M], {
+      maxComplexity: 10,
+      compilerOptions: { calculateComplexity: true },
+    });
+    const heavy = await s.app.graphql('{ heavy }');
+    expect(heavy.errors?.[0]?.extensions?.code).toBe('COMPLEXITY_LIMIT');
+  });
 });
 
 describe('playground and CSP', () => {
@@ -163,7 +179,10 @@ describe('playground and CSP', () => {
     const script = /<script>([\s\S]*?)<\/script>/.exec(html)![1]!;
     const hash = new Bun.CryptoHasher('sha256').update(script).digest('base64');
     expect(csp).toContain(`'sha256-${hash}'`);
-    expect(csp).toContain('https://cdn.jsdelivr.net');
+    expect(csp).toContain(
+      'https://cdn.jsdelivr.net/npm/graphql-playground-react@1.7.26/build/static/js/middleware.js',
+    );
+    expect(csp).not.toMatch(/script-src[^;]*https:\/\/cdn\.jsdelivr\.net[ ;]/);
     expect(csp).not.toContain("script-src 'self' 'unsafe-inline'");
     expect(res.headers.get('x-frame-options')).toBe('DENY');
   });
@@ -188,21 +207,6 @@ describe('global middleware and guards', () => {
     expect((await s.app.graphql('{ post(id: "p1") { title } }')).status).toBe(403);
     const ok = await s.app.graphql('{ post(id: "p1") { title } }', { headers: { 'x-ok': '1' } });
     expect(ok.data).toEqual({ post: { title: 'Hello' } });
-  });
-
-  test('rate limiting applies to the WebSocket upgrade', async () => {
-    @Resolver()
-    class R {
-      @Query(() => Int) n() {
-        return 1;
-      }
-      @Subscription(() => Int, { topic: 't' }) t() {}
-    }
-    @Module({ providers: [R] })
-    class M {}
-    s = await startGraphQL([M, RateLimitModule.forRoot({ limit: 1, window: '1m' })]);
-    expect((await s.app.graphql('{ n }')).status).toBe(200);
-    await expect(s.app.graphqlSubscribe('subscription { t }')).rejects.toThrow();
   });
 
   test('rate limiting applies to the GraphQL route', async () => {

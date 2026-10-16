@@ -17,6 +17,7 @@ import {
   Resolver,
   type ResolverCtx,
   Subscription,
+  type SubscriptionCtx,
   type TsOf,
 } from '../src/index.js';
 
@@ -145,4 +146,57 @@ export function typeAssertions(): void {
   assertType<Equal<TsOf<typeof User>, User>>();
   assertType<Equal<TsOf<typeof SearchResult>, User | Post>>();
   assertType<Equal<TsOf<typeof RoleType>, Role>>();
+}
+
+// @ResolveField parent types are checked against the @Resolver type.
+@Resolver(() => User)
+export class GoodParents {
+  @ResolveField(() => Int) ok(ctx: ResolverCtx<{}, User>) {
+    return ctx.parent.age;
+  }
+  @Query(() => Int, { args: { id: ID } }) root(ctx: ResolverCtx<{ id: string }>) {
+    return ctx.args.id.length;
+  }
+}
+
+// @ts-expect-error a @ResolveField parent of Holder inside @Resolver(() => User)
+@Resolver(() => User)
+export class WrongParent {
+  @ResolveField(() => Int) bad(ctx: ResolverCtx<{}, Holder>) {
+    return ctx.parent.narrow.age;
+  }
+}
+
+// Subscription payload parents use SubscriptionCtx, so a typed resolver still accepts them.
+@Resolver(() => User)
+export class TypedWithSubscription {
+  @Subscription(() => String, { topic: 'names' })
+  renamed(ctx: SubscriptionCtx<{}, string>) {
+    return ctx.parent.toUpperCase();
+  }
+}
+
+@Resolver()
+export class SubscriptionArgs {
+  @Subscription(() => String, {
+    args: { room: ID },
+    topic: (ctx) => `room:${ctx.args.room}`,
+    filter: ({ args }) => args.room.length > 0,
+  })
+  typed() {}
+
+  @Subscription(() => String, {
+    args: { room: ID },
+    topic: 'rooms',
+    // @ts-expect-error filter args are typed from the declared args
+    filter: ({ args }) => args.nope.deep,
+  })
+  untyped() {}
+}
+
+@ArgsType()
+export class Defaults {
+  @Field(() => Int, { defaultValue: 10 }) first!: number;
+  // @ts-expect-error defaultValue must match the field type
+  @Field(() => Int, { defaultValue: 'not a number' }) bad!: number;
 }

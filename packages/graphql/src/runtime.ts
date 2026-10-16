@@ -19,20 +19,31 @@ import {
   ROUTE_META,
   WsRegistry,
 } from '@hpmws/http';
-import { type CompilerOptions, LeavenExecutor } from '@leaven-graphql/core';
+import { type CompilerOptions, type ExecutionHooks, LeavenExecutor } from '@leaven-graphql/core';
+import { type ErrorCode, LeavenError } from '@leaven-graphql/errors';
 import type { StandardSchemaV1 } from '@standard-schema/spec';
 import {
+  type DocumentNode,
   type GraphQLFieldResolver,
   type GraphQLSchema,
+  getOperationAST,
   isInterfaceType,
   isObjectType,
 } from 'graphql';
-import { createResolverCtx, OperationContext, type ResolverCtx } from './context.js';
+import {
+  createResolverCtx,
+  OperationContext,
+  type OperationKind,
+  type ResolverCtx,
+} from './context.js';
 import {
   ArgsValidationError,
   type ArgsValidationIssue,
   createErrorFormatter,
+  type ErrorMaskingOptions,
+  markResolverError,
   SchemaBuildError,
+  toSafeError,
 } from './errors.js';
 import {
   RESOLVER,
@@ -136,6 +147,74 @@ export function complexityCalculator(
   return (field, depth) => (costs.get(field.name.value) ?? 1) + depth * 0.5;
 }
 
+/** Messages for an operation the transport does not carry. */
+export function rejectionMessage(
+  operation: OperationKind,
+  allowed: readonly OperationKind[],
+): string {
+  if (allowed.length === 1 && allowed[0] === 'subscription') {
+    return 'Only subscription operations are allowed over WebSocket.';
+  }
+  if (operation === 'subscription') return 'Subscriptions are only available over WebSocket.';
+  return `A ${operation} cannot be sent over GET; use POST.`;
+}
+
+/**
+ * Leaven hooks: an onExecute check that the operation Leaven is about to run (from the document
+ * it parsed, validated and cached) is allowed on this transport, then the user's hooks with
+ * their errors made safe.
+ */
+export function buildHooks(
+  user: ExecutionHooks | undefined,
+  masking: ErrorMaskingOptions,
+): ExecutionHooks {
+  const safe = <A extends unknown[]>(
+    name: string,
+    fn: ((...args: A) => void | Promise<void>) | undefined,
+  ) =>
+    fn &&
+    (async (...args: A) => {
+      try {
+        await fn(...args);
+      } catch (error) {
+        throw toSafeError(error, masking, `hooks.${name}`);
+      }
+    });
+  const userExecute = safe('onExecute', user?.onExecute);
+  const userError = user?.onError;
+  return {
+    onParse: safe('onParse', user?.onParse),
+    onParsed: safe('onParsed', user?.onParsed),
+    onValidate: safe('onValidate', user?.onValidate),
+    onValidated: safe('onValidated', user?.onValidated),
+    onExecuted: safe('onExecuted', user?.onExecuted),
+    onCacheError: user?.onCacheError,
+    onError: userError
+      ? async (error) => {
+          try {
+            await userError(error);
+          } catch (hookError) {
+            masking.logger.error('GraphQL hooks.onError threw', hookError);
+          }
+        }
+      : undefined,
+    onExecute: async (context: unknown, document: DocumentNode) => {
+      if (context instanceof OperationContext) {
+        const operation = getOperationAST(document, context.operationName ?? null)?.operation;
+        if (operation && !context.allowedOperations.includes(operation)) {
+          context.rejectedOperation = operation;
+          throw new LeavenError(
+            rejectionMessage(operation, context.allowedOperations),
+            'BAD_USER_INPUT' as ErrorCode,
+            { statusCode: 400 },
+          );
+        }
+      }
+      await userExecute?.(context, document);
+    },
+  };
+}
+
 /** Owns the schema, the Leaven executor and the subscription endpoint. */
 export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
   readonly options: ResolvedGraphQLOptions = resolveOptions(
@@ -161,6 +240,10 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
     return this.#executor;
   }
 
+  get masking(): ErrorMaskingOptions {
+    return { maskErrors: this.options.maskErrors, logger: this.logger };
+  }
+
   get subscriptionsEnabled(): boolean {
     return this.options.subscriptions !== false && this.schema.getSubscriptionType() !== undefined;
   }
@@ -168,18 +251,18 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
   async onModuleInit(): Promise<void> {
     this.#schema = this.#build();
     const calculator = complexityCalculator(this.#schema);
-    const { compilerOptions, ...executor } = this.options.executor;
+    const { compilerOptions, hooks, ...executor } = this.options.executor;
     this.#executor = new LeavenExecutor({
       ...executor,
       schema: this.#schema,
       introspection: this.options.introspection,
-      compilerOptions:
-        compilerOptions ?? (calculator ? { complexityCalculator: calculator } : undefined),
-      formatExecutionError: createErrorFormatter({
-        maskErrors: this.options.maskErrors,
-        logger: this.logger,
-      }),
+      compilerOptions: calculator
+        ? { complexityCalculator: calculator, ...compilerOptions }
+        : compilerOptions,
+      hooks: buildHooks(hooks, this.masking),
+      formatExecutionError: createErrorFormatter(this.masking),
     });
+    (this.pubsub as { useLogger?: (logger: unknown) => void }).useLogger?.(this.logger);
     if (this.options.emitSchemaFile !== false) {
       await Bun.write(this.options.emitSchemaFile, printSortedSchema(this.#schema));
     }
@@ -194,10 +277,17 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
     if (typeof close === 'function') await close.call(this.pubsub);
   }
 
-  /** One context per operation: the user `context` factory result plus `extra` (onConnect). */
-  async createOperationContext(http: Ctx, extra?: object): Promise<OperationContext> {
+  /**
+   * One context per operation: the user `context` factory result plus `extra` (onConnect).
+   * `allowed` lists the operation types this transport may execute.
+   */
+  async createOperationContext(
+    http: Ctx,
+    allowed: readonly OperationKind[],
+    extra?: object,
+  ): Promise<OperationContext> {
     const user = this.options.context ? await this.options.context(http) : {};
-    return new OperationContext(http, { ...user, ...extra });
+    return new OperationContext(http, { ...user, ...extra }, allowed);
   }
 
   #build(): GraphQLSchema {
@@ -281,27 +371,57 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
       complexity: options.complexity,
       args: options.args,
     };
+    // Errors from resolver code are marked so the formatter can tell them from graphql-js's own.
+    const marked =
+      <A extends unknown[], R>(fn: (...args: A) => Promise<R>) =>
+      async (...args: A): Promise<R> => {
+        try {
+          return await fn(...args);
+        } catch (error) {
+          throw markResolverError(error);
+        }
+      };
     if (def.kind !== 'subscription') {
-      spec.resolve = async (parent, args, op, info) =>
-        call(await prepare(parent, args, op, info, true));
+      spec.resolve = marked(async (parent, args, op: OperationContext, info) =>
+        call(await prepare(parent, args, op, info, true)),
+      );
       return spec;
     }
     const sub = options as SubscriptionMethodOptions;
-    spec.subscribe = async (parent, args, op: OperationContext, info) => {
+    spec.subscribe = marked(async (parent, args, op: OperationContext, info) => {
       const ctx = await prepare(parent, args, op, info, true);
       const topics = typeof sub.topic === 'function' ? sub.topic(ctx) : sub.topic;
       const filter = sub.filter;
+      let warned = false;
       return eventIterator(
         this.pubsub,
         typeof topics === 'string' ? [topics] : [...topics],
-        filter ? (payload) => filter({ payload, args: ctx.args, ctx }) : undefined,
+        filter
+          ? async (payload) => {
+              try {
+                return await filter({ payload, args: ctx.args, ctx });
+              } catch (error) {
+                throw toSafeError(error, this.masking, `${owner} filter`);
+              }
+            }
+          : undefined,
+        {
+          onDrop: () => {
+            if (warned) return;
+            warned = true;
+            this.logger.warn(
+              `${owner}: a slow subscriber is dropping events (queue limit reached).`,
+            );
+          },
+        },
       );
-    };
-    spec.resolve = async (payload, args, op: OperationContext, info) => {
+    });
+    spec.resolve = marked(async (payload, args, op: OperationContext, info) => {
+      op.resetForEvent();
       const value = sub.resolve ? await sub.resolve(payload) : payload;
       const result = await call(await prepare(value, args, op, info, false));
       return result === undefined ? value : result;
-    };
+    });
     return spec;
   }
 }

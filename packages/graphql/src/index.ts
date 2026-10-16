@@ -1,5 +1,5 @@
 export { PubSub, type PubSubEngine } from '@leaven-graphql/ws';
-export type { BatchLoader, GraphQLContext, ResolverCtx } from './context.js';
+export type { BatchLoader, GraphQLContext, ResolverCtx, SubscriptionCtx } from './context.js';
 export {
   ArgsValidationError,
   type ArgsValidationIssue,
@@ -24,9 +24,11 @@ export {
   type ArgsOf,
   type ArgsTs,
   Mutation,
+  type ParentMismatches,
   Query,
   ResolveField,
   Resolver,
+  type ResolverDecorator,
   type ResolverMethodDecorator,
   type ResolverOptions,
   Subscription,

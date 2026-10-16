@@ -24,6 +24,12 @@ export interface SubscriptionOptions {
   keepAliveInterval?: number;
   /** Leaven default 100. */
   maxSubscriptionsPerConnection?: number;
+  /**
+   * Browser origins allowed to open a subscription socket, besides the server's own origin
+   * (default: same origin only). `'*'` allows any origin. Upgrades without an Origin header
+   * (non-browser clients) are always allowed. Others are rejected with 403.
+   */
+  allowedOrigins?: readonly string[] | '*';
 }
 
 export interface GraphQLModuleOptions {
