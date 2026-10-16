@@ -54,7 +54,7 @@ A handler receives a `JobContext`: `{ name, signal, scheduledAt, trigger }`. `si
 
 ## Errors
 
-A failing run (a throw or a rejection) goes to `onError(error, ctx)` and never stops the job. The default reports it with `logger.error`. The `logger` option (default: console) also receives the scheduler's warnings. `@knead-js/http`'s `ConsoleLogger` and other `Logger`s fit.
+A failing run (a throw or a rejection) goes to `onError(error, ctx)` and never stops the job. The default reports it with `logger.error` as a redacted `Name: message` summary (credentials in URLs and `key=value` pairs masked; no stack, cause or properties). The scheduler only ever logs such strings, never raw error objects. Pass your own `onError` to send failures elsewhere, and redact what you log there. The `logger` option (default: console) also receives the scheduler's warnings. `@knead-js/http`'s `ConsoleLogger` and other `Logger`s fit.
 
 ## Running a cron job on one instance
 
@@ -87,7 +87,7 @@ Jobs added before bootstrap start with the decorated ones; jobs added later star
 |---|---|---|
 | `lockStore` | none | Required by any job with `lock` (bootstrap fails without it) |
 | `lockTtl` | `60s` | TTL for `lock: true` |
-| `onError` | `console.error` | Receives every failed run and lock store error |
+| `onError` | redacted `logger.error` | Receives every failed run and lock store error |
 | `shutdownTimeout` | `10s` | How long shutdown waits for runs in progress before logging their names and moving on |
 | `enabled` | `true` | `false` registers every job paused (for example on web-only replicas or in tests); `trigger()` still works |
 | `logger` | console | `warn` and `error` for scheduler warnings and the default `onError` |

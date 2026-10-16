@@ -756,4 +756,28 @@ describe('review regressions', () => {
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain('"past"');
   });
+
+  test('a throwing onError is logged as a redacted summary', async () => {
+    const errors: unknown[][] = [];
+    const { scheduler, clock } = setup({
+      onError: () => {
+        throw new Error('token=abc123 rejected');
+      },
+      logger: { warn: () => {}, error: (...args) => errors.push(args) },
+    });
+    scheduler.add({
+      name: 'bad',
+      schedule: intervalSchedule(100),
+      handler: () => {
+        throw new Error('boom');
+      },
+      lock: noLock,
+    });
+    scheduler.start();
+    await clock.advance(100);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toHaveLength(1);
+    expect(String(errors[0]![0])).toContain('onError failed for job "bad"');
+    expect(String(errors[0]![0])).not.toContain('abc123');
+  });
 });

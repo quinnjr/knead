@@ -23,14 +23,9 @@ describe('example REST API', () => {
     const job = registry.get('users.hourly-stats');
     expect(job?.state).toBe('scheduled');
     expect(job?.nextRunAt?.getMinutes()).toBe(0);
-    const log = console.log;
-    console.log = () => {};
-    try {
-      await registry.trigger('users.hourly-stats');
-    } finally {
-      console.log = log;
-    }
+    await registry.trigger('users.hourly-stats');
     expect(mod.get(UsersStats).lastCount).toBe(1);
+    expect(mod.logs.some((e) => e.level === 'info' && e.message === '1 users')).toBe(true);
   });
 
   test('lists users with security, CORS and rate-limit headers', async () => {

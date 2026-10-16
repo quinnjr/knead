@@ -1,4 +1,4 @@
-import { InjectionToken } from '@knead-js/core';
+import { InjectionToken, summarizeError } from '@knead-js/core';
 import type { JobContext } from './decorators.js';
 import { type Duration, parseDuration } from './duration.js';
 import { ScheduleConfigError } from './errors.js';
@@ -9,15 +9,18 @@ export interface ScheduleModuleOptions {
   lockStore?: ScheduleLockStore;
   /** TTL for `lock: true` jobs. Default 60s. Must exceed clock skew between instances. */
   lockTtl?: Duration;
-  /** Called with every failed run (and lock store error). Default: `logger.error`. */
+  /**
+   * Called with every failed run (and lock store error). Default: `logger.error` with a redacted
+   * `Name: message` summary (no stack, cause or properties).
+   */
   onError?: (error: unknown, ctx: JobContext) => unknown;
   /** How long shutdown waits for runs in progress. Default 10s. */
   shutdownTimeout?: Duration;
   /** `false` registers every job paused, so nothing runs unless triggered. Default true. */
   enabled?: boolean;
   /**
-   * Receives the scheduler's warnings and errors; `@knead-js/http`'s `Logger` (for example a
-   * `ConsoleLogger`) fits. Default: console.
+   * Receives the scheduler's warnings and errors as single redacted strings, never raw error
+   * objects; `@knead-js/http`'s `Logger` fits. Default: console.
    */
   logger?: ScheduleLogger;
 }
@@ -59,7 +62,9 @@ export function resolveScheduleOptions(options: ScheduleModuleOptions): Resolved
     lockStore,
     lockTtl: parseDuration(options.lockTtl ?? '60s', 'lockTtl'),
     onError:
-      onError ?? ((error, ctx) => logger.error(`[knead:schedule] Job "${ctx.name}" failed`, error)),
+      onError ??
+      ((error, ctx) =>
+        logger.error(`[knead:schedule] Job "${ctx.name}" failed: ${summarizeError(error)}`)),
     shutdownTimeout: parseDuration(options.shutdownTimeout ?? '10s', 'shutdownTimeout'),
     enabled: enabled ?? true,
     logger,

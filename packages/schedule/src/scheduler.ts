@@ -1,3 +1,4 @@
+import { summarizeError } from '@knead-js/core';
 import type { Clock } from './clock.js';
 import type { JobContext, JobHandler, LockSetting } from './decorators.js';
 import { ScheduleConfigError, ScheduleJobNotFoundError } from './errors.js';
@@ -257,8 +258,7 @@ export class Scheduler {
       await this.options.onError(error, ctx);
     } catch (handlerError) {
       this.options.logger.error(
-        `[knead:schedule] onError failed for job "${ctx.name}"`,
-        handlerError,
+        `[knead:schedule] onError failed for job "${ctx.name}": ${summarizeError(handlerError)}`,
       );
     }
   }

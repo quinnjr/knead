@@ -288,7 +288,29 @@ describe('ScheduleModule', () => {
     await boot([], [Jobs], { logger: { warn: () => {}, error: (...args) => errors.push(args) } });
     await clock.advance(100);
     expect(errors).toHaveLength(1);
-    expect(errors[0]![0]).toContain('"Jobs.bad"');
+    expect(errors[0]).toEqual(['[knead:schedule] Job "Jobs.bad" failed: Error: boom']);
     expect(() => ScheduleModule.forRoot({ logger: {} as never })).toThrow(/logger/);
+  });
+
+  test('the default failure report is a redacted summary, never the raw error', async () => {
+    const errors: unknown[][] = [];
+    class Jobs {
+      @Interval(100) leak() {
+        const error = new Error('connect redis://app:hunter2@cache:6379 refused');
+        error.stack = 'stack with request data';
+        throw error;
+      }
+    }
+    await boot([], [Jobs], {
+      onError: undefined,
+      logger: { warn: () => {}, error: (...args) => errors.push(args) },
+    });
+    await clock.advance(100);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toHaveLength(1);
+    const line = String(errors[0]![0]);
+    expect(line).toContain('Error: connect redis://');
+    expect(line).not.toContain('hunter2');
+    expect(line).not.toContain('stack with request data');
   });
 });
