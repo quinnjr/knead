@@ -25,7 +25,7 @@ const run = (cmd: string[], cwd: string) => {
 const required = ['LICENSE-MIT', 'LICENSE-APACHE', 'README.md', 'dist/index.js', 'dist/index.d.ts'];
 const forbidden = [/\.map$/, /\.tsbuildinfo$/, /\/src\//, /\/test\//];
 const problems: string[] = [];
-const tmp = mkdtempSync(join(tmpdir(), 'hpmws-pack-'));
+const tmp = mkdtempSync(join(tmpdir(), 'knead-pack-'));
 const tarballs = new Map<string, string>();
 
 try {
@@ -112,7 +112,7 @@ function smokeTest(dir: string): void {
   }
   writeFileSync(
     join(dir, 'package.json'),
-    JSON.stringify({ name: 'hpmws-consumer', private: true, type: 'module' }),
+    JSON.stringify({ name: 'knead-consumer', private: true, type: 'module' }),
   );
   writeFileSync(
     join(dir, 'tsconfig.json'),
