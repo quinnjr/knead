@@ -391,3 +391,70 @@ describe('guard references are validated at listen()', () => {
     expect((await fetch(new URL('/ok', app.url))).status).toBe(200);
   });
 });
+
+describe('route authorize guards run after validation', () => {
+  /** Trims and lowercases `email`. */
+  const canonicalEmail = {
+    '~standard': {
+      version: 1 as const,
+      vendor: 'test',
+      validate: (value: unknown) => {
+        const email = (value as { email?: unknown } | undefined)?.email;
+        return typeof email === 'string'
+          ? { value: { email: email.trim().toLowerCase() } }
+          : { issues: [{ message: 'email required', path: ['email'] }] };
+      },
+    },
+  };
+  const seenByGuard: unknown[] = [];
+  const seenByAuthorize: unknown[] = [];
+
+  @Controller('/admins')
+  class Admins {
+    @Post('/', {
+      body: canonicalEmail,
+      guards: [
+        async (ctx: Ctx) => {
+          seenByGuard.push(await ctx.json());
+          return true;
+        },
+      ],
+      authorize: [
+        (ctx: Ctx) => {
+          seenByAuthorize.push(ctx.body);
+          return (ctx.body as { email: string }).email === 'admin@example.com';
+        },
+      ],
+    })
+    invite(ctx: Ctx) {
+      return ctx.body;
+    }
+  }
+  @Module({ controllers: [Admins] })
+  class AdminsModule {}
+
+  const post = (email: string) =>
+    fetch(new URL('/admins', app!.url), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+
+  test('authorize sees the canonical value; guards see the raw one', async () => {
+    app = await start(AdminsModule);
+    const res = await post('  ADMIN@Example.com ');
+    expect(res.status).toBe(200);
+    expect(seenByGuard).toEqual([{ email: '  ADMIN@Example.com ' }]);
+    expect(seenByAuthorize).toEqual([{ email: 'admin@example.com' }]);
+    expect((await post('eve@example.com')).status).toBe(403);
+    // Invalid input is a 400 before authorize runs.
+    seenByAuthorize.length = 0;
+    const bad = await fetch(new URL('/admins', app.url), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    expect(bad.status).toBe(400);
+    expect(seenByAuthorize).toEqual([]);
+  });
+});

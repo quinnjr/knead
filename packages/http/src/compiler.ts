@@ -247,6 +247,9 @@ export function compileApplication(input: CompileInput): CompiledApp {
           ...(getMethodMetadata(controller, name, ROUTE_META) ?? {}),
         });
         const guards = [...input.globalGuards, ...ctrlGuards, ...routeGuards];
+        const authorize = (route.options.authorize ?? []).map((r) =>
+          resolveGuard(r, injector, `the authorize guards of ${label}`),
+        );
         const onError = createErrorHandler(
           [...routeFilters, ...ctrlFilters, ...input.globalFilters],
           logger,
@@ -267,6 +270,8 @@ export function compileApplication(input: CompileInput): CompiledApp {
             try {
               await runGuards(guards, ctx);
               await validateRequest(ctx, route.options, input.validation);
+              // Authorization that depends on the validated (canonical) input.
+              await runGuards(authorize, ctx);
               const result = await (fn as (c: unknown) => unknown).call(instance, ctx);
               return toResponse(result, ctx.res.status ?? route.options.status, ctx.res.headers);
             } catch (error) {

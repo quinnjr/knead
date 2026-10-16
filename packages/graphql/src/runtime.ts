@@ -816,6 +816,9 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
     const guards = [...(denied ? [DENY] : []), ...(root ? this.options.guards : []), ...own].map(
       (ref) => resolveGuard(ref, injector),
     );
+    for (const ref of options.authorize ?? [])
+      assertGuardRef(ref, `the authorize guards of ${owner}`);
+    const authorize = (options.authorize ?? []).map((ref) => resolveGuard(ref, injector));
     const call = (ctx: ResolverCtx<any, any>) =>
       (method as (c: unknown) => unknown).call(instance, ctx);
     const prepare = async (
@@ -828,6 +831,8 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
       const ctx = createResolverCtx(op, injector, meta, args, parent, info);
       if (guarded) await runGuards(guards, ctx);
       ctx.args = await validateArgs(options.validate, args);
+      // Authorization that depends on the validated (canonical) arguments.
+      if (guarded) await runGuards(authorize, ctx);
       return ctx;
     };
     const spec: FieldSpec = {

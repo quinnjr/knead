@@ -57,6 +57,12 @@ export interface ResolverMethodOptions {
   complexity?: number;
   /** Guards receiving the ResolverCtx; run after class-level @UseGuards guards. */
   guards?: readonly GuardRef<any>[];
+  /**
+   * Guards that run after `validate`, so they see the validated (and transformed) `ctx.args`.
+   * `guards` run before validation and see the coerced but unvalidated arguments. Anything but
+   * `true` is FORBIDDEN.
+   */
+  authorize?: readonly GuardRef<any>[];
   meta?: Readonly<Record<PropertyKey, unknown>>;
 }
 

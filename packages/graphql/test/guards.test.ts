@@ -183,3 +183,52 @@ describe('guard references are validated at bootstrap', () => {
     expect((failure as Error).message).toContain('GraphQLModule guards');
   });
 });
+
+describe('authorize guards run after argument validation', () => {
+  const canonical = {
+    '~standard': {
+      version: 1 as const,
+      vendor: 'test',
+      validate: (value: unknown) =>
+        typeof value === 'string'
+          ? { value: value.trim().toLowerCase() }
+          : { issues: [{ message: 'string required' }] },
+    },
+  };
+  const seen: { guard: unknown[]; authorize: unknown[] } = { guard: [], authorize: [] };
+
+  @Resolver()
+  class Invites {
+    @Mutation(() => String, {
+      args: { email: String },
+      validate: { email: canonical },
+      guards: [
+        (ctx: ResolverCtx<{ email: string }>) => {
+          seen.guard.push(ctx.args.email);
+          return true;
+        },
+      ],
+      authorize: [
+        (ctx: ResolverCtx<{ email: string }>) => {
+          seen.authorize.push(ctx.args.email);
+          return ctx.args.email === 'admin@example.com';
+        },
+      ],
+    })
+    invite(ctx: ResolverCtx<{ email: string }>) {
+      return ctx.args.email;
+    }
+  }
+  @Module({ providers: [Invites] })
+  class InvitesModule {}
+
+  test('authorize sees the transformed args; false is FORBIDDEN', async () => {
+    s = await startGraphQL([InvitesModule, StrictModule]);
+    const ok = await s.app.graphql('mutation { invite(email: "  ADMIN@Example.com ") }');
+    expect(ok.data).toEqual({ invite: 'admin@example.com' });
+    expect(seen.guard).toEqual(['  ADMIN@Example.com ']);
+    expect(seen.authorize).toEqual(['admin@example.com']);
+    const denied = await s.app.graphql('mutation { invite(email: "eve@example.com") }');
+    expect(denied.errors?.[0]?.extensions?.code).toBe('FORBIDDEN');
+  });
+});
