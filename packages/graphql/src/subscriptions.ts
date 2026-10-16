@@ -40,6 +40,8 @@ interface PendingSubscribe {
 interface SocketState {
   http: Ctx;
   extra: object | undefined;
+  /** The `context(http)` factory result, computed once when the connection initializes. */
+  base: object | undefined;
   /** Set synchronously on the first connection_init, before Leaven awaits onConnect. */
   initStarted: boolean;
   /** Set when the socket closed; a subscribe that completes later is returned at once. */
@@ -145,7 +147,11 @@ const asLeavenSocket = (facade: SocketFacade) =>
 export interface GraphQLConnection {
   /** The upgrade request's Ctx. */
   readonly http: Ctx;
-  /** The object `onConnect` returned (empty before connection_init, or without onConnect). */
+  /**
+   * The connection's identity: the `context(http)` factory result (computed once, when the
+   * connection initializes) with the object `onConnect` returned merged over it. Empty before
+   * connection_init.
+   */
   readonly context: Readonly<Record<PropertyKey, unknown>>;
 }
 
@@ -171,7 +177,8 @@ const EMPTY_CONTEXT: Readonly<Record<PropertyKey, unknown>> = Object.freeze({});
 function connectionOf(state: SocketState): GraphQLConnection {
   return {
     http: state.http,
-    context: state.extra ? Object.freeze({ ...state.extra }) : EMPTY_CONTEXT,
+    context:
+      state.base || state.extra ? Object.freeze({ ...state.base, ...state.extra }) : EMPTY_CONTEXT,
   };
 }
 
@@ -263,7 +270,19 @@ export function createSubscriptionEndpoint(
     onConnect: async (socket, params) => {
       const state = stateOf(socket);
       let accepted = true;
-      if (options.onConnect) {
+      if (runtime.options.context) {
+        try {
+          state.base = await runtime.options.context(state.http);
+        } catch (error) {
+          logInternalError(
+            runtime.masking,
+            'GraphQL context factory threw on connection_init; rejecting the connection',
+            error,
+          );
+          accepted = false;
+        }
+      }
+      if (accepted && options.onConnect) {
         try {
           const result = await options.onConnect(state.http, params ?? {});
           if (result === false) accepted = false;
@@ -362,6 +381,7 @@ export function createSubscriptionEndpoint(
       states.set(facade, {
         http,
         extra: undefined,
+        base: undefined,
         initStarted: false,
         closed: false,
         pending: new Set(),

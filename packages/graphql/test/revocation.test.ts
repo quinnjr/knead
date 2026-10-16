@@ -208,3 +208,46 @@ describe('per-operation http state over WebSocket', () => {
     socket.ws.close();
   });
 });
+
+describe('GraphQLSubscriptions.closeWhere sees the merged connection context', () => {
+  test('context(http) and the onConnect result are both visible; no match logs at debug', async () => {
+    s = await startGraphQL([M], {
+      context: (http) => ({ viewer: new URL(http.req.url).searchParams.get('viewer') }),
+      subscriptions: {
+        onConnect: (_http, params) =>
+          typeof params.user === 'string' ? { connectedAs: params.user } : false,
+      },
+    });
+    const connect = (viewer: string, user: string) => {
+      const ws = new WebSocket(
+        `ws://127.0.0.1:${s!.app.url.port}/graphql?viewer=${viewer}`,
+        'graphql-transport-ws',
+      );
+      const messages: { type: string }[] = [];
+      const closed = new Promise<number>((resolve) => {
+        ws.onclose = (e) => resolve(e.code);
+      });
+      ws.onopen = () => ws.send(JSON.stringify({ type: 'connection_init', payload: { user } }));
+      ws.onmessage = (e) => messages.push(JSON.parse(String(e.data)));
+      return { ws, closed, acked: until(() => messages.some((m) => m.type === 'connection_ack')) };
+    };
+    const ada = connect('v-ada', 'ada');
+    const grace = connect('v-grace', 'grace');
+    await Promise.all([ada.acked, grace.acked]);
+    const service = s.mod.get(GraphQLSubscriptions);
+    const seen: unknown[] = [];
+    expect(
+      service.closeWhere((c) => {
+        seen.push({ ...c.context });
+        return c.context.viewer === 'v-ada';
+      }),
+    ).toBe(1);
+    expect(await ada.closed).toBe(1008);
+    expect(seen).toContainEqual({ viewer: 'v-ada', connectedAs: 'ada' });
+    expect(service.closeWhere((c) => c.context.viewer === 'nobody')).toBe(0);
+    expect(
+      s.mod.logs.some((e) => e.level === 'debug' && e.message.includes('matched no open sockets')),
+    ).toBe(true);
+    grace.ws.close();
+  });
+});
