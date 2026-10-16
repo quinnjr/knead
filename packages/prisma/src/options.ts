@@ -1,5 +1,5 @@
 import { KneadError } from '@knead-js/core';
-import type { PrismaModuleOptions } from './types.js';
+import type { PrismaModuleOptions, RegisteredClient } from './types.js';
 
 /** Throws a KneadError unless `options` is a valid PrismaModuleOptions. */
 export function assertOptions(options: unknown): asserts options is PrismaModuleOptions {
@@ -15,10 +15,20 @@ export function assertOptions(options: unknown): asserts options is PrismaModule
   if (hasClient && typeof o.client !== 'function') {
     throw new KneadError('PrismaModule `client` must be a function returning a Prisma client.');
   }
-  if (hasInstance && (typeof o.instance !== 'object' || o.instance === null)) {
-    throw new KneadError('PrismaModule `instance` must be a Prisma client.');
-  }
+  if (hasInstance) assertClient(o.instance);
   if (o.disconnectOnShutdown !== undefined && typeof o.disconnectOnShutdown !== 'boolean') {
     throw new KneadError('PrismaModule `disconnectOnShutdown` must be a boolean.');
+  }
+}
+
+/** Throws a KneadError unless `client` has the `$connect`, `$disconnect` and `$transaction` methods. */
+export function assertClient(client: unknown): asserts client is RegisteredClient {
+  const c = client as Record<string, unknown> | null | undefined;
+  for (const method of ['$connect', '$disconnect', '$transaction']) {
+    if (typeof c !== 'object' || c === null || typeof c[method] !== 'function') {
+      throw new KneadError(
+        `PrismaModule client must be a Prisma client with a ${method}() method.`,
+      );
+    }
   }
 }

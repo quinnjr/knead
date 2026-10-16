@@ -5,7 +5,7 @@ import {
   type ModuleImport,
   type Provider,
 } from '@knead-js/core';
-import { assertOptions } from './options.js';
+import { assertClient, assertOptions } from './options.js';
 import { PrismaService } from './prisma.service.js';
 import { PRISMA_CLIENT, PRISMA_OPTIONS } from './tokens.js';
 import type { PrismaModuleOptions } from './types.js';
@@ -49,7 +49,12 @@ export class PrismaModule {
           provide: PRISMA_CLIENT,
           useFactory: async () => {
             const options = inject(PRISMA_OPTIONS);
-            return 'client' in options ? await options.client() : options.instance;
+            const client =
+              typeof (options as { client?: unknown }).client === 'function'
+                ? await (options as { client: () => unknown }).client()
+                : (options as { instance: unknown }).instance;
+            assertClient(client);
+            return client;
           },
         },
         PrismaService,

@@ -31,6 +31,13 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
         'Prisma failed to connect',
         error,
       );
+      if (this.#owned()) {
+        try {
+          await this.client.$disconnect();
+        } catch {
+          // Best effort: the connect error is the one worth reporting.
+        }
+      }
       const failure = new KneadError('Prisma failed to connect to the database');
       failure.cause = error;
       throw failure;
@@ -38,8 +45,15 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleDestroy(): Promise<void> {
-    const options = this.#options;
-    const owned = 'client' in options || options.disconnectOnShutdown === true;
-    if (owned) await this.client.$disconnect();
+    if (this.#owned() || this.#disconnectOnShutdown()) await this.client.$disconnect();
+  }
+
+  /** Whether the module built the client (a `client` factory) rather than borrowing an instance. */
+  #owned(): boolean {
+    return typeof (this.#options as { client?: unknown }).client === 'function';
+  }
+
+  #disconnectOnShutdown(): boolean {
+    return (this.#options as { disconnectOnShutdown?: boolean }).disconnectOnShutdown === true;
   }
 }

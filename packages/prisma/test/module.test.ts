@@ -56,11 +56,58 @@ describe('PrismaModule', () => {
       (e: unknown) => e,
     );
     expect(error).toBeInstanceOf(KneadError);
-    expect((error as KneadError).message).not.toContain('secret');
+    expect((error as KneadError).message).toBe('Prisma failed to connect to the database');
     expect((error as KneadError).cause).toBe(original);
     const entries = logger.entries.filter((e) => e.level === 'error');
     expect(entries.length).toBeGreaterThan(0);
     expect(JSON.stringify(entries)).not.toContain('secret');
+  });
+
+  test('a failed connect disconnects an owned client but not an instance', async () => {
+    const owned = createFakeClient({ connectError: new Error('boom') });
+    await expect(
+      ApplicationContext.create(PrismaModule.forRoot({ client: () => owned })),
+    ).rejects.toBeInstanceOf(KneadError);
+    expect(owned.calls).toEqual(['$connect', '$disconnect']);
+
+    const borrowed = createFakeClient({ connectError: new Error('boom') });
+    await expect(
+      ApplicationContext.create(PrismaModule.forRoot({ instance: borrowed })),
+    ).rejects.toBeInstanceOf(KneadError);
+    expect(borrowed.calls).toEqual(['$connect']);
+  });
+
+  test('a failing disconnect during cleanup does not mask the connect error', async () => {
+    const fake = createFakeClient({ connectError: new Error('boom') });
+    fake.$disconnect = async () => {
+      throw new Error('disconnect failed');
+    };
+    const error = await ApplicationContext.create(
+      PrismaModule.forRoot({ client: () => fake }),
+    ).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect((error as KneadError).message).toBe('Prisma failed to connect to the database');
+  });
+
+  test('an invalid client shape is a KneadError', async () => {
+    expect(() => PrismaModule.forRoot({ instance: {} } as never)).toThrow(KneadError);
+    for (const bad of [undefined, {}, { $connect() {}, $disconnect() {} }]) {
+      await expect(
+        ApplicationContext.create(PrismaModule.forRoot({ client: () => bad } as never)),
+      ).rejects.toBeInstanceOf(KneadError);
+    }
+  });
+
+  test('client: undefined next to an instance uses the instance', async () => {
+    const fake = createFakeClient();
+    const ctx = await ApplicationContext.create(
+      PrismaModule.forRoot({ client: undefined, instance: fake } as never),
+    );
+    expect(ctx.get(PrismaService).client).toBe(fake);
+    await ctx.close();
+    expect(fake.calls).toEqual(['$connect']);
   });
 
   test('forRootAsync resolves options via inject()', async () => {
