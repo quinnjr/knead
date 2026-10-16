@@ -5,8 +5,10 @@ import { join } from 'node:path';
 import {
   checkReleaseTag,
   checkRepositoryFields,
+  checkVersionAtRef,
   publishablePackages,
   REPOSITORY_URL,
+  versionsAtRef,
 } from './release';
 
 const dirs: string[] = [];
@@ -120,5 +122,62 @@ describe('checkRepositoryFields', () => {
 describe('workspace packages', () => {
   test('every publishable package declares this repository', () => {
     expect(checkRepositoryFields(publishablePackages(join(import.meta.dir, '..')))).toEqual([]);
+  });
+});
+
+describe('checkVersionAtRef', () => {
+  const at = (version: string | undefined) => [
+    { name: '@hpmws/core', version },
+    { name: '@hpmws/http', version },
+  ];
+
+  test('passes when the tag is the version at the ref', () => {
+    expect(checkVersionAtRef('v1.2.3', 'origin/main', at('1.2.3'))).toEqual([]);
+    expect(checkVersionAtRef('refs/tags/v1.2.3', 'origin/main', at('1.2.3'))).toEqual([]);
+  });
+
+  test('fails when main has moved past the tag (an old main commit)', () => {
+    expect(checkVersionAtRef('v1.2.3', 'origin/main', at('1.3.0'))).toEqual([
+      '@hpmws/core is at 1.3.0 at origin/main but the tag is v1.2.3',
+      '@hpmws/http is at 1.3.0 at origin/main but the tag is v1.2.3',
+    ]);
+  });
+
+  test('fails when a package does not exist at the ref', () => {
+    expect(checkVersionAtRef('v1.2.3', 'origin/main', at(undefined))[0]).toBe(
+      '@hpmws/core does not exist at origin/main',
+    );
+  });
+
+  test('rejects malformed tags and an empty package list', () => {
+    expect(checkVersionAtRef('1.2.3', 'origin/main', at('1.2.3'))[0]).toContain(
+      'not a release tag',
+    );
+    expect(checkVersionAtRef('v1.2.3', 'origin/main', [])[0]).toContain('no publishable packages');
+  });
+});
+
+describe('versionsAtRef', () => {
+  test('reads each package version from the given git ref, not the working tree', () => {
+    const root = workspace({ core: pkg('@hpmws/core', '1.0.0') });
+    const git = (...args: string[]) => {
+      const r = Bun.spawnSync(['git', ...args], { cwd: root, stdout: 'pipe', stderr: 'pipe' });
+      if (r.exitCode !== 0) throw new Error(r.stderr.toString());
+    };
+    git('init', '-q', '-b', 'main');
+    git('add', '.');
+    git('-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-qm', 'one');
+    writeFileSync(
+      join(root, 'packages/core/package.json'),
+      JSON.stringify(pkg('@hpmws/core', '2.0.0')),
+    );
+    const packages = [
+      ...publishablePackages(root),
+      { name: '@hpmws/new', relativeDir: 'packages/new' },
+    ];
+    expect(versionsAtRef(root, 'main', packages)).toEqual([
+      { name: '@hpmws/core', version: '1.0.0' },
+      { name: '@hpmws/new', version: undefined },
+    ]);
   });
 });

@@ -1,7 +1,9 @@
 // Release helpers for the tag-triggered release workflow. Run with bun from the repo root.
 //
-//   bun scripts/release.ts gate <tag>        fail unless <tag> is vX.Y.Z and equals the version
-//                                            of every publishable package (Changesets fixed mode)
+//   bun scripts/release.ts gate <tag> [ref]  fail unless <tag> is vX.Y.Z and equals the version
+//                                            of every publishable package (Changesets fixed mode),
+//                                            both in the checkout and at <ref> (default
+//                                            origin/main), so only main's HEAD can be released
 //   bun scripts/release.ts pack <out-dir>    pack every publishable package into <out-dir>
 //
 // Both commands also fail unless every publishable package's `repository` names this repository
@@ -65,6 +67,49 @@ export function checkReleaseTag(
     .map((p) => `${p.name} is at ${p.version} but the tag is ${name}`);
 }
 
+/**
+ * Versions of `packages` as committed at git `ref` (e.g. `origin/main`). A package missing at
+ * `ref` gets version `undefined`.
+ */
+export function versionsAtRef(
+  root: string,
+  ref: string,
+  packages: readonly Pick<PublishablePackage, 'name' | 'relativeDir'>[],
+): { name: string; version: string | undefined }[] {
+  return packages.map((p) => {
+    const r = Bun.spawnSync(['git', 'show', `${ref}:${p.relativeDir}/package.json`], {
+      cwd: root,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    if (r.exitCode !== 0) return { name: p.name, version: undefined };
+    const version = JSON.parse(r.stdout.toString()).version;
+    return { name: p.name, version: typeof version === 'string' ? version : undefined };
+  });
+}
+
+/**
+ * Problems that block releasing `tag` because it is not the version at the head of `ref`. Stops
+ * a tag on an older main commit (whose version main has since moved past) from being released.
+ */
+export function checkVersionAtRef(
+  tag: string,
+  ref: string,
+  atRef: readonly { name: string; version: string | undefined }[],
+): string[] {
+  const name = tag.replace(/^refs\/tags\//, '');
+  const match = RELEASE_TAG.exec(name);
+  if (!match) return [`${JSON.stringify(name)} is not a release tag (expected vX.Y.Z)`];
+  if (atRef.length === 0) return ['no publishable packages found under packages/'];
+  return atRef
+    .filter((p) => p.version !== match[1])
+    .map((p) =>
+      p.version === undefined
+        ? `${p.name} does not exist at ${ref}`
+        : `${p.name} is at ${p.version} at ${ref} but the tag is ${name}`,
+    );
+}
+
 /** Problems with the packages' `repository` fields; empty when all point at this repository. */
 export function checkRepositoryFields(
   packages: readonly Pick<PublishablePackage, 'name' | 'relativeDir' | 'repository'>[],
@@ -119,16 +164,20 @@ function pack(root: string, outDir: string): void {
 
 if (import.meta.main) {
   const root = resolve(import.meta.dir, '..');
-  const [command, arg] = process.argv.slice(2);
+  const [command, arg, ref = 'origin/main'] = process.argv.slice(2);
   if (command === 'gate' && arg !== undefined) {
     const packages = publishablePackages(root);
-    const problems = [...checkReleaseTag(arg, packages), ...checkRepositoryFields(packages)];
-    if (problems.length > 0) fail('release gate', problems);
-    console.log(`release gate ok: ${arg} matches ${packages.length} packages`);
+    const problems = [
+      ...checkReleaseTag(arg, packages),
+      ...checkVersionAtRef(arg, ref, versionsAtRef(root, ref, packages)),
+      ...checkRepositoryFields(packages),
+    ];
+    if (problems.length > 0) fail('release gate', [...new Set(problems)]);
+    console.log(`release gate ok: ${arg} matches ${packages.length} packages and ${ref}`);
   } else if (command === 'pack' && arg) {
     pack(root, resolve(arg));
   } else {
-    console.error('usage: bun scripts/release.ts gate <tag> | pack <out-dir>');
+    console.error('usage: bun scripts/release.ts gate <tag> [ref] | pack <out-dir>');
     process.exit(2);
   }
 }
