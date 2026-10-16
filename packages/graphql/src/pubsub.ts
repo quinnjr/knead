@@ -1,4 +1,5 @@
 import { InjectionToken } from '@hpmws/core';
+import type { Logger } from '@hpmws/http';
 import type { PubSubEngine } from '@leaven-graphql/ws';
 
 /** The PubSubEngine used by @Subscription resolvers: `inject(PUBSUB).publish(topic, payload)`. */
@@ -96,6 +97,29 @@ export function eventIterator<T>(
     async throw(error?: unknown) {
       finish();
       throw error;
+    },
+  };
+}
+
+/**
+ * Adapts an hpmws `Logger` to the logger Leaven's WebSocket transport and in-memory `PubSub`
+ * accept, so their diagnostics go through `LOGGER` (and its credential redaction) instead of
+ * `console`.
+ */
+export function leavenLogger(logger: Logger): {
+  error(...args: unknown[]): void;
+  warn(...args: unknown[]): void;
+} {
+  const split = (args: unknown[]): [string, unknown[]] =>
+    typeof args[0] === 'string' ? [args[0], args.slice(1)] : ['Leaven', args];
+  return {
+    error: (...args) => {
+      const [message, meta] = split(args);
+      logger.error(message, ...meta);
+    },
+    warn: (...args) => {
+      const [message, meta] = split(args);
+      logger.warn(message, ...meta);
     },
   };
 }

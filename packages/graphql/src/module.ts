@@ -1,4 +1,5 @@
 import { type DynamicModule, inject, Module, type ModuleImport, type Provider } from '@hpmws/core';
+import { LOGGER } from '@hpmws/http';
 import { PubSub } from '@leaven-graphql/ws';
 import { createGraphQLController } from './http.js';
 import {
@@ -8,7 +9,7 @@ import {
   normalizePath,
   validateGraphQLOptions,
 } from './options.js';
-import { PUBSUB } from './pubsub.js';
+import { leavenLogger, PUBSUB } from './pubsub.js';
 import { GraphQLRuntime } from './runtime.js';
 import { GraphQLSubscriptions } from './subscriptions-service.js';
 
@@ -51,7 +52,11 @@ export class GraphQLModule {
       providers: [
         ...providers,
         { provide: GRAPHQL_PATH, useValue: normalized },
-        { provide: PUBSUB, useFactory: () => inject(GRAPHQL_OPTIONS).pubsub ?? new PubSub() },
+        {
+          provide: PUBSUB,
+          useFactory: () =>
+            inject(GRAPHQL_OPTIONS).pubsub ?? new PubSub({ logger: leavenLogger(inject(LOGGER)) }),
+        },
         GraphQLRuntime,
         GraphQLSubscriptions,
       ],

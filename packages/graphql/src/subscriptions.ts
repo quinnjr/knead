@@ -5,6 +5,7 @@ import type { ServerWebSocket } from 'bun';
 import type { OperationContext } from './context.js';
 import { logInternalError, toSafeError } from './errors.js';
 import { queryTooLongMessage, type SubscriptionOptions } from './options.js';
+import { leavenLogger } from './pubsub.js';
 import type { GraphQLRuntime } from './runtime.js';
 
 export const GRAPHQL_TRANSPORT_WS = 'graphql-transport-ws';
@@ -166,6 +167,7 @@ export function createSubscriptionEndpoint(
   });
   const handler = new WebSocketHandler<OperationContext>({
     schema: runtime.schema,
+    logger: leavenLogger(runtime.logger),
     connectionInitTimeout: options.connectionInitTimeout,
     keepAliveInterval: options.keepAliveInterval,
     subscriptionManager: {
