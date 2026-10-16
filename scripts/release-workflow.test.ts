@@ -1,6 +1,6 @@
 // Runs the publish step of .github/workflows/release.yml against fake tarballs with a fake `npm`
 // on PATH, so the shell logic the publish job runs is tested without touching the registry.
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, setDefaultTimeout, test } from 'bun:test';
 import { randomBytes } from 'node:crypto';
 import {
   chmodSync,
@@ -13,6 +13,11 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+
+// Every test here runs the real publish step: bash, GNU tar over eight tarballs and a node
+// process loading pacote. That normally takes 0.3-1 s, but under load (for example `pnpm test`
+// next to another `bun test scripts`) it exceeded bun's 5 s default and failed spuriously.
+setDefaultTimeout(60_000);
 
 interface Step {
   name?: string;
