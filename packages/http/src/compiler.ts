@@ -67,10 +67,13 @@ function upgradeChain(
   path: string,
   endpoint: WsEndpoint,
   globalMiddleware: readonly Middleware[],
+  globalGuards: readonly Guard<any>[],
   onError: ErrorHandler,
 ): Handler {
   const terminal: Handler = async (ctx) => {
     try {
+      // Global guards protect upgrades like any route; ctx.route is null here.
+      await runGuards(globalGuards, ctx);
       const data = await endpoint.upgrade(ctx);
       if (data === false) throw new ForbiddenException('WebSocket upgrade rejected');
       const accepted = (ctx.server as Server<WsData>).upgrade(ctx.req, {
@@ -108,7 +111,10 @@ export function compileApplication(input: CompileInput): CompiledApp {
 
   const wsHandlers = new Map<string, Handler>();
   for (const [path, endpoint] of input.ws.entries()) {
-    wsHandlers.set(path, upgradeChain(path, endpoint, input.globalMiddleware, globalOnError));
+    wsHandlers.set(
+      path,
+      upgradeChain(path, endpoint, input.globalMiddleware, input.globalGuards, globalOnError),
+    );
   }
 
   for (const mod of input.modules) {
