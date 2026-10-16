@@ -36,7 +36,7 @@ import { HealthController } from './health/health.controller.js';
           maxAliases: 30,
           maxQueryLength: 100 * 1024,
           maxFields: 1000,
-          maxIntrospectionDepth: 15,
+          maxIntrospectionDepth: 20,
           parseOptions: { maxTokens: 3000 },
           // HTTP: the bearer token. Over WebSocket this runs on the upgrade request, and the
           // object onConnect returned is merged over it.

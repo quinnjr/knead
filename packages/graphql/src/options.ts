@@ -98,8 +98,8 @@ export interface GraphQLModuleOptions {
   maxDepth?: number | false;
   /**
    * Deepest selection inside `__schema` or `__type`, counting that field as level 1 (fragments
-   * expanded). Default 15, the depth of graphql-js's `getIntrospectionQuery()`; `Infinity` or
-   * `false` disables.
+   * expanded). Default 20, headroom above graphql-js's `getIntrospectionQuery()` (15);
+   * `Infinity` or `false` disables.
    */
   maxIntrospectionDepth?: number | false;
   /** Highest query cost allowed (see `complexity`). Default 1000; `Infinity` or `false` disables. */
@@ -193,7 +193,7 @@ export const GRAPHQL_LIMITS = Object.freeze({
   maxQueryLength: 100 * 1024,
   maxAliases: 30,
   maxFields: 1000,
-  maxIntrospectionDepth: 15,
+  maxIntrospectionDepth: 20,
 });
 
 /** Default Leaven document cache: at most 100 parsed documents. */

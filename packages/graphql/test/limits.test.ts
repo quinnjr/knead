@@ -279,20 +279,20 @@ describe('maxIntrospectionDepth', () => {
   const bomb = (levels: number) =>
     `{ __schema { types { fields { type { ${'ofType { '.repeat(levels)}name${' }'.repeat(levels)} } } } } }`;
 
-  test('the standard introspection query passes (depth 15)', async () => {
+  test('the standard introspection query (depth 15) passes the default of 20', async () => {
     s = await startGraphQL([M], { introspection: true });
     expect((await s.app.graphql(getIntrospectionQuery())).errors).toBeUndefined();
-    expect(resolveOptions({}, '/graphql').maxIntrospectionDepth).toBe(15);
+    expect(resolveOptions({}, '/graphql').maxIntrospectionDepth).toBe(20);
   });
 
   test('a deeper introspection bomb is DEPTH_LIMIT', async () => {
     s = await startGraphQL([M], { introspection: true });
     // __schema(1) types(2) fields(3) type(4) + levels ofType + name.
-    expect((await s.app.graphql(bomb(10))).errors).toBeUndefined(); // depth 15
-    const res = await s.app.graphql(bomb(11)); // depth 16
+    expect((await s.app.graphql(bomb(15))).errors).toBeUndefined(); // depth 20
+    const res = await s.app.graphql(bomb(16)); // depth 21
     expect(res.data).toBeUndefined();
     expect(res.errors?.[0]).toMatchObject({
-      message: 'Introspection depth of 16 exceeds maximum allowed depth of 15',
+      message: 'Introspection depth of 21 exceeds maximum allowed depth of 20',
       extensions: { code: 'DEPTH_LIMIT' },
     });
   });
@@ -300,7 +300,7 @@ describe('maxIntrospectionDepth', () => {
   test('a bomb through fragments and __type is caught too', async () => {
     s = await startGraphQL([M], { introspection: true });
     const res = await s.app.graphql(
-      `{ __type(name: "Tree") { ...T } } fragment T on __Type { fields { type { ${'ofType { '.repeat(20)}name${' }'.repeat(20)} } } }`,
+      `{ __type(name: "Tree") { ...T } } fragment T on __Type { fields { type { ${'ofType { '.repeat(25)}name${' }'.repeat(25)} } } }`,
     );
     expect(res.errors?.[0]?.extensions?.code).toBe('DEPTH_LIMIT');
   });
