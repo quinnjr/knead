@@ -6,6 +6,7 @@ export {
   intersectRules,
 } from './ability.js';
 export { CaslConfigError } from './errors.js';
+export { PermittedFields, pickPermitted } from './fields.js';
 export { CaslForbiddenFilter } from './filter.js';
 export { type Grant, MAX_SCOPE_LENGTH, parseGrant } from './grant.js';
 export { AbilityGuard } from './guard.js';
