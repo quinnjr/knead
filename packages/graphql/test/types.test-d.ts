@@ -3,11 +3,13 @@
 import { GraphQLScalarType } from 'graphql';
 import {
   ArgsType,
+  type ConnectionParams,
   defineEnum,
   defineScalar,
   defineUnion,
   Field,
   Float,
+  type GraphQLModuleOptions,
   ID,
   Int,
   Mutation,
@@ -260,3 +262,18 @@ export class CorrectParent {
     return 1;
   }
 }
+
+// onConnect: connectionParams are read-only, and returning or spreading them is a type error.
+declare const params: ConnectionParams;
+// @ts-expect-error connectionParams are read-only
+params.user = 'admin';
+export const onConnectChecks: GraphQLModuleOptions[] = [
+  { subscriptions: { onConnect: (_http, p) => typeof p.token === 'string' } },
+  { subscriptions: { onConnect: async () => ({}) } },
+  // @ts-expect-error the raw params are not a context
+  { subscriptions: { onConnect: (_http, p) => p } },
+  // @ts-expect-error neither is a spread of them
+  { subscriptions: { onConnect: (_http, p) => ({ ...p }) } },
+  // @ts-expect-error nor a promise of them
+  { subscriptions: { onConnect: async (_http, p) => p } },
+];

@@ -11,6 +11,12 @@ import {
 } from '../src/index.js';
 import { type Started, startGraphQL, until } from './helpers.js';
 
+declare module '../src/index.js' {
+  interface GraphQLContext {
+    connectedAs?: string;
+  }
+}
+
 let allowed = true;
 const Allowed = (_ctx: ResolverCtx) => allowed;
 
@@ -86,14 +92,15 @@ describe('subscription revocation', () => {
   test('GraphQLSubscriptions.closeWhere closes sockets by connection context', async () => {
     s = await startGraphQL([M], {
       subscriptions: {
-        onConnect: (_http, params) => ({ user: params.user }),
+        onConnect: (_http, params) =>
+          typeof params.user === 'string' ? { connectedAs: params.user } : false,
       },
     });
     const ada = open(s, { user: 'ada' });
     const grace = open(s, { user: 'grace' });
     await Promise.all([ada.acked, grace.acked]);
     const service = s.mod.get(GraphQLSubscriptions);
-    expect(service.closeWhere((c) => c.context.user === 'ada')).toBe(1);
+    expect(service.closeWhere((c) => c.context.connectedAs === 'ada')).toBe(1);
     expect(await ada.closed).toEqual({ code: 1008, reason: 'Connection revoked' });
     expect(grace.ws.readyState).toBe(WebSocket.OPEN);
     expect(service.closeWhere((c) => c.http.req.url.endsWith('/graphql'), 4000, 'bye')).toBe(1);

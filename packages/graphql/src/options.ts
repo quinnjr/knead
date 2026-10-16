@@ -7,18 +7,34 @@ import type {
   ParseOptions,
 } from '@leaven-graphql/core';
 import type { PubSubEngine } from '@leaven-graphql/ws';
-import type { ResolverCtx } from './context.js';
+import type { GraphQLContext, ResolverCtx } from './context.js';
 import type { Class } from './type-refs.js';
+
+/** Phantom brand on connectionParams, so they cannot be returned from onConnect as the context. */
+declare const CONNECTION_PARAMS: unique symbol;
+
+/**
+ * The client's `connection_init` payload: untrusted input chosen by the client. Read the fields
+ * you need and verify them; never return or spread it into the onConnect result.
+ */
+export type ConnectionParams = Readonly<Record<string, unknown>> & {
+  readonly [CONNECTION_PARAMS]?: true;
+};
+
+/** What onConnect may add to the context: GraphQLContext fields, never the raw params. */
+export type ConnectContext = Partial<GraphQLContext> & { readonly [CONNECTION_PARAMS]?: never };
 
 export interface SubscriptionOptions {
   /**
    * Runs on `connection_init` with the upgrade request's Ctx. `false` closes the socket with
-   * 4403; an object is merged into every operation's context on that socket.
+   * 4403; an object is merged into every operation's context on that socket. Never spread
+   * `connectionParams` into the result: the client would choose its own context (`user`,
+   * `roles`, ...). Return only values you derived and verified.
    */
   onConnect?: (
     http: Ctx,
-    connectionParams: Record<string, unknown>,
-  ) => boolean | object | Promise<boolean | object>;
+    connectionParams: ConnectionParams,
+  ) => boolean | ConnectContext | Promise<boolean | ConnectContext>;
   /** ms to wait for `connection_init` (Leaven default 3000). */
   connectionInitTimeout?: number;
   /** ms between server pings; 0 disables (Leaven default 12000). */
