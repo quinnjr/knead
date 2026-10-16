@@ -97,6 +97,12 @@ function smokeTest(dir: string): void {
   const thirdParty: [string, string][] = [
     ['@standard-schema/spec', 'packages/http/node_modules/@standard-schema/spec'],
     ['sanitize-html', 'packages/sanitize/node_modules/sanitize-html'],
+    ['graphql', 'packages/graphql/node_modules/graphql'],
+    ['dataloader', 'packages/graphql/node_modules/dataloader'],
+    ['@leaven-graphql/core', 'packages/graphql/node_modules/@leaven-graphql/core'],
+    ['@leaven-graphql/errors', 'packages/graphql/node_modules/@leaven-graphql/errors'],
+    ['@leaven-graphql/playground', 'packages/graphql/node_modules/@leaven-graphql/playground'],
+    ['@leaven-graphql/ws', 'packages/graphql/node_modules/@leaven-graphql/ws'],
     ['@types/bun', 'node_modules/@types/bun'],
   ];
   for (const [name, from] of thirdParty) {
@@ -136,6 +142,7 @@ function consumerApp(): string {
   return `
 import { inject, Module } from '@hpmws/core';
 import { CorsModule } from '@hpmws/cors';
+import { Field, GraphQLModule, ID, ObjectType, Query, Resolver, type ResolverCtx } from '@hpmws/graphql';
 import { Controller, type Ctx, Get, HpmwsFactory, MemoryLogger } from '@hpmws/http';
 import { RateLimitModule } from '@hpmws/rate-limit';
 import { sanitize, type SanitizePolicy } from '@hpmws/sanitize';
@@ -158,14 +165,31 @@ class GreetController {
   }
 }
 
+@ObjectType()
+class Greeting {
+  @Field(() => ID) id!: string;
+  @Field(() => String) text!: string;
+}
+
+@Resolver()
+class GreetingResolver {
+  readonly greeter = inject(Greeter);
+
+  @Query(() => Greeting, { args: { name: String } })
+  greeting(ctx: ResolverCtx<{ name: string }>): Greeting {
+    return { id: '1', text: this.greeter.greet(ctx.args.name) };
+  }
+}
+
 @Module({
   imports: [
+    GraphQLModule.forRoot(),
     CorsModule.forRoot({ origin: 'https://app.example' }),
     RateLimitModule.forRoot({ limit: 10, window: '1m' }),
     SecurityHeadersModule.forRoot(),
   ],
   controllers: [GreetController],
-  providers: [Greeter],
+  providers: [Greeter, GreetingResolver],
 })
 class AppModule {}
 
@@ -180,12 +204,20 @@ try {
     headers: { origin: 'https://app.example' },
   });
   const body = (await res.json()) as { message: string };
+  const gql = await fetch(new URL('/graphql', app.url), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin: 'https://app.example' },
+    body: JSON.stringify({ query: '{ greeting(name: "ada") { text } }' }),
+  });
+  const gqlBody = (await gql.json()) as { data?: { greeting: { text: string } } };
   const checks = [
     res.status === 200,
     body.message === sanitize('<b>hello ada</b>', policy),
     res.headers.get('access-control-allow-origin') === 'https://app.example',
     res.headers.get('ratelimit-limit') === '10',
     res.headers.get('x-frame-options') === 'DENY',
+    gql.status === 200,
+    gqlBody.data?.greeting.text === body.message,
   ];
   if (checks.includes(false)) throw new Error(\`checks failed: \${JSON.stringify(checks)}\`);
 } finally {
