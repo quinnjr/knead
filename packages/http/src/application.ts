@@ -74,6 +74,12 @@ export interface ListenOptions {
    * parsed per request. Default 1000.
    */
   maxParams?: number;
+  /**
+   * Cache-Control for responses that set none (for example `'no-store'` for an API serving
+   * per-user data). Default: none is added, so responses without one may be cached by browsers
+   * and shared caches according to their heuristics.
+   */
+  defaultCacheControl?: string;
   /** Request validation: `redactIssueMessages` makes body and query issue messages generic. */
   validation?: ValidationOptions;
   /** Largest accepted request body in bytes; larger bodies get 413. Default 1 MiB. */
@@ -425,6 +431,12 @@ export class HttpApplication {
       throw new HttpConfigError('redirectHttp requires tls.');
     }
     const hosts = this.#allowedHosts(options);
+    const cc = options.defaultCacheControl;
+    if (cc !== undefined && (typeof cc !== 'string' || cc === '' || /[\r\n]/.test(cc))) {
+      throw new HttpConfigError(
+        `defaultCacheControl must be a header value, got ${JSON.stringify(cc)}.`,
+      );
+    }
     const maxParams = options.maxParams;
     if (maxParams !== undefined && (!Number.isInteger(maxParams) || maxParams < 1)) {
       throw new HttpConfigError(`maxParams must be an integer >= 1, got ${String(maxParams)}.`);
@@ -470,6 +482,7 @@ export class HttpApplication {
       ws,
       hosts,
       validation: options.validation,
+      defaultCacheControl: options.defaultCacheControl,
     });
     // Middleware, guards and filters constructed by the compiler get their init hooks now (and
     // shutdown hooks at close()); a failing hook rejects listen() before anything is bound.

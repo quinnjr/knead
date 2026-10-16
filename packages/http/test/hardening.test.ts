@@ -304,3 +304,41 @@ describe('listen({ validation: { redactIssueMessages } })', () => {
     expect(text).toContain('Invalid value');
   });
 });
+
+describe('listen({ defaultCacheControl })', () => {
+  @Controller('/c')
+  class C {
+    @Get('/plain') plain() {
+      return { a: 1 };
+    }
+    @Get('/own') own(ctx: Ctx) {
+      ctx.res.headers.set('cache-control', 'public, max-age=60');
+      return 'cached';
+    }
+    @Get('/raw') raw() {
+      return new Response('raw', { headers: { 'cache-control': 'max-age=5' } });
+    }
+  }
+  @Module({ controllers: [C] })
+  class CModule {}
+
+  test('applies to responses without Cache-Control, including errors and 404s', async () => {
+    app = await start(CModule, { defaultCacheControl: 'no-store' });
+    const get = async (path: string) =>
+      (await fetch(new URL(path, app!.url))).headers.get('cache-control');
+    expect(await get('/c/plain')).toBe('no-store');
+    expect(await get('/c/own')).toBe('public, max-age=60');
+    expect(await get('/c/raw')).toBe('max-age=5');
+    expect(await get('/missing')).toBe('no-store');
+  });
+
+  test('off by default; invalid values are a configuration error', async () => {
+    app = await start(CModule);
+    expect((await fetch(new URL('/c/plain', app.url))).headers.get('cache-control')).toBeNull();
+    await app.close();
+    app = undefined;
+    for (const defaultCacheControl of ['', 'no-store\r\nx: 1']) {
+      await expect(start(CModule, { defaultCacheControl })).rejects.toThrow(HttpConfigError);
+    }
+  });
+});

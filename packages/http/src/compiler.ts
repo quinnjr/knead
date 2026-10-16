@@ -30,7 +30,7 @@ import {
 } from './pipeline.js';
 import { requestUrl } from './request.js';
 import { resolveFilter, resolveGuard, resolveMiddleware } from './resolve.js';
-import { toResponse } from './response.js';
+import { toResponse, withHeaders } from './response.js';
 import type { ExceptionFilter, Guard, HttpMethod, Middleware, RouteInfo } from './types.js';
 import { type ValidationOptions, validateRequest } from './validation.js';
 import type { WsData, WsEndpoint, WsRegistry } from './ws.js';
@@ -53,6 +53,8 @@ export interface CompileInput {
   readonly net: NetConfig;
   readonly ws: WsRegistry;
   readonly validation?: ValidationOptions | undefined;
+  /** `listen({ defaultCacheControl })`: set on responses that have no Cache-Control. */
+  readonly defaultCacheControl?: string | undefined;
   /** `listen({ allowedHosts })`: requests whose Host is not allowed get 421. */
   readonly hosts?: HostMatcher | undefined;
 }
@@ -144,6 +146,11 @@ export function misdirectedResponse(): Response {
 export function compileApplication(input: CompileInput): CompiledApp {
   const { logger, development, net, hosts } = input;
   const misdirected = (req: Request) => hosts !== undefined && !hosts(req.headers.get('host'));
+  const cacheControl = input.defaultCacheControl;
+  const withCacheDefault = (res: Response): Response =>
+    cacheControl === undefined || res.headers.has('cache-control')
+      ? res
+      : withHeaders(res, { 'cache-control': cacheControl });
   const checkForwarded = forwardedWarning(net, logger);
   const globalOnError = createErrorHandler(input.globalFilters, logger, development);
   const routes: CompiledApp['routes'] = {};
@@ -270,7 +277,7 @@ export function compileApplication(input: CompileInput): CompiledApp {
             if (misdirected(req)) return misdirectedResponse();
             checkForwarded(req);
             if (ws && isUpgrade(req)) return runUpgrade(path, ws, req, server, net);
-            return handle(new RequestContext(req, server, info, net));
+            return withCacheDefault(await handle(new RequestContext(req, server, info, net)));
           };
           const entry = allowed.get(path) ?? {
             matcher: compileMatcher(path),
@@ -312,7 +319,7 @@ export function compileApplication(input: CompileInput): CompiledApp {
       const ws = wsHandlers.get(pathname);
       if (ws) return runUpgrade(pathname, ws, req, server, net);
     }
-    return fallback(new RequestContext(req, server, null, net));
+    return withCacheDefault(await fallback(new RequestContext(req, server, null, net)));
   };
 
   return { routes, fetch, table };
