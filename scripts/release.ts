@@ -4,14 +4,25 @@
 //                                            of every publishable package (Changesets fixed mode)
 //   bun scripts/release.ts pack <out-dir>    pack every publishable package into <out-dir>
 //
+// Both commands also fail unless every publishable package's `repository` names this repository
+// and its own directory: npm provenance rejects a publish (E422) whose package.json does not
+// match the repository the workflow ran in.
+//
 // The publish job never runs this file: it only publishes the tarballs `pack` produced.
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
+export const REPOSITORY_URL =
+  'git+https://github.com/quinnjr/high-performance-modular-web-server.git';
+
 export interface PublishablePackage {
   name: string;
   version: string;
+  /** Absolute path of the package directory. */
   dir: string;
+  /** Path relative to the repo root, e.g. `packages/core`. */
+  relativeDir: string;
+  repository?: unknown;
 }
 
 /** Every non-private workspace package under packages/, sorted by name. */
@@ -24,7 +35,13 @@ export function publishablePackages(root: string): PublishablePackage[] {
     if (!existsSync(manifest)) continue;
     const pkg = JSON.parse(readFileSync(manifest, 'utf8'));
     if (pkg.private) continue;
-    found.push({ name: pkg.name, version: pkg.version, dir });
+    found.push({
+      name: pkg.name,
+      version: pkg.version,
+      dir,
+      relativeDir: `packages/${entry}`,
+      repository: pkg.repository,
+    });
   }
   return found.sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -48,6 +65,29 @@ export function checkReleaseTag(
     .map((p) => `${p.name} is at ${p.version} but the tag is ${name}`);
 }
 
+/** Problems with the packages' `repository` fields; empty when all point at this repository. */
+export function checkRepositoryFields(
+  packages: readonly Pick<PublishablePackage, 'name' | 'relativeDir' | 'repository'>[],
+): string[] {
+  const problems: string[] = [];
+  for (const p of packages) {
+    const repo =
+      typeof p.repository === 'object' && p.repository !== null
+        ? (p.repository as Record<string, unknown>)
+        : {};
+    if (repo.url !== REPOSITORY_URL)
+      problems.push(`${p.name}: repository.url must be ${REPOSITORY_URL}`);
+    if (repo.directory !== p.relativeDir)
+      problems.push(`${p.name}: repository.directory must be ${p.relativeDir}`);
+  }
+  return problems;
+}
+
+function fail(what: string, problems: string[]): never {
+  console.error(`${what} failed:\n${problems.map((p) => `  - ${p}`).join('\n')}`);
+  process.exit(1);
+}
+
 function run(cmd: string[], cwd: string): void {
   const r = Bun.spawnSync(cmd, { cwd, stdout: 'inherit', stderr: 'inherit' });
   if (r.exitCode !== 0) throw new Error(`${cmd.join(' ')} failed in ${cwd}`);
@@ -57,6 +97,8 @@ function pack(root: string, outDir: string): void {
   mkdirSync(outDir, { recursive: true });
   if (readdirSync(outDir).length > 0) throw new Error(`${outDir} is not empty`);
   const packages = publishablePackages(root);
+  const problems = checkRepositoryFields(packages);
+  if (problems.length > 0) fail('pack', problems);
   for (const pkg of packages) {
     try {
       run(['pnpm', 'pack', '--pack-destination', outDir], pkg.dir);
@@ -80,11 +122,8 @@ if (import.meta.main) {
   const [command, arg] = process.argv.slice(2);
   if (command === 'gate' && arg !== undefined) {
     const packages = publishablePackages(root);
-    const problems = checkReleaseTag(arg, packages);
-    if (problems.length > 0) {
-      console.error(`release gate failed:\n${problems.map((p) => `  - ${p}`).join('\n')}`);
-      process.exit(1);
-    }
+    const problems = [...checkReleaseTag(arg, packages), ...checkRepositoryFields(packages)];
+    if (problems.length > 0) fail('release gate', problems);
     console.log(`release gate ok: ${arg} matches ${packages.length} packages`);
   } else if (command === 'pack' && arg) {
     pack(root, resolve(arg));

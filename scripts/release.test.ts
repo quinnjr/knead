@@ -2,7 +2,12 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checkReleaseTag, publishablePackages } from './release';
+import {
+  checkReleaseTag,
+  checkRepositoryFields,
+  publishablePackages,
+  REPOSITORY_URL,
+} from './release';
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -68,5 +73,52 @@ describe('checkReleaseTag', () => {
 
   test('fails when there is nothing to publish', () => {
     expect(checkReleaseTag('v1.2.3', [])[0]).toContain('no publishable packages');
+  });
+});
+
+describe('checkRepositoryFields', () => {
+  const repo = (dir: string) => ({
+    type: 'git',
+    url: REPOSITORY_URL,
+    directory: `packages/${dir}`,
+  });
+
+  test('passes when every package points at its own directory in this repository', () => {
+    const root = workspace({
+      core: { ...pkg('@hpmws/core', '1.0.0'), repository: repo('core') },
+      http: { ...pkg('@hpmws/http', '1.0.0'), repository: repo('http') },
+    });
+    expect(checkRepositoryFields(publishablePackages(root))).toEqual([]);
+  });
+
+  test('fails when repository is missing', () => {
+    const root = workspace({ core: pkg('@hpmws/core', '1.0.0') });
+    expect(checkRepositoryFields(publishablePackages(root))).toEqual([
+      `@hpmws/core: repository.url must be ${REPOSITORY_URL}`,
+      '@hpmws/core: repository.directory must be packages/core',
+    ]);
+  });
+
+  test('fails on a string shorthand, another repository or the wrong directory', () => {
+    const root = workspace({
+      core: { ...pkg('@hpmws/core', '1.0.0'), repository: 'github:quinnjr/other' },
+      cors: {
+        ...pkg('@hpmws/cors', '1.0.0'),
+        repository: { ...repo('cors'), url: 'git+https://github.com/someone/fork.git' },
+      },
+      http: { ...pkg('@hpmws/http', '1.0.0'), repository: repo('core') },
+    });
+    const problems = checkRepositoryFields(publishablePackages(root));
+    expect(problems).toContain(`@hpmws/core: repository.url must be ${REPOSITORY_URL}`);
+    expect(problems).toContain('@hpmws/core: repository.directory must be packages/core');
+    expect(problems).toContain(`@hpmws/cors: repository.url must be ${REPOSITORY_URL}`);
+    expect(problems).toContain('@hpmws/http: repository.directory must be packages/http');
+    expect(problems).toHaveLength(4);
+  });
+});
+
+describe('workspace packages', () => {
+  test('every publishable package declares this repository', () => {
+    expect(checkRepositoryFields(publishablePackages(join(import.meta.dir, '..')))).toEqual([]);
   });
 });
