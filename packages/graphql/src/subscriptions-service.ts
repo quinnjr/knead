@@ -28,7 +28,11 @@ export class GraphQLSubscriptions {
     const count = this.#ws.closeWhere(
       (ws) => {
         const connection = this.#runtime.connection(ws);
-        if (connection === undefined) return false;
+        if (connection === undefined) {
+          // Not opened yet (WsRegistry applies this before open): checked once its init completes.
+          this.#runtime.deferRevocation(ws, predicate, code, reason);
+          return false;
+        }
         // A socket still in connection_init/onConnect has no context yet: the predicate is
         // applied again when its init completes, so it cannot escape the revocation.
         this.#runtime.deferRevocation(ws, predicate, code, reason);

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { afterEach, describe, expect, mock, setSystemTime, test } from 'bun:test';
 import { ApplicationContext, inject, Module, type OnModuleInit } from '@hpmws/core';
 import type { HttpApplication, ListenOptions } from '../src/application.js';
 import { HttpConfigError, TooManyRequestsException } from '../src/exceptions.js';
@@ -570,5 +570,86 @@ describe('closeWhere and upgrades in progress', () => {
     };
     await ws.handler().open?.(socket);
     expect(socket.close).not.toHaveBeenCalled();
+  });
+});
+
+describe('closeWhere re-application at open (fail closed)', () => {
+  const pending = async () => {
+    const ws = await registry();
+    const opened: unknown[] = [];
+    ws.register('/x', { upgrade: () => ({}), open: (s) => void opened.push(s) });
+    const ctx = {};
+    const data: WsData = { endpoint: '/x', data: { user: 'eve' } };
+    ws.beginUpgrade(ctx);
+    ws.reserve(data, '1.2.3.4', ctx);
+    const socket = { data, close: mock(() => {}) } as unknown as WsSocket & {
+      close: ReturnType<typeof mock>;
+    };
+    return { ws, opened, socket };
+  };
+
+  test('a matching revocation closes the socket before the endpoint sees open', async () => {
+    const { ws, opened, socket } = await pending();
+    ws.closeWhere(() => true);
+    await ws.handler().open?.(socket);
+    expect(socket.close).toHaveBeenCalledWith(1008, 'Connection revoked');
+    expect(opened).toEqual([]);
+  });
+
+  test('an evicted predicate newer than the upgrade closes it: revocation state unavailable', async () => {
+    const { ws, opened, socket } = await pending();
+    for (let i = 0; i < 101; i++) ws.closeWhere(() => false);
+    await ws.handler().open?.(socket);
+    expect(socket.close).toHaveBeenCalledWith(1008, 'Revocation state unavailable');
+    expect(opened).toEqual([]);
+  });
+
+  test('an expired predicate, or an expired upgrade, also fails closed', async () => {
+    const first = await pending();
+    first.ws.closeWhere(() => false);
+    setSystemTime(new Date(Date.now() + 31_000));
+    try {
+      await first.ws.handler().open?.(first.socket);
+      expect(first.socket.close).toHaveBeenCalledWith(1008, 'Revocation state unavailable');
+    } finally {
+      setSystemTime();
+    }
+    const second = await pending();
+    setSystemTime(new Date(Date.now() + 31_000));
+    try {
+      expect(second.ws.upgradesInProgress).toBe(0);
+      await second.ws.handler().open?.(second.socket);
+      expect(second.socket.close).toHaveBeenCalledWith(1008, 'Revocation state unavailable');
+    } finally {
+      setSystemTime();
+    }
+  });
+
+  test('upgrades that never open stop counting: failed, and timed out', async () => {
+    let allow = false;
+    class Gateway implements OnModuleInit {
+      readonly ws = inject(WsRegistry);
+      onModuleInit() {
+        this.ws.register('/live', { upgrade: () => ({}) });
+      }
+    }
+    @Module({
+      providers: [Gateway, { provide: APP_GUARD, multi: true, useValue: () => allow }],
+    })
+    class M {}
+    app = await start(M);
+    const registryOf = app.get(WsRegistry);
+    expect(await upgradeStatus(app, '/live')).toContain('403');
+    expect(registryOf.upgradesInProgress).toBe(0);
+    allow = true;
+    // An upgrade that was reserved but never opened (aborted) is dropped after its TTL.
+    registryOf.beginUpgrade({});
+    expect(registryOf.upgradesInProgress).toBe(1);
+    setSystemTime(new Date(Date.now() + 31_000));
+    try {
+      expect(registryOf.upgradesInProgress).toBe(0);
+    } finally {
+      setSystemTime();
+    }
   });
 });

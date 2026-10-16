@@ -379,3 +379,46 @@ describe('recheckGuards re-runs authorize guards', () => {
     await sub.close();
   });
 });
+
+describe('GraphQLSubscriptions.closeWhere during the upgrade', () => {
+  test('a revocation issued while the upgrade is in its guards closes the socket after init', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let inGuard!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      inGuard = resolve;
+    });
+    s = await startGraphQL(
+      [M],
+      {
+        subscriptions: {
+          onConnect: (_http, params) =>
+            typeof params.user === 'string' ? { connectedAs: params.user } : false,
+        },
+      },
+      [
+        {
+          provide: APP_GUARD,
+          multi: true,
+          useValue: async (ctx: Ctx) => {
+            if (ctx.upgrade) {
+              inGuard();
+              await gate;
+            }
+            return true;
+          },
+        },
+      ],
+    );
+    const ada = open(s, { user: 'ada' });
+    await entered;
+    expect(s.mod.get(GraphQLSubscriptions).closeWhere((c) => c.context.connectedAs === 'ada')).toBe(
+      0,
+    );
+    release();
+    expect((await ada.closed).code).toBe(1008);
+    expect(ada.messages.some((m) => m.type === 'connection_ack')).toBe(false);
+  });
+});

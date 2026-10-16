@@ -213,6 +213,8 @@ export function createSubscriptionEndpoint(
   createHandler: HandlerFactory = leavenHandler,
 ): SubscriptionEndpoint {
   const facades = new WeakMap<WsSocket, SocketFacade>();
+  /** Revocations recorded for sockets that had not opened yet, keyed by their socket data. */
+  const early = new WeakMap<object, DeferredRevocation[]>();
   const states = new WeakMap<object, SocketState>();
   const stateOf = (socket: object): SocketState => {
     const state = states.get(socket);
@@ -351,7 +353,16 @@ export function createSubscriptionEndpoint(
     },
     deferRevocation(ws, predicate, code, reason) {
       const facade = facades.get(ws);
-      const state = facade && states.get(facade);
+      if (!facade) {
+        // Still upgrading (WsRegistry re-applies closeWhere before open): keep the predicate for
+        // the connection that open() creates.
+        if (ws.data.endpoint !== runtime.options.path) return false;
+        const list = early.get(ws.data) ?? [];
+        list.push({ predicate, code, reason });
+        early.set(ws.data, list);
+        return true;
+      }
+      const state = states.get(facade);
       if (!state || state.initDone || state.closed) return false;
       state.deferred.push({ predicate, code, reason });
       return true;
@@ -385,8 +396,9 @@ export function createSubscriptionEndpoint(
         pending: new Set(),
         iterators: new Map(),
         initDone: false,
-        deferred: [],
+        deferred: early.get(ws.data) ?? [],
       });
+      early.delete(ws.data);
       handler.handleOpen(asLeavenSocket(facade));
     },
     async message(ws, message) {
