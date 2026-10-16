@@ -242,3 +242,71 @@ describe('log injection', () => {
     expect(logValue('/a\nb')).toBe('/a\\nb');
   });
 });
+
+describe('redactValue robustness', () => {
+  test('a throwing getter is recorded as [unreadable]', () => {
+    const meta = {
+      ok: 'redis://u:p@h',
+      get boom(): string {
+        throw new Error('getter');
+      },
+    };
+    expect(redactValue(meta)).toEqual({ ok: 'redis://***@h', boom: '[unreadable]' });
+  });
+
+  test('a hostile Proxy never throws out of redactValue', () => {
+    const hostile = new Proxy(
+      {},
+      {
+        ownKeys() {
+          throw new Error('nope');
+        },
+        getPrototypeOf() {
+          throw new Error('nope');
+        },
+      },
+    );
+    expect(() => redactValue(hostile)).not.toThrow();
+    expect(() => redactValue({ nested: hostile })).not.toThrow();
+  });
+
+  test('Headers, Map and AxiosHeaders-like objects are walked', () => {
+    class AxiosHeaders {
+      readonly #values: Record<string, string> = { Authorization: 'Bearer t0k', Accept: 'json' };
+      toJSON() {
+        return { ...this.#values };
+      }
+    }
+    const error = Object.assign(new Error('request failed'), {
+      config: {
+        headers: new AxiosHeaders(),
+        fetchHeaders: new Headers({ authorization: 'Basic abc', 'x-ok': '1' }),
+        map: new Map([['cookie', 'sid=1']]),
+      },
+    });
+    const text = redactValue(error) as string;
+    expect(text).not.toContain('t0k');
+    expect(text).not.toContain('abc');
+    expect(text).not.toContain('sid=1');
+    expect(text).toContain('Accept');
+    const plain = new Headers({ accept: 'json' });
+    expect(redactValue({ plain }) as object).toEqual({ plain });
+  });
+
+  test('logging failures never escape: a throwing logger keeps the 500 response', async () => {
+    const { createErrorHandler } = await import('../src/pipeline.js');
+    const { makeCtx } = await import('./helpers.js');
+    const broken = {
+      debug() {},
+      info() {},
+      warn() {},
+      error() {
+        throw new Error('logger down');
+      },
+    };
+    for (const development of [true, false]) {
+      const res = await createErrorHandler([], broken, development)(new Error('x'), makeCtx('/p'));
+      expect(res.status).toBe(500);
+    }
+  });
+});

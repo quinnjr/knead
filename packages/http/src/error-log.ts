@@ -54,9 +54,14 @@ export function logError(
   level: 'error' | 'warn' = 'error',
 ): string {
   const id = crypto.randomUUID();
-  const text = `${redactCredentials(message)} (correlation id ${id})`;
-  if (options.development) options.logger[level](text, redactValue(error));
-  else options.logger[level](`${text}: ${summarizeError(error)}`);
+  try {
+    const text = `${redactCredentials(message)} (correlation id ${id})`;
+    if (options.development) options.logger[level](text, redactValue(error));
+    else options.logger[level](`${text}: ${summarizeError(error)}`);
+  } catch {
+    // A failing logger must not turn an error response into another error (or Bun's
+    // development error page).
+  }
   return id;
 }
 

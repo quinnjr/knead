@@ -1,4 +1,5 @@
 import { InjectionToken } from '@hpmws/core';
+import { summarizeError } from './error-log.js';
 
 export interface Logger {
   debug(message: string, ...meta: unknown[]): void;
@@ -188,13 +189,59 @@ function isPlainObject(value: object): boolean {
   return proto === Object.prototype || proto === null;
 }
 
+const UNREADABLE = '[unreadable]';
+
+/** Own enumerable properties, each read on its own: a throwing getter becomes '[unreadable]'. */
+function readProps(value: object, state: Walk): [string, unknown][] {
+  let keys: string[];
+  try {
+    keys = Object.keys(value);
+  } catch {
+    state.changed = true;
+    return [[UNREADABLE, UNREADABLE]];
+  }
+  return keys.map((key) => {
+    try {
+      return [key, (value as Record<string, unknown>)[key]];
+    } catch {
+      state.changed = true;
+      return [key, UNREADABLE];
+    }
+  });
+}
+
+/**
+ * The entries of a header or map-like object (Headers, Map, AxiosHeaders and other objects with
+ * `entries()` or `toJSON()`) as a plain object, or undefined for anything else.
+ */
+function entriesOf(value: object): Record<string, unknown> | undefined {
+  if (value instanceof Date || ArrayBuffer.isView(value) || value instanceof ArrayBuffer) {
+    return undefined;
+  }
+  const candidate = value as { entries?: unknown; toJSON?: unknown };
+  if (value instanceof Headers || value instanceof Map || typeof candidate.entries === 'function') {
+    const out: Record<string, unknown> = {};
+    for (const [key, item] of (candidate.entries as () => Iterable<[unknown, unknown]>).call(value))
+      out[String(key)] = item;
+    return out;
+  }
+  if (typeof candidate.toJSON === 'function') {
+    const json = (candidate.toJSON as () => unknown).call(value);
+    return typeof json === 'object' && json !== null ? { ...(json as object) } : undefined;
+  }
+  return undefined;
+}
+
 interface Walk {
   changed: boolean;
   readonly seen: WeakSet<object>;
 }
 
-function ownProps(error: Error): [string, unknown][] {
-  const entries = Object.entries(error).filter(([key]) => !ERROR_TEXT_KEYS.has(key));
+function ownProps(
+  error: Error,
+  state: Walk = { changed: false, seen: new WeakSet() },
+): [string, unknown][] {
+  const entries = readProps(error, state).filter(([key]) => !ERROR_TEXT_KEYS.has(key));
   // AggregateError keeps `errors` as a non-enumerable own property.
   if (error instanceof AggregateError && !Object.hasOwn(Object.fromEntries(entries), 'errors')) {
     entries.push(['errors', error.errors]);
@@ -210,7 +257,29 @@ function walk(value: unknown, depth: number, state: Walk): unknown {
   }
   if (typeof value !== 'object' || value === null) return value;
   const isError = value instanceof Error;
-  if (!isError && !Array.isArray(value) && !isPlainObject(value)) return value;
+  if (!isError && !Array.isArray(value) && !isPlainObject(value)) {
+    // Headers, Map and header-like objects (err.config.headers.Authorization): walked as
+    // their entries, and replaced only when something in them was redacted.
+    let entries: Record<string, unknown> | undefined;
+    try {
+      entries = depth < REDACT_DEPTH && !state.seen.has(value) ? entriesOf(value) : undefined;
+    } catch {
+      state.changed = true;
+      return UNREADABLE;
+    }
+    if (entries === undefined) return value;
+    const outer = state.changed;
+    state.changed = false;
+    state.seen.add(value);
+    try {
+      const walked = walk(entries, depth, state);
+      const changed = state.changed;
+      state.changed = outer || changed;
+      return changed ? walked : value;
+    } finally {
+      state.seen.delete(value);
+    }
+  }
   if (state.seen.has(value)) {
     state.changed = true;
     return '[Circular]';
@@ -225,7 +294,7 @@ function walk(value: unknown, depth: number, state: Walk): unknown {
     // An Error tracks its own changes: it is replaced only when something in it was redacted.
     const outer = state.changed;
     if (isError) state.changed = false;
-    const entries = isError ? ownProps(value) : Object.entries(value);
+    const entries = isError ? ownProps(value, state) : readProps(value, state);
     const out: Record<string, unknown> = isError ? {} : Object.create(Object.getPrototypeOf(value));
     for (const [key, item] of entries) {
       if (SENSITIVE_KEYS.has(key.toLowerCase()) && item !== undefined && item !== null) {
@@ -278,9 +347,18 @@ function redactError(error: Error, props: Record<string, unknown>, depth: number
  * The original is never modified, and a value with nothing to redact is returned unchanged.
  */
 export function redactValue(value: unknown): unknown {
-  const state: Walk = { changed: false, seen: new WeakSet() };
-  const result = walk(value, 0, state);
-  return state.changed ? result : value;
+  try {
+    const state: Walk = { changed: false, seen: new WeakSet() };
+    const result = walk(value, 0, state);
+    return state.changed ? result : value;
+  } catch (error) {
+    // A Proxy or exotic object defeated the walk: log a summary, never the value itself.
+    try {
+      return `[unloggable value: ${summarizeError(error)}]`;
+    } catch {
+      return '[unloggable value]';
+    }
+  }
 }
 
 /** C0 control characters (U+0000 to U+001F) and DEL, all escaped in log lines. */
@@ -320,19 +398,44 @@ export class ConsoleLogger implements Logger {
   constructor(private readonly prefix = 'hpmws') {}
 
   debug(message: string, ...meta: unknown[]): void {
-    console.debug(...this.#format(message, meta));
+    try {
+      console.debug(...this.#format(message, meta));
+    } catch {
+      // Never let a console failure surface to the caller.
+    }
   }
   info(message: string, ...meta: unknown[]): void {
-    console.info(...this.#format(message, meta));
+    try {
+      console.info(...this.#format(message, meta));
+    } catch {
+      // Never let a console failure surface to the caller.
+    }
   }
   warn(message: string, ...meta: unknown[]): void {
-    console.warn(...this.#format(message, meta));
+    try {
+      console.warn(...this.#format(message, meta));
+    } catch {
+      // Never let a console failure surface to the caller.
+    }
   }
   error(message: string, ...meta: unknown[]): void {
-    console.error(...this.#format(message, meta));
+    try {
+      console.error(...this.#format(message, meta));
+    } catch {
+      // Never let a console failure surface to the caller.
+    }
   }
 
   #format(message: string, meta: unknown[]): unknown[] {
+    try {
+      return this.#formatUnsafe(message, meta);
+    } catch {
+      // Logging must never throw into the caller (for example, a request's error handler).
+      return [`[${this.prefix}] ${escapeControl(String(message))}`, '[unloggable arguments]'];
+    }
+  }
+
+  #formatUnsafe(message: string, meta: unknown[]): unknown[] {
     return [
       `[${this.prefix}] ${escapeControl(redactCredentials(message))}`,
       ...meta.map((value) =>
