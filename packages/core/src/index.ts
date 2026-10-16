@@ -20,6 +20,6 @@ export type {
   OnModuleInit,
 } from './lifecycle.js';
 export * from './metadata.js';
-export type { ModuleRef } from './modules.js';
+export { MODULES, type ModuleRef } from './modules.js';
 export * from './providers.js';
 export * from './tokens.js';
