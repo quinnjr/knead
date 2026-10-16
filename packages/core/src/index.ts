@@ -21,5 +21,6 @@ export type {
 } from './lifecycle.js';
 export * from './metadata.js';
 export { MODULES, type ModuleRef } from './modules.js';
+export { defaultRedisUrl, isLoopbackHostname, parseIp, plaintextRedisHost } from './net.js';
 export * from './providers.js';
 export * from './tokens.js';
