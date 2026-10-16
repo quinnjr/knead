@@ -528,7 +528,7 @@ describe('RedisPubSub hardening', () => {
       await new RedisPubSub({ client: spy.client, encryptionKey: key }).publish('t', {
         secret: 'x',
       });
-      expect(spy.sent[0]).toStartWith('e1.');
+      expect(spy.sent[0]).toStartWith('e2.');
       expect(spy.sent[0]).not.toContain('secret');
       const fake = loopback();
       const r = await receiver(fake, { encryptionKey: key });
@@ -592,6 +592,30 @@ describe('RedisPubSub hardening', () => {
       const r = await receiver(fake, options);
       await new RedisPubSub({ client: fake.client, ...options }).publish('t', { n: 1 });
       expect(r.received).toEqual([{ n: 1 }]);
+      await r.pubsub.close();
+    });
+
+    test('without signingKey, encrypted messages still go stale and their timestamp is authenticated', async () => {
+      const spy = capture();
+      await new RedisPubSub({ client: spy.client, encryptionKey: key }).publish('t', 1);
+      const captured = spy.sent[0]!;
+      const fake = loopback();
+      const r = await receiver(fake, { encryptionKey: key, maxSignatureAge: 5000 });
+      // Re-dating the envelope breaks the AAD.
+      const [, ts, ...rest] = captured.split('.');
+      fake.inject('hpmws:gql:t', ['e2', String(Number(ts) + 1), ...rest].join('.'));
+      expect(r.received).toEqual([]);
+      // Replaying it after maxSignatureAge is refused.
+      setSystemTime(new Date(Date.now() + 6000));
+      try {
+        fake.inject('hpmws:gql:t', captured);
+        expect(r.received).toEqual([]);
+      } finally {
+        setSystemTime();
+      }
+      // Fresh, it is delivered.
+      fake.inject('hpmws:gql:t', captured);
+      expect(r.received).toEqual([1]);
       await r.pubsub.close();
     });
 

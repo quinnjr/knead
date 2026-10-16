@@ -45,9 +45,9 @@ function keyList(
   });
 }
 
-/** Encrypted payloads: `e1.<iv>.<ciphertext + tag>`, base64url. */
-const ENCRYPTED_PREFIX = 'e1.';
-const ENVELOPE = /^e1\.([A-Za-z0-9_-]{16})\.([A-Za-z0-9_-]+)$/;
+/** Encrypted payloads: `e2.<ms timestamp>.<iv>.<ciphertext + tag>` (base64url). */
+const ENCRYPTED_PREFIX = 'e2.';
+const ENVELOPE = /^e2\.(\d{1,16})\.([A-Za-z0-9_-]{16})\.([A-Za-z0-9_-]+)$/;
 
 /** An AES-256 key derived from key material (HKDF-SHA256, so any length >= 32 bytes works). */
 function aesKey(material: Uint8Array): Buffer {
@@ -97,8 +97,9 @@ export interface RedisPubSubOptions {
    * key; messages without a valid signature, older than `maxSignatureAge` or dated more than 60s
    * ahead are dropped and logged. Use it when other clients can publish to the Redis server.
    * A captured message can still be replayed on the same channel inside that window. An array
-   * rotates keys: messages are signed with the first and accepted under any of them. Generate
-   * one with `openssl rand -base64 32` and load it from a secret store or the environment.
+   * rotates keys: messages are signed with the first and accepted under any of them, so rotate
+   * with `[old, new]` everywhere, then `[new, old]`, then `[new]`. Generate one with
+   * `openssl rand -base64 32` and load it from a secret store or the environment.
    */
   signingKey?: RedisPubSubKey | readonly RedisPubSubKey[];
   /**
@@ -106,11 +107,16 @@ export interface RedisPubSubOptions {
    * encryption: each message gets a random 12-byte IV, and the channel (prefix + topic) is the
    * additional authenticated data, so a message cannot be replayed on another topic. Messages
    * that fail to decrypt (tampered, wrong key, not encrypted) are dropped and logged. An array
-   * rotates keys: encrypt with the first, decrypt with any. Combined with `signingKey`, the
+   * rotates keys like `signingKey` (`[old, new]`, then `[new, old]`, then `[new]`): encrypt with
+   * the first, decrypt with any. The timestamp is authenticated too, so encrypted messages go
+   * stale after `maxSignatureAge` even without `signingKey`. Combined with `signingKey`, the
    * payload is encrypted and the envelope then signed.
    */
   encryptionKey?: RedisPubSubKey | readonly RedisPubSubKey[];
-  /** Oldest signed message accepted, in milliseconds: 1 to 600000. Default 60000. */
+  /**
+   * Oldest signed or encrypted message accepted, in milliseconds: 1 to 600000. Default 60000.
+   * Within it, a captured message can be replayed on the same channel.
+   */
   maxSignatureAge?: number;
   /**
    * Milliseconds a publish waits for Redis: past it, publish() logs and resolves, and
@@ -317,8 +323,7 @@ export class RedisPubSub implements PubSubEngine {
     if (dot < 0) return undefined;
     const ts = message.slice(SIGNATURE_LENGTH + 1, dot);
     if (!/^\d{1,16}$/.test(ts)) return undefined;
-    const age = Date.now() - Number(ts);
-    if (age > this.#maxSignatureAge || age < -MAX_FUTURE_SKEW) return undefined;
+    if (!this.#fresh(ts)) return undefined;
     const json = message.slice(dot + 1);
     const given = Buffer.from(message.slice(0, SIGNATURE_LENGTH), 'utf8');
     if (given.length !== SIGNATURE_LENGTH) return undefined;
@@ -411,32 +416,49 @@ export class RedisPubSub implements PubSubEngine {
     else this.#logError(message, error, 'warn');
   }
 
-  /** `e1.<iv>.<ciphertext + tag>` (base64url), AES-256-GCM with the channel as AAD. */
+  /**
+   * `e2.<ts>.<iv>.<ciphertext + tag>`: AES-256-GCM with the channel and the timestamp as AAD,
+   * so a message cannot move to another topic and, like a signed one, goes stale after
+   * `maxSignatureAge`, even without `signingKey`.
+   */
   #encrypt(topic: string, json: string): string {
+    const ts = String(Date.now());
     const iv = randomBytes(12);
     const cipher = createCipheriv('aes-256-gcm', this.#encryptionKeys![0]!, iv);
-    cipher.setAAD(Buffer.from(this.#prefix + topic, 'utf8'));
+    cipher.setAAD(this.#aad(topic, ts));
     const sealed = Buffer.concat([
       cipher.update(json, 'utf8'),
       cipher.final(),
       cipher.getAuthTag(),
     ]);
-    return `${ENCRYPTED_PREFIX}${iv.toString('base64url')}.${sealed.toString('base64url')}`;
+    return `${ENCRYPTED_PREFIX}${ts}.${iv.toString('base64url')}.${sealed.toString('base64url')}`;
   }
 
-  /** The plaintext of an envelope sealed under any of the keys, for this channel; or throws. */
+  #aad(topic: string, ts: string): Buffer {
+    return Buffer.from(`${this.#prefix}${topic}\0${ts}`, 'utf8');
+  }
+
+  /** Whether a message timestamp is inside the accepted window. */
+  #fresh(ts: string): boolean {
+    const age = Date.now() - Number(ts);
+    return age <= this.#maxSignatureAge && age >= -MAX_FUTURE_SKEW;
+  }
+
+  /** The plaintext of a fresh envelope sealed under any of the keys, for this channel; or throws. */
   #decrypt(topic: string, body: string): string {
     const match = ENVELOPE.exec(body);
     if (!match) throw new Error('The message is not an encrypted envelope.');
-    const iv = Buffer.from(match[1]!, 'base64url');
-    const sealed = Buffer.from(match[2]!, 'base64url');
+    const ts = match[1]!;
+    if (!this.#fresh(ts)) throw new Error('The encrypted message is stale or dated in the future.');
+    const iv = Buffer.from(match[2]!, 'base64url');
+    const sealed = Buffer.from(match[3]!, 'base64url');
     if (iv.length !== 12 || sealed.length < 16) throw new Error('Malformed encrypted envelope.');
     const tag = sealed.subarray(sealed.length - 16);
     const ciphertext = sealed.subarray(0, sealed.length - 16);
     for (const key of this.#encryptionKeys!) {
       try {
         const decipher = createDecipheriv('aes-256-gcm', key, iv);
-        decipher.setAAD(Buffer.from(this.#prefix + topic, 'utf8'));
+        decipher.setAAD(this.#aad(topic, ts));
         decipher.setAuthTag(tag);
         return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
       } catch {
