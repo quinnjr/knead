@@ -279,7 +279,7 @@ importers:
         specifier: ^1.1.0
         version: 1.1.0
       dataloader:
-        specifier: ^2.2.3
+        specifier: 2.2.3
         version: 2.2.3
     devDependencies:
       '@hpmws/core':
@@ -332,7 +332,7 @@ importers:
         specifier: ^1.1.0
         version: 1.1.0
       sanitize-html:
-        specifier: ^2.18.1
+        specifier: 2.18.1
         version: 2.18.1
     devDependencies:
       '@types/sanitize-html':

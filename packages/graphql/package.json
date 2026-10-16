@@ -32,7 +32,7 @@
     "@leaven-graphql/playground": "0.2.2",
     "@leaven-graphql/ws": "0.2.2",
     "@standard-schema/spec": "^1.1.0",
-    "dataloader": "^2.2.3"
+    "dataloader": "2.2.3"
   },
   "peerDependencies": {
     "@hpmws/core": "workspace:^",
