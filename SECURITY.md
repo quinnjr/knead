@@ -10,11 +10,11 @@ GitHub private vulnerability reporting: open the repository's **Security** tab
 and choose **Report a vulnerability**
 (<https://github.com/quinnjr/high-performance-modular-web-server/security/advisories/new>).
 
-**While the repository is private**, GitHub private vulnerability reporting is
-not available. Instead, open a minimal public issue titled "Security contact
-request" that asks for a private way to send a report, and include **no**
-details about the vulnerability, the affected code or how to trigger it. The
-maintainer will reply with a private channel.
+**At any time**, you can email the maintainer at
+<quinn.josephr@protonmail.com> (use the subject "hpmws security report"). While
+the repository is private this is the only reporting channel, because GitHub
+private vulnerability reporting is not available and outside reporters cannot
+open issues.
 
 In the private report, include the affected package(s) and version(s), a
 description of the impact, and steps or a proof of concept to reproduce it.
