@@ -123,6 +123,28 @@ describe('WebSocket races', () => {
   });
 });
 
+describe('maxSubscriptionsPerConnection', () => {
+  test('is enforced for concurrent subscribes on one socket', async () => {
+    s = await startGraphQL([M], {
+      ...sleepyContext,
+      subscriptions: { maxSubscriptionsPerConnection: 1 },
+    });
+    const raw = await connect(s.app);
+    raw.send({ type: 'connection_init' });
+    await raw.acked();
+    raw.send({ id: '1', type: 'subscribe', payload: { query: 'subscription { t }' } });
+    raw.send({ id: '2', type: 'subscribe', payload: { query: 'subscription { t }' } });
+    await until(() => raw.messages.some((m) => m.id === '2'));
+    expect(raw.messages.find((m) => m.id === '2')).toMatchObject({
+      type: 'error',
+      payload: [{ message: 'Maximum subscriptions per connection reached' }],
+    });
+    await Bun.sleep(80);
+    expect(subscribers(s)).toBe(1);
+    raw.ws.close();
+  });
+});
+
 describe('http WebSocket limits apply to the subscription endpoint', () => {
   test('subscriptions.messageRate closes a flooding socket with 1008', async () => {
     s = await startGraphQL([M], { subscriptions: { messageRate: { limit: 3, windowMs: 60_000 } } });
