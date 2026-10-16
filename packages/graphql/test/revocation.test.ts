@@ -327,3 +327,55 @@ describe('subscriptions.refreshContext', () => {
     await sub.close();
   });
 });
+
+describe('recheckGuards re-runs authorize guards', () => {
+  test('an authorize-only subscription fails on the next event once refreshContext revokes', async () => {
+    let role: string | false = 'reader';
+    const sawArgs: unknown[] = [];
+    const lower = {
+      '~standard': {
+        version: 1 as const,
+        vendor: 'test',
+        validate: (value: unknown) => ({ value: String(value).toLowerCase() }),
+      },
+    };
+    @Resolver()
+    class Room {
+      @Query(() => Int) q() {
+        return 1;
+      }
+      @Subscription(() => Int, {
+        args: { room: String },
+        validate: { room: lower },
+        topic: 'room',
+        recheckGuards: true,
+        authorize: [
+          (ctx: ResolverCtx<{ room: string }>) => {
+            sawArgs.push(ctx.args.room);
+            return ctx.connectedAs === 'reader';
+          },
+        ],
+      })
+      room() {}
+    }
+    @Module({ providers: [Room] })
+    class RoomModule {}
+    s = await startGraphQL([RoomModule], {
+      subscriptions: {
+        onConnect: () => ({ connectedAs: 'reader' }),
+        refreshContext: () => (role === false ? { connectedAs: 'nobody' } : { connectedAs: role }),
+      },
+    });
+    const pubsub = s.mod.get(PUBSUB);
+    const sub = await s.app.graphqlSubscribe('subscription { room(room: "LOBBY") }');
+    await Bun.sleep(30);
+    await pubsub.publish('room', 1);
+    expect((await sub.next()).value).toEqual({ data: { room: 1 } });
+    role = false;
+    await pubsub.publish('room', 2);
+    expect((await sub.next()).value?.errors?.[0]?.extensions?.code).toBe('FORBIDDEN');
+    // Subscribe time, then each recheck, all against the validated (lowercased) argument.
+    expect(sawArgs).toEqual(['lobby', 'lobby', 'lobby']);
+    await sub.close();
+  });
+});

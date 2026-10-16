@@ -927,7 +927,10 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
             op.user = { ...op.user, ...refreshed };
           }
         }
-        await runGuards(guards, createResolverCtx(op, injector, meta, ctx.args, parent, info));
+        // ctx.args are the validated arguments from subscribe time, as authorize expects.
+        const recheck = createResolverCtx(op, injector, meta, ctx.args, parent, info);
+        await runGuards(guards, recheck);
+        await runGuards(authorize, recheck);
       });
     });
     spec.resolve = marked(async (payload, args, op: OperationContext, info) => {
