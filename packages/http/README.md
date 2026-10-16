@@ -82,7 +82,7 @@ ws.closeWhere((socket) => (socket.data.data as { userId: string }).userId === us
 
 `reloadTls()` hot-swaps certificates via `SO_REUSEPORT` and is Linux-only.
 
-TLS is terminated by Bun (BoringSSL), and hpmws sets no protocol or cipher options of its own: the TLS floor (minimum protocol version and cipher suites) is Bun's own default, which comes from BoringSSL. Pass Bun `TLSOptions` in `listen({ tls })` to restrict it further, terminate TLS at a proxy with a policy you control, and keep Bun up to date (see the `engines` field).
+TLS is terminated by Bun (BoringSSL), and Knead sets no protocol or cipher options of its own: the TLS floor (minimum protocol version and cipher suites) is Bun's own default, which comes from BoringSSL. Pass Bun `TLSOptions` in `listen({ tls })` to restrict it further, terminate TLS at a proxy with a policy you control, and keep Bun up to date (see the `engines` field).
 
 A `listen()` that failed to bind (for example, the port is taken) binds nothing and can be retried, but the application context stays open. If you give up instead, call `await app.close()` so shutdown hooks run and resources are released. A `listen()` that failed because a lifecycle hook threw (such as `onModuleInit` of a middleware, guard or filter, which runs at `listen()`) has already closed the application and cannot be retried. `listen()` always rejects once `close()` has started, including a `close()` issued while `listen()` is still initializing:
 
@@ -105,6 +105,6 @@ The default `ConsoleLogger` masks credentials before printing, in the message, i
 
 Control characters (CR, LF, ESC and the rest of C0, and DEL) in the message and in string arguments are escaped (`\n`, `\x1b`), so a logged value cannot forge log lines. `redactCredentials()`, `redactValue()` and `logValue()` (caps a client-controlled value at 1024 characters and escapes it, for interpolating into messages) are exported for custom loggers. `MemoryLogger` is for tests only: it keeps entries exactly as logged, unredacted.
 
-hpmws requires Bun 1.4.3 or later (`engines.bun`), which fixes CVE-2026-48618 (TLS hostname matching, including `Bun.RedisClient`), request smuggling through bare-LF chunked bodies, WebSocket frames sent with the upgrade request, `req.url` and headers of aborted requests, and the TLS handshake idle timeout. `listen()` logs a warning once when it runs on an older Bun (`checkBunVersion()`, `compareVersions()` and `MIN_BUN_VERSION` are exported).
+Knead requires Bun 1.4.3 or later (`engines.bun`), which fixes CVE-2026-48618 (TLS hostname matching, including `Bun.RedisClient`), request smuggling through bare-LF chunked bodies, WebSocket frames sent with the upgrade request, `req.url` and headers of aborted requests, and the TLS handshake idle timeout. `listen()` logs a warning once when it runs on an older Bun (`checkBunVersion()`, `compareVersions()` and `MIN_BUN_VERSION` are exported).
 
 `bun add @knead/core @knead/http` (`@knead/core` is a peer dependency). Licensed MIT OR Apache-2.0.

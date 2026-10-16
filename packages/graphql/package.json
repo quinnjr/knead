@@ -1,7 +1,7 @@
 {
   "name": "@knead/graphql",
   "version": "0.0.0",
-  "description": "Code-first GraphQL on Leaven for the hpmws framework",
+  "description": "Code-first GraphQL on Leaven for the Knead framework",
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",

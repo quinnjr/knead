@@ -1,6 +1,6 @@
-# hpmws GraphQL server example
+# Knead GraphQL server example
 
-A small blog (authors, posts and comments, kept in memory and seeded at startup) served over GraphQL with every hpmws package working together: code-first types, DataLoader-batched field resolvers, valibot argument validation, bearer-token auth with resolver guards and role metadata, subscriptions over `graphql-transport-ws` (in memory or on Redis), CORS, rate limiting, security headers and HTML sanitization, plus a plain REST `GET /health` route next to `/graphql` that returns only `{ "status": "ok" }`. Private; not published.
+A small blog (authors, posts and comments, kept in memory and seeded at startup) served over GraphQL with every Knead package working together: code-first types, DataLoader-batched field resolvers, valibot argument validation, bearer-token auth with resolver guards and role metadata, subscriptions over `graphql-transport-ws` (in memory or on Redis), CORS, rate limiting, security headers and HTML sanitization, plus a plain REST `GET /health` route next to `/graphql` that returns only `{ "status": "ok" }`. Private; not published.
 
 ## Run
 

@@ -1,7 +1,7 @@
 {
   "name": "@knead/http",
   "version": "0.0.0",
-  "description": "HTTP(S) server, REST controllers and request pipeline for the hpmws framework",
+  "description": "HTTP(S) server, REST controllers and request pipeline for the Knead framework",
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",

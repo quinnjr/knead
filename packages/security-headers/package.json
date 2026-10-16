@@ -1,7 +1,7 @@
 {
   "name": "@knead/security-headers",
   "version": "0.0.0",
-  "description": "Secure-by-default HTTP security headers (CSP, HSTS, …) for the hpmws framework",
+  "description": "Secure-by-default HTTP security headers (CSP, HSTS, …) for the Knead framework",
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",

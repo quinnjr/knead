@@ -188,7 +188,7 @@ describe("Leaven's handler and a deferred revocation in onConnect", () => {
     const handler = new WebSocketHandler({
       schema: buildSchema('type Query { a: Int } type Subscription { t: Int }'),
       keepAliveInterval: 0,
-      // What hpmws's onConnect does when a deferred closeWhere matches.
+      // What Knead's onConnect does when a deferred closeWhere matches.
       onConnect: async (s) => {
         (s as unknown as typeof socket).close(4001);
         return false;

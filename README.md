@@ -1,4 +1,4 @@
-# hpmws
+# Knead
 
 A NestJS-style framework for [Bun](https://bun.sh): standard TC39 decorators, `inject()`-based dependency injection, schema-typed REST controllers on Bun's native router, and secure-by-default HTTP modules.
 
@@ -78,7 +78,7 @@ The release workflow has two jobs:
 
 Each tag runs in its own concurrency group (`release-<ref>`, never cancelled), so a second tag pushed while one is running is not dropped from the queue, and a re-run of the same tag waits for the run in progress. Two different tags can therefore run at the same time, but only the one on main's HEAD passes the gate.
 
-To check a release locally without publishing: `bun scripts/release.ts gate v<version>` (after `git fetch origin`; pass a ref as a third argument to compare against something other than `origin/main`), then `bun scripts/release.ts pack /tmp/hpmws-tarballs` after `pnpm build`. There is no local publish script: releases are published only by `release.yml`.
+To check a release locally without publishing: `bun scripts/release.ts gate v<version>` (after `git fetch origin`; pass a ref as a third argument to compare against something other than `origin/main`), then `bun scripts/release.ts pack /tmp/knead-tarballs` after `pnpm build`. There is no local publish script: releases are published only by `release.yml`.
 
 **What the gate does and does not protect.** A tag runs the `release.yml` *at the tagged commit*. The main-ancestry and version checks therefore stop mistakes (a tag on the wrong branch, a forgotten `pnpm version-packages`), not someone with write access, who can push a tag on a commit whose workflow has no gate at all. That stays true until the publish job runs in a protected GitHub environment and npm only trusts that environment (see below).
 

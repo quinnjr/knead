@@ -135,7 +135,7 @@ export function eventIterator<T>(
 }
 
 /**
- * Adapts an hpmws `Logger` to the logger Leaven's WebSocket transport and in-memory `PubSub`
+ * Adapts a Knead `Logger` to the logger Leaven's WebSocket transport and in-memory `PubSub`
  * accept, so their diagnostics go through `LOGGER` instead of `console`. Arguments are redacted
  * whatever LOGGER is configured; outside development an Error argument is reduced to
  * `Name: message` (summarizeError), without its stack, cause or properties.

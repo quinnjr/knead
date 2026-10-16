@@ -1,7 +1,7 @@
 {
   "name": "@knead/rate-limit",
   "version": "0.0.0",
-  "description": "Rate limiting with memory and Redis stores for the hpmws framework",
+  "description": "Rate limiting with memory and Redis stores for the Knead framework",
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",

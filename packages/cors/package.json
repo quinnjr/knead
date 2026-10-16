@@ -1,7 +1,7 @@
 {
   "name": "@knead/cors",
   "version": "0.0.0",
-  "description": "CORS module for the hpmws framework",
+  "description": "CORS module for the Knead framework",
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",

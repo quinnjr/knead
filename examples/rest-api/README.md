@@ -1,4 +1,4 @@
-# hpmws REST API example
+# Knead REST API example
 
 A small users API showing CORS, rate limiting, security headers, guards, schema validation and GraphQL working together. Private; not published.
 

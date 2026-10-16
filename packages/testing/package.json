@@ -1,7 +1,7 @@
 {
   "name": "@knead/testing",
   "version": "0.0.0",
-  "description": "Testing utilities for hpmws applications",
+  "description": "Testing utilities for Knead applications",
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",

@@ -177,7 +177,7 @@ export interface ResolvedGraphQLOptions {
   readonly maxAliases: number | false;
   readonly maxFields: number | false;
   readonly maxIntrospectionDepth: number | false;
-  /** Checked by hpmws (introspection fields excluded); Leaven's own maxDepth stays unset. */
+  /** Checked by Knead (introspection fields excluded); Leaven's own maxDepth stays unset. */
   readonly maxDepth: number | false;
   readonly executor: Pick<
     ExecutorConfig,
