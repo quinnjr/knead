@@ -3,7 +3,7 @@ import { type WebSocketContext, WebSocketHandler } from '@leaven-graphql/ws';
 import type { ServerWebSocket } from 'bun';
 import type { OperationContext } from './context.js';
 import { toSafeError } from './errors.js';
-import type { SubscriptionOptions } from './options.js';
+import { queryTooLongMessage, type SubscriptionOptions } from './options.js';
 import type { GraphQLRuntime } from './runtime.js';
 
 export const GRAPHQL_TRANSPORT_WS = 'graphql-transport-ws';
@@ -25,6 +25,24 @@ interface SocketFacade {
 interface SocketState {
   http: Ctx;
   extra: object | undefined;
+}
+
+interface PeekedMessage {
+  type?: unknown;
+  id?: unknown;
+  payload?: { query?: unknown } | null;
+}
+
+/** The message as JSON, or undefined when it is not a JSON object (Leaven then rejects it). */
+function peek(message: string | Buffer): PeekedMessage | undefined {
+  try {
+    const parsed: unknown = JSON.parse(typeof message === 'string' ? message : message.toString());
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as PeekedMessage)
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 const asLeavenSocket = (facade: SocketFacade) =>
@@ -104,7 +122,28 @@ export function createSubscriptionEndpoint(
     },
     async message(ws, message) {
       const facade = facades.get(ws);
-      if (facade) await handler.handleMessage(asLeavenSocket(facade), message);
+      if (!facade) return;
+      const parsed = peek(message);
+      const max = runtime.options.maxQueryLength;
+      if (
+        parsed?.type === 'subscribe' &&
+        typeof parsed.id === 'string' &&
+        max !== false &&
+        typeof parsed.payload?.query === 'string' &&
+        parsed.payload.query.length > max
+      ) {
+        ws.send(
+          JSON.stringify({
+            id: parsed.id,
+            type: 'error',
+            payload: [
+              { message: queryTooLongMessage(max), extensions: { code: 'BAD_USER_INPUT' } },
+            ],
+          }),
+        );
+        return;
+      }
+      await handler.handleMessage(asLeavenSocket(facade), message);
     },
     async close(ws) {
       const facade = facades.get(ws);

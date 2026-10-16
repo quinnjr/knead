@@ -38,6 +38,7 @@ import {
   getOperationAST,
   isInterfaceType,
   isObjectType,
+  visit,
 } from 'graphql';
 import {
   createResolverCtx,
@@ -178,6 +179,7 @@ export function rejectionMessage(
 export function buildHooks(
   user: ExecutionHooks | undefined,
   masking: ErrorMaskingOptions,
+  maxAliases: number | false = false,
 ): ExecutionHooks {
   const safe = <A extends unknown[]>(
     name: string,
@@ -192,10 +194,15 @@ export function buildHooks(
       }
     });
   const userExecute = safe('onExecute', user?.onExecute);
+  const userParsed = safe('onParsed', user?.onParsed);
   const userError = user?.onError;
   return {
     onParse: safe('onParse', user?.onParse),
-    onParsed: safe('onParsed', user?.onParsed),
+    // Runs for cached documents too, so the alias limit holds whatever the cache contains.
+    onParsed: async (document: DocumentNode) => {
+      if (maxAliases !== false) checkAliases(document, maxAliases);
+      await userParsed?.(document);
+    },
     onValidate: safe('onValidate', user?.onValidate),
     onValidated: safe('onValidated', user?.onValidated),
     onExecuted: safe('onExecuted', user?.onExecuted),
@@ -224,6 +231,23 @@ export function buildHooks(
       await userExecute?.(context, document);
     },
   };
+}
+
+/** Rejects a document with more than `max` field aliases (counted once per alias in the text). */
+export function checkAliases(document: DocumentNode, max: number): void {
+  let count = 0;
+  visit(document, {
+    Field(node) {
+      if (node.alias) count++;
+    },
+  });
+  if (count > max) {
+    throw new LeavenError(
+      `The document has ${count} aliases; at most ${max} are allowed.`,
+      'BAD_USER_INPUT' as ErrorCode,
+      { statusCode: 400 },
+    );
+  }
 }
 
 const OPERATION_NOT_FOUND = /^Operation "(.*)" not found(?: in document)?$/;
@@ -339,7 +363,7 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
         compilerOptions: calculator
           ? { complexityCalculator: calculator, ...compilerOptions }
           : compilerOptions,
-        hooks: buildHooks(hooks, this.masking),
+        hooks: buildHooks(hooks, this.masking, this.options.maxAliases),
         formatExecutionError: createErrorFormatter(this.masking),
       },
       this.masking,

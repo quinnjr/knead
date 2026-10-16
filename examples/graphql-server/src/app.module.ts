@@ -23,6 +23,12 @@ import { HealthController } from './health/health.controller.js';
       useFactory: () => {
         const auth = inject(AuthService);
         return {
+          // The defaults, spelled out: raise them deliberately, never disable them in production.
+          maxDepth: 10,
+          maxComplexity: 1000,
+          maxAliases: 30,
+          maxQueryLength: 100 * 1024,
+          parseOptions: { maxTokens: 10_000 },
           // HTTP: the bearer token. Over WebSocket this runs on the upgrade request, and the
           // object onConnect returned is merged over it.
           context: (http) => ({

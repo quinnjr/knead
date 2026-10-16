@@ -11,6 +11,7 @@ export { createGraphQLController, GRAPHQL_RESPONSE_JSON } from './http.js';
 export type { ArgMap, ArgSpec, FieldOptions } from './metadata.js';
 export { GraphQLModule, type GraphQLModuleAsyncOptions } from './module.js';
 export {
+  GRAPHQL_LIMITS,
   GRAPHQL_OPTIONS,
   type GraphQLModuleOptions,
   type ResolvedGraphQLOptions,

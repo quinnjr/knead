@@ -41,10 +41,20 @@ export interface GraphQLModuleOptions {
   playground?: boolean;
   /** Default: NODE_ENV === 'development', or true when `playground: true`. */
   introspection?: boolean;
-  maxDepth?: number;
-  maxComplexity?: number;
+  /** Deepest selection allowed (fragments expanded). Default 10; `Infinity` or `false` disables. */
+  maxDepth?: number | false;
+  /** Highest query cost allowed (see `complexity`). Default 1000; `Infinity` or `false` disables. */
+  maxComplexity?: number | false;
+  /**
+   * Longest query string, in characters, accepted over HTTP and WebSocket (checked before
+   * parsing). Default 100 KiB (102400); `Infinity` or `false` disables.
+   */
+  maxQueryLength?: number | false;
+  /** Most field aliases in one document. Default 30; `Infinity` or `false` disables. */
+  maxAliases?: number | false;
   cache?: ExecutorConfig['cache'];
   compilerOptions?: CompilerOptions;
+  /** Leaven parser options. `maxTokens` defaults to 10000; `Infinity` disables it. */
   parseOptions?: ParseOptions;
   /** Leaven execution hooks (Leaven has no plugin system; these are its extension point). */
   hooks?: ExecutionHooks;
@@ -72,10 +82,26 @@ export interface ResolvedGraphQLOptions {
   readonly csrf: { readonly requiredHeaders: readonly string[] } | false;
   readonly subscriptions: SubscriptionOptions | false;
   readonly orphanedTypes: readonly Class[];
+  readonly maxQueryLength: number | false;
+  readonly maxAliases: number | false;
   readonly executor: Pick<
     ExecutorConfig,
     'maxDepth' | 'maxComplexity' | 'cache' | 'compilerOptions' | 'parseOptions' | 'hooks'
   >;
+}
+
+/** Default limits; each can be raised, or disabled with `Infinity` or `false`. */
+export const GRAPHQL_LIMITS = Object.freeze({
+  maxDepth: 10,
+  maxComplexity: 1000,
+  maxTokens: 10_000,
+  maxQueryLength: 100 * 1024,
+  maxAliases: 30,
+});
+
+/** The client error for a query over `maxQueryLength`. */
+export function queryTooLongMessage(max: number): string {
+  return `The query is longer than ${max} characters.`;
 }
 
 export const GRAPHQL_OPTIONS = new InjectionToken<GraphQLModuleOptions>('GRAPHQL_OPTIONS');
@@ -88,10 +114,32 @@ export function normalizePath(path: string): string {
     .join('/')}`;
 }
 
+function limit(name: string, value: number | false | undefined, fallback: number): number | false {
+  if (value === undefined) return fallback;
+  if (value === false || value === Infinity) return false;
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
+    throw new HttpConfigError(
+      `GraphQL ${name} must be a positive integer, Infinity or false; got ${String(value)}.`,
+    );
+  }
+  return value;
+}
+
+function parseOptionsWithDefaults(options: ParseOptions | undefined): ParseOptions {
+  const { maxTokens, ...rest } = options ?? {};
+  const tokens = limit('parseOptions.maxTokens', maxTokens, GRAPHQL_LIMITS.maxTokens);
+  return tokens === false ? rest : { ...rest, maxTokens: tokens };
+}
+
 export function validateGraphQLOptions(options: GraphQLModuleOptions): void {
   if (options.path !== undefined && /[:*]/.test(options.path)) {
     throw new HttpConfigError(`GraphQL path must be exact; got ${options.path}`);
   }
+  limit('maxDepth', options.maxDepth, 1);
+  limit('maxComplexity', options.maxComplexity, 1);
+  limit('maxQueryLength', options.maxQueryLength, 1);
+  limit('maxAliases', options.maxAliases, 1);
+  limit('parseOptions.maxTokens', options.parseOptions?.maxTokens, 1);
   const csrf = options.csrf;
   if (csrf && csrf.requiredHeaders !== undefined && csrf.requiredHeaders.length === 0) {
     throw new HttpConfigError(
@@ -107,6 +155,8 @@ export function resolveOptions(
 ): ResolvedGraphQLOptions {
   validateGraphQLOptions(options);
   const dev = env === 'development';
+  const maxDepth = limit('maxDepth', options.maxDepth, GRAPHQL_LIMITS.maxDepth);
+  const maxComplexity = limit('maxComplexity', options.maxComplexity, GRAPHQL_LIMITS.maxComplexity);
   return {
     path,
     context: options.context,
@@ -124,12 +174,14 @@ export function resolveOptions(
           },
     subscriptions: options.subscriptions === false ? false : { ...(options.subscriptions ?? {}) },
     orphanedTypes: options.orphanedTypes ?? [],
+    maxQueryLength: limit('maxQueryLength', options.maxQueryLength, GRAPHQL_LIMITS.maxQueryLength),
+    maxAliases: limit('maxAliases', options.maxAliases, GRAPHQL_LIMITS.maxAliases),
     executor: {
-      maxDepth: options.maxDepth,
-      maxComplexity: options.maxComplexity,
+      maxDepth: maxDepth === false ? undefined : maxDepth,
+      maxComplexity: maxComplexity === false ? undefined : maxComplexity,
       cache: options.cache,
       compilerOptions: options.compilerOptions,
-      parseOptions: options.parseOptions,
+      parseOptions: parseOptionsWithDefaults(options.parseOptions),
       hooks: options.hooks,
     },
   };

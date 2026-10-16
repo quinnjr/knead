@@ -10,6 +10,7 @@ import {
 } from '@hpmws/http';
 import type { GraphQLRequest } from '@leaven-graphql/core';
 import type { OperationKind } from './context.js';
+import { queryTooLongMessage } from './options.js';
 import { GraphQLRuntime, rejectionMessage } from './runtime.js';
 
 export const GRAPHQL_RESPONSE_JSON = 'application/graphql-response+json';
@@ -18,14 +19,20 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** Validates the GraphQL-over-HTTP request parameters. */
-export function parseGraphQLParams(body: unknown): GraphQLRequest {
+/** Validates the GraphQL-over-HTTP request parameters; `maxQueryLength` is checked first. */
+export function parseGraphQLParams(
+  body: unknown,
+  maxQueryLength: number | false = false,
+): GraphQLRequest {
   if (Array.isArray(body))
     throw new BadRequestException('Batched GraphQL requests are not supported.');
   if (!isPlainObject(body)) throw new BadRequestException('Expected a JSON object body.');
   const { query, variables, operationName, extensions } = body;
   if (typeof query !== 'string' || query.length === 0) {
     throw new BadRequestException('"query" must be a non-empty string.');
+  }
+  if (maxQueryLength !== false && query.length > maxQueryLength) {
+    throw new BadRequestException(queryTooLongMessage(maxQueryLength));
   }
   const request: GraphQLRequest = { query };
   if (variables !== undefined && variables !== null) {
@@ -127,7 +134,7 @@ export async function handlePost(runtime: GraphQLRuntime, ctx: Ctx): Promise<Res
       'GraphQL POST requests must use Content-Type: application/json.',
     );
   }
-  const request = parseGraphQLParams(await ctx.json());
+  const request = parseGraphQLParams(await ctx.json(), runtime.options.maxQueryLength);
   return execute(runtime, ctx, request, ['query', 'mutation']);
 }
 
@@ -151,12 +158,15 @@ export async function handleGet(runtime: GraphQLRuntime, ctx: Ctx): Promise<Resp
     }
   }
   const params = new URL(ctx.req.url).searchParams;
-  const request = parseGraphQLParams({
-    query: params.get('query'),
-    variables: jsonParam(params, 'variables'),
-    operationName: params.get('operationName'),
-    extensions: jsonParam(params, 'extensions'),
-  });
+  const request = parseGraphQLParams(
+    {
+      query: params.get('query'),
+      variables: jsonParam(params, 'variables'),
+      operationName: params.get('operationName'),
+      extensions: jsonParam(params, 'extensions'),
+    },
+    options.maxQueryLength,
+  );
   return execute(runtime, ctx, request, ['query']);
 }
 
