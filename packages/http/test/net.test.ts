@@ -3,6 +3,7 @@ import { HttpConfigError } from '../src/exceptions.js';
 import {
   cidrMatcher,
   compileTrust,
+  formatIp,
   normalizeIp,
   parseIp,
   resolveClientIp,
@@ -25,6 +26,23 @@ describe('parseIp', () => {
   test('normalizeIp strips the IPv4-mapped prefix', () => {
     expect(normalizeIp('::ffff:1.2.3.4')).toBe('1.2.3.4');
     expect(normalizeIp('::1')).toBe('::1');
+  });
+
+  test('normalizeIp canonicalizes from the parsed bytes', () => {
+    expect(normalizeIp('::ffff:7f00:1')).toBe('127.0.0.1');
+    expect(normalizeIp('::FFFF:0A00:0001')).toBe('10.0.0.1');
+    expect(normalizeIp('0:0:0:0:0:0:0:1')).toBe('::1');
+    expect(normalizeIp('2001:0DB8:0000:0000:0000:0000:0000:0001')).toBe('2001:db8::1');
+    expect(normalizeIp('2001:db8:0:0:1:0:0:1')).toBe('2001:db8::1:0:0:1');
+    expect(normalizeIp('2001:db8:0:1:1:1:1:1')).toBe('2001:db8:0:1:1:1:1:1');
+    expect(normalizeIp('0:0:0:0:0:0:0:0')).toBe('::');
+    expect(normalizeIp('fe80::1%eth0')).toBe('fe80::1');
+    expect(normalizeIp('not-an-ip')).toBe('not-an-ip');
+  });
+
+  test('formatIp renders 4 and 16 byte addresses', () => {
+    expect(formatIp(Uint8Array.from([192, 0, 2, 1]))).toBe('192.0.2.1');
+    expect(formatIp(parseIp('2001:db8::')!)).toBe('2001:db8::');
   });
 });
 
@@ -59,7 +77,14 @@ describe('resolveClientIp', () => {
     expect(resolveClientIp('10.0.0.1', '203.0.113.9', trust)).toBe('203.0.113.9');
     expect(resolveClientIp('10.0.0.1', '6.6.6.6, 203.0.113.9', trust)).toBe('203.0.113.9');
     expect(resolveClientIp('10.0.0.1', null, trust)).toBe('10.0.0.1');
-    expect(resolveClientIp('10.0.0.1', '203.0.113.9', compileTrust(5))).toBe('203.0.113.9');
+  });
+
+  test('hop count ignores X-Forwarded-For with fewer entries than hops', () => {
+    expect(resolveClientIp('10.0.0.1', '203.0.113.9', compileTrust(5))).toBe('10.0.0.1');
+    expect(resolveClientIp('10.0.0.1', '203.0.113.9', compileTrust(2))).toBe('10.0.0.1');
+    expect(resolveClientIp('10.0.0.1', '203.0.113.9, 10.0.0.2', compileTrust(2))).toBe(
+      '203.0.113.9',
+    );
   });
 
   test('CIDR trust returns the first untrusted address from the right', () => {
@@ -103,6 +128,10 @@ describe('resolveSecure', () => {
       false,
     );
     expect(resolveSecure(false, '10.0.0.1', null, 'http', compileTrust(1))).toBe(false);
+  });
+  test('hop mode ignores X-Forwarded-Proto with fewer entries than hops', () => {
+    expect(resolveSecure(false, '10.0.0.1', null, 'https', compileTrust(2))).toBe(false);
+    expect(resolveSecure(false, '10.0.0.1', null, 'https, https', compileTrust(2))).toBe(true);
   });
   test('a client-supplied left-most value cannot upgrade the scheme', () => {
     expect(resolveSecure(false, '10.0.0.1', null, 'https, http', compileTrust(1))).toBe(false);

@@ -101,8 +101,25 @@ async function runUpgrade(
   return upgraded.has(ctx) ? undefined : res;
 }
 
+const FORWARDED_HEADERS = ['x-forwarded-for', 'x-forwarded-proto', 'x-forwarded-host'] as const;
+
+/** Logs once when X-Forwarded-* arrives while trustProxy is off (likely a misconfigured proxy). */
+function forwardedWarning(net: NetConfig, logger: Logger): (req: Request) => void {
+  let warned = net.trust.kind !== 'none';
+  return (req) => {
+    if (warned || !FORWARDED_HEADERS.some((h) => req.headers.has(h))) return;
+    warned = true;
+    logger.warn(
+      'A request carried X-Forwarded-* headers, but trustProxy is off, so they are ignored: ' +
+        'ctx.ip and ctx.secure come from the socket. Behind a reverse proxy, set ' +
+        'listen({ trustProxy }) to a hop count or the proxy CIDRs.',
+    );
+  };
+}
+
 export function compileApplication(input: CompileInput): CompiledApp {
   const { logger, development, net } = input;
+  const checkForwarded = forwardedWarning(net, logger);
   const globalOnError = createErrorHandler(input.globalFilters, logger, development);
   const routes: CompiledApp['routes'] = {};
   const table: RouteTableEntry[] = [];
@@ -215,6 +232,7 @@ export function compileApplication(input: CompileInput): CompiledApp {
             routes[path] = byMethod;
           }
           byMethod[method] = async (req, server) => {
+            checkForwarded(req);
             if (ws && isUpgrade(req)) return runUpgrade(path, ws, req, server, net);
             return handle(new RequestContext(req, server, info, net));
           };
@@ -251,6 +269,7 @@ export function compileApplication(input: CompileInput): CompiledApp {
   const fallback = composeMiddleware(input.globalMiddleware, unmatched, globalOnError);
 
   const fetch: BunHandler = async (req, server) => {
+    checkForwarded(req);
     if (isUpgrade(req)) {
       const pathname = new URL(req.url).pathname;
       const ws = wsHandlers.get(pathname);

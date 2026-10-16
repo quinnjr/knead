@@ -3,6 +3,7 @@ import { Module } from '@hpmws/core';
 import type { HttpApplication } from '../src/application.js';
 import { Controller, createRouteDecorator, Get, Post, UseGuards } from '../src/decorators.js';
 import { BadRequestException, ServiceUnavailableException } from '../src/exceptions.js';
+import type { MemoryLogger } from '../src/logger.js';
 import type { Ctx } from '../src/types.js';
 import { makeCtx, start } from './helpers.js';
 
@@ -131,5 +132,31 @@ describe('5xx problem responses', () => {
       detail: 'database at 10.0.0.7 is down',
       host: '10.0.0.7',
     });
+  });
+});
+
+describe('forwarded headers without trustProxy', () => {
+  test('one warning is logged the first time X-Forwarded-* arrives untrusted', async () => {
+    app = await start(EchoModule);
+    const url = new URL('/echo', app.url);
+    const logger = app.logger as MemoryLogger;
+    await fetch(url, { method: 'POST' });
+    expect(logger.entries.filter((e) => e.level === 'warn')).toEqual([]);
+    for (let i = 0; i < 3; i++) {
+      await fetch(url, { method: 'POST', headers: { 'x-forwarded-for': '203.0.113.9' } });
+      await fetch(new URL('/missing', app.url), { headers: { 'x-forwarded-proto': 'https' } });
+    }
+    const warnings = logger.entries.filter((e) => e.level === 'warn');
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]!.message).toContain('trustProxy');
+  });
+
+  test('no warning when trustProxy is configured', async () => {
+    app = await start(EchoModule, { trustProxy: 1 });
+    await fetch(new URL('/echo', app.url), {
+      method: 'POST',
+      headers: { 'x-forwarded-for': '203.0.113.9' },
+    });
+    expect((app.logger as MemoryLogger).entries.filter((e) => e.level === 'warn')).toEqual([]);
   });
 });
