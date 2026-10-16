@@ -54,6 +54,11 @@ function aesKey(material: Uint8Array): Buffer {
   );
 }
 
+/** Dropped messages are reported at most this often, in milliseconds. */
+const DROP_REPORT_INTERVAL = 10_000;
+
+const byteLength = (text: string) => Buffer.byteLength(text, 'utf8');
+
 /** Longest accepted maxSignatureAge: 10 minutes. */
 const MAX_SIGNATURE_AGE = 600_000;
 
@@ -102,6 +107,12 @@ export interface RedisPubSubOptions {
    * unreachable instead of queueing.
    */
   publishTimeout?: number;
+  /**
+   * Largest message accepted, in bytes (UTF-8, after signing and encryption): larger incoming
+   * messages are dropped before any HMAC, decryption or JSON work, and publishOrThrow() rejects
+   * larger outgoing ones. Default 1 MiB.
+   */
+  maxMessageBytes?: number;
 }
 
 /**
@@ -150,6 +161,10 @@ export class RedisPubSub implements PubSubEngine {
   readonly #encryptionKeys: Buffer[] | undefined;
   readonly #maxSignatureAge: number;
   readonly #publishTimeout: number;
+  readonly #maxMessageBytes: number;
+  /** Messages dropped since the last drop report, and when that report was logged. */
+  #dropped = 0;
+  #lastDropReport = Number.NEGATIVE_INFINITY;
 
   constructor(options: RedisPubSubOptions = {}) {
     this.#signingKeys = keyList('signingKey', options.signingKey);
@@ -168,6 +183,13 @@ export class RedisPubSub implements PubSubEngine {
       );
     }
     this.#publishTimeout = publishTimeout;
+    const maxBytes = options.maxMessageBytes ?? 1024 * 1024;
+    if (!Number.isInteger(maxBytes) || maxBytes < 1) {
+      throw new HttpConfigError(
+        `RedisPubSub maxMessageBytes must be a positive integer; got ${String(maxBytes)}.`,
+      );
+    }
+    this.#maxMessageBytes = maxBytes;
     this.#prefix = options.prefix ?? 'hpmws:gql:';
     this.#explicitLogger = options.logger !== undefined;
     this.#logger = options.logger ?? new ConsoleLogger('hpmws:graphql');
@@ -237,11 +259,17 @@ export class RedisPubSub implements PubSubEngine {
   /** Like publish(), but rejects when Redis did not accept the message within publishTimeout. */
   async publishOrThrow(topic: string, payload: unknown): Promise<void> {
     const json = JSON.stringify(payload);
+    if (json === undefined) throw new TypeError('RedisPubSub payloads must be JSON-serializable.');
     // Encrypt, then sign the envelope.
     let message = this.#encryptionKeys ? this.#encrypt(topic, json) : json;
     if (this.#signingKeys) {
       const ts = String(Date.now());
       message = `${this.#sign(this.#signingKeys[0]!, topic, ts, message)}.${ts}.${message}`;
+    }
+    if (byteLength(message) > this.#maxMessageBytes) {
+      throw new RangeError(
+        `RedisPubSub message for ${JSON.stringify(topic)} is larger than maxMessageBytes (${this.#maxMessageBytes}).`,
+      );
     }
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -308,13 +336,16 @@ export class RedisPubSub implements PubSubEngine {
 
   /** Verifies, decrypts and parses a message, then hands the payload to the topic's listeners. */
   #receive(topic: string, message: string): void {
+    // Size first: forged messages must not cost an HMAC, a decryption or a JSON parse.
+    if (message.length > this.#maxMessageBytes || byteLength(message) > this.#maxMessageBytes) {
+      this.#drop(topic, `larger than ${this.#maxMessageBytes} bytes`);
+      return;
+    }
     let body: string | undefined = message;
     if (this.#signingKeys) {
       body = this.#verified(topic, message);
       if (body === undefined) {
-        this.#logger.warn(
-          `RedisPubSub dropped a message on ${JSON.stringify(topic)} without a valid signature`,
-        );
+        this.#drop(topic, 'no valid signature (forged, stale or signed with another key)');
         return;
       }
     }
@@ -323,11 +354,7 @@ export class RedisPubSub implements PubSubEngine {
       try {
         json = this.#decrypt(topic, body);
       } catch (error) {
-        this.#logError(
-          `RedisPubSub dropped a message on ${JSON.stringify(topic)} that failed to decrypt`,
-          error,
-          'warn',
-        );
+        this.#drop(topic, 'failed to decrypt', error);
         return;
       }
     }
@@ -335,7 +362,7 @@ export class RedisPubSub implements PubSubEngine {
     try {
       payload = JSON.parse(json);
     } catch {
-      this.#logger.warn(`RedisPubSub dropped a non-JSON message on ${JSON.stringify(topic)}`);
+      this.#drop(topic, 'not JSON');
       return;
     }
     for (const listener of this.#topics.get(topic) ?? []) {
@@ -345,6 +372,24 @@ export class RedisPubSub implements PubSubEngine {
         this.#logError(`RedisPubSub listener for ${JSON.stringify(topic)} threw`, error);
       }
     }
+  }
+
+  /**
+   * Counts a dropped message and logs at most one report per 10s per instance, with the number
+   * dropped since the previous report, so a flood of forged messages cannot flood the log.
+   */
+  #drop(topic: string, reason: string, error?: unknown): void {
+    this.#dropped++;
+    const now = Date.now();
+    if (now - this.#lastDropReport < DROP_REPORT_INTERVAL) return;
+    const count = this.#dropped;
+    this.#dropped = 0;
+    this.#lastDropReport = now;
+    const message =
+      `RedisPubSub dropped ${count} message(s) since the last report; the latest on ` +
+      `${JSON.stringify(topic)}: ${reason}`;
+    if (error === undefined) this.#logger.warn(message);
+    else this.#logError(message, error, 'warn');
   }
 
   /** `e1.<iv>.<ciphertext + tag>` (base64url), AES-256-GCM with the channel as AAD. */

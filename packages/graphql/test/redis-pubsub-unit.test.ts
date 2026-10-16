@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, setSystemTime, test } from 'bun:test';
 import { createHmac } from 'node:crypto';
 import { HttpConfigError, MemoryLogger } from '@hpmws/http';
 import type { RedisClient } from 'bun';
@@ -212,10 +212,11 @@ describe('RedisPubSub hardening', () => {
     const other = new RedisPubSub({ client: fake.client, signingKey: 'x'.repeat(32), logger });
     await other.publish('t', { n: 4 });
     expect(received).toEqual([{ n: 1 }]);
+    // Drops are reported at most once per 10s, with a count.
     const drops = logger.entries.filter(
       (e) => e.level === 'warn' && e.message.includes('signature'),
     );
-    expect(drops.length).toBe(3);
+    expect(drops.length).toBe(1);
     for (const p of [sender, receiver, other]) await p.close();
   });
 
@@ -341,7 +342,55 @@ describe('RedisPubSub hardening', () => {
     fake.inject('hpmws:gql:t', signed(Date.now() - 6000, { stale: true }));
     fake.inject('hpmws:gql:t', signed(Date.now() + 61_000, { future: true }));
     expect(received).toEqual([{ fresh: true }]);
-    expect(logger.entries.filter((e) => e.message.includes('signature')).length).toBe(2);
+    expect(logger.entries.filter((e) => e.message.includes('signature')).length).toBe(1);
+    await receiver.close();
+  });
+
+  test('a flood of forged messages logs one report per 10s, with a count', async () => {
+    const fake = loopback();
+    const logger = new MemoryLogger();
+    const receiver = new RedisPubSub({ client: fake.client, signingKey: 'k'.repeat(32), logger });
+    receiver.subscribe('t', () => {});
+    await until(() => fake.subscribed() === 1);
+    try {
+      for (let i = 0; i < 1000; i++) fake.inject('hpmws:gql:t', `${'0'.repeat(64)}.1.{}`);
+      expect(logger.entries.length).toBe(1);
+      expect(logger.entries[0]!.message).toContain('dropped 1 message(s)');
+      setSystemTime(new Date(Date.now() + 11_000));
+      fake.inject('hpmws:gql:t', 'forged');
+      expect(logger.entries.length).toBe(2);
+      expect(logger.entries[1]!.message).toContain('dropped 1000 message(s)');
+    } finally {
+      setSystemTime();
+      await receiver.close();
+    }
+  });
+
+  test('messages over maxMessageBytes are dropped before any HMAC or JSON work', async () => {
+    const fake = loopback();
+    const logger = new MemoryLogger();
+    const receiver = new RedisPubSub({
+      client: fake.client,
+      signingKey: 'k'.repeat(32),
+      logger,
+      maxMessageBytes: 1024,
+    });
+    const received: unknown[] = [];
+    receiver.subscribe('t', (payload) => received.push(payload));
+    await until(() => fake.subscribed() === 1);
+    const huge = `${'0'.repeat(64)}.${Date.now()}.${JSON.stringify('x'.repeat(10 * 1024 * 1024))}`;
+    const started = performance.now();
+    fake.inject('hpmws:gql:t', huge);
+    expect(performance.now() - started).toBeLessThan(20);
+    expect(logger.entries[0]!.message).toContain('larger than 1024 bytes');
+    const sender = new RedisPubSub({
+      client: fake.client,
+      signingKey: 'k'.repeat(32),
+      maxMessageBytes: 1024,
+    });
+    await expect(sender.publishOrThrow('t', 'x'.repeat(2000))).rejects.toThrow('maxMessageBytes');
+    await sender.publish('t', 'small');
+    expect(received).toEqual(['small']);
     await receiver.close();
   });
 
