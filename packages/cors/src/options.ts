@@ -1,4 +1,4 @@
-import { HpmwsError, InjectionToken } from '@knead/core';
+import { InjectionToken, KneadError } from '@knead/core';
 import type { Ctx } from '@knead/http';
 
 export type CorsOrigin =
@@ -27,7 +27,7 @@ export interface CorsOptions {
 
 export const CORS_OPTIONS = new InjectionToken<CorsOptions>('CORS_OPTIONS');
 
-export class CorsConfigError extends HpmwsError {}
+export class CorsConfigError extends KneadError {}
 
 /** Whether a RegExp source starts with `^` and ends with an unescaped `$`. */
 function isAnchored(source: string): boolean {

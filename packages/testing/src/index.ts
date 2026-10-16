@@ -2,8 +2,8 @@ import type { ModuleOptions, Provider, Token, Type } from '@knead/core';
 import {
   type ExceptionFilter,
   type Guard,
-  HpmwsFactory,
   type HttpApplication,
+  KneadFactory,
   type ListenOptions,
   type LogEntry,
   type Logger,
@@ -69,7 +69,7 @@ export class TestingModuleBuilder {
 
   async compile(options: CompileOptions = {}): Promise<TestingModule> {
     const logger = options.logger ?? new MemoryLogger();
-    const app = await HpmwsFactory.create(
+    const app = await KneadFactory.create(
       { module: class TestRootModule {}, ...this.metadata },
       { overrides: this.#overrides, logger, development: options.development ?? true },
     );

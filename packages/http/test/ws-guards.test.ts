@@ -107,9 +107,9 @@ describe('global guards on WebSocket upgrades', () => {
   test('useGlobalGuards guards run on the upgrade request too', async () => {
     @Module({ providers: [Gateway] })
     class M {}
-    const { HpmwsFactory } = await import('../src/application.js');
+    const { KneadFactory } = await import('../src/application.js');
     const { MemoryLogger } = await import('../src/logger.js');
-    app = await HpmwsFactory.create(M, { logger: new MemoryLogger(), development: false });
+    app = await KneadFactory.create(M, { logger: new MemoryLogger(), development: false });
     app.useGlobalGuards(requireKey);
     await app.listen({ port: 0, hostname: '127.0.0.1' });
     expect(await upgradeStatus(app)).toContain('403');

@@ -94,7 +94,7 @@ export interface ListenOptions {
   shutdownTimeout?: number;
 }
 
-export class HpmwsFactory {
+export class KneadFactory {
   static async create(
     root: ModuleImport,
     options: CreateApplicationOptions = {},

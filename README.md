@@ -17,7 +17,7 @@ Requires Bun ≥ 1.4.3 (it fixes CVE-2026-48618 and request-smuggling bugs; `lis
 
 ```ts
 import { Module, inject } from '@knead/core';
-import { Controller, type Ctx, Get, HpmwsFactory } from '@knead/http';
+import { Controller, type Ctx, Get, KneadFactory } from '@knead/http';
 
 class Greeter {
   greet(name: string) {
@@ -38,7 +38,7 @@ class GreetController {
 @Module({ controllers: [GreetController], providers: [Greeter] })
 class AppModule {}
 
-const app = await HpmwsFactory.create(AppModule);
+const app = await KneadFactory.create(AppModule);
 await app.listen({ port: 3000 });
 ```
 

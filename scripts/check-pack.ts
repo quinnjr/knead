@@ -143,7 +143,7 @@ function consumerApp(): string {
 import { inject, Module } from '@knead/core';
 import { CorsModule } from '@knead/cors';
 import { Field, GraphQLModule, ID, ObjectType, Query, Resolver, type ResolverCtx } from '@knead/graphql';
-import { Controller, type Ctx, Get, HpmwsFactory, MemoryLogger } from '@knead/http';
+import { Controller, type Ctx, Get, KneadFactory, MemoryLogger } from '@knead/http';
 import { RateLimitModule } from '@knead/rate-limit';
 import { sanitize, type SanitizePolicy } from '@knead/sanitize';
 import { SecurityHeadersModule } from '@knead/security-headers';
@@ -197,7 +197,7 @@ const policy: SanitizePolicy = { allowedTags: ['b'], allowedAttributes: {} };
 const builder: TestingModuleBuilder | undefined = undefined;
 void builder;
 
-const app = await HpmwsFactory.create(AppModule, { logger: new MemoryLogger() });
+const app = await KneadFactory.create(AppModule, { logger: new MemoryLogger() });
 await app.listen({ port: 0, hostname: '127.0.0.1' });
 try {
   const res = await fetch(new URL('/greet/ada', app.url), {

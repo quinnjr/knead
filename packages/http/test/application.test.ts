@@ -12,9 +12,9 @@ import {
   type ExceptionFilter,
   Get,
   type Guard,
-  HpmwsFactory,
   type HttpApplication,
   HttpConfigError,
+  KneadFactory,
   MemoryLogger,
   type Middleware,
   ModuleMiddleware,
@@ -342,7 +342,7 @@ describe('global registration', () => {
     }
     @Module({ controllers: [X] })
     class M {}
-    const app2 = await HpmwsFactory.create(M, { logger: new MemoryLogger() });
+    const app2 = await KneadFactory.create(M, { logger: new MemoryLogger() });
     app2
       .useGlobalMiddleware(tag('imperative'), 5)
       .useGlobalGuards((ctx: Ctx) => ctx.req.headers.get('x-block') !== '1')
@@ -399,7 +399,7 @@ describe('global middleware ordering', () => {
       ],
     })
     class M {}
-    const a = await HpmwsFactory.create(M, { logger: new MemoryLogger() });
+    const a = await KneadFactory.create(M, { logger: new MemoryLogger() });
     a.useGlobalMiddleware(tag('imperative5'), 5).useGlobalMiddleware(tag('imperative10'), 10);
     await a.listen({ port: 0, hostname: '127.0.0.1' });
     const res = await fetch(new URL('/o', a.url));
@@ -418,7 +418,7 @@ describe('listen atomicity and global provider scope', () => {
     }
     @Module({ providers: [Gw] })
     class M {}
-    const a = await HpmwsFactory.create(M, { logger: new MemoryLogger() });
+    const a = await KneadFactory.create(M, { logger: new MemoryLogger() });
     await expect(a.listen({ port: blocker.port, hostname: '127.0.0.1' })).rejects.toThrow();
     expect(a.routes).toEqual([]);
     a.get(WsRegistry).register('/after', { upgrade: () => ({}) });
@@ -437,7 +437,7 @@ describe('listen atomicity and global provider scope', () => {
     }
     @Module({ providers: [Resource] })
     class M {}
-    const a = await HpmwsFactory.create(M, { logger: new MemoryLogger() });
+    const a = await KneadFactory.create(M, { logger: new MemoryLogger() });
     await expect(a.listen({ port: blocker.port, hostname: '127.0.0.1' })).rejects.toThrow();
     expect(log).toEqual([]);
     await expect(a.close()).resolves.toBeUndefined();
@@ -539,7 +539,7 @@ describe('lifecycle of lazily constructed classes', () => {
     }
     @Module({ controllers: [C] })
     class M {}
-    const a = await HpmwsFactory.create(M, { logger: new MemoryLogger() });
+    const a = await KneadFactory.create(M, { logger: new MemoryLogger() });
     expect(log).toEqual([]);
     await a.listen({ port: 0, hostname: '127.0.0.1' });
     expect(log).toEqual(['init']);
@@ -565,7 +565,7 @@ describe('lifecycle of lazily constructed classes', () => {
     }
     @Module({ controllers: [C] })
     class M {}
-    const a = await HpmwsFactory.create(M, { logger: new MemoryLogger() });
+    const a = await KneadFactory.create(M, { logger: new MemoryLogger() });
     await expect(a.listen({ port: 0, hostname: '127.0.0.1' })).rejects.toThrow('guard init failed');
     expect(() => a.server).toThrow(HttpConfigError);
   });
@@ -589,7 +589,7 @@ describe('listen after or during close', () => {
     }
     @Module({ controllers: [C] })
     class M {}
-    const a = await HpmwsFactory.create(M, { logger: new MemoryLogger() });
+    const a = await KneadFactory.create(M, { logger: new MemoryLogger() });
     await expect(a.listen({ port: 0, hostname: '127.0.0.1' })).rejects.toThrow('guard init failed');
     await expect(a.listen({ port: 0, hostname: '127.0.0.1' })).rejects.toThrow(
       new HttpConfigError('The application is closed.'),
@@ -601,7 +601,7 @@ describe('listen after or during close', () => {
   test('listen after a completed close rejects', async () => {
     @Module({})
     class M {}
-    const a = await HpmwsFactory.create(M, { logger: new MemoryLogger() });
+    const a = await KneadFactory.create(M, { logger: new MemoryLogger() });
     await a.close();
     await expect(a.listen({ port: 0, hostname: '127.0.0.1' })).rejects.toThrow(
       new HttpConfigError('The application is closed.'),
@@ -633,7 +633,7 @@ describe('listen after or during close', () => {
     const probe = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response('x') });
     const port = probe.port as number;
     probe.stop(true);
-    const a = await HpmwsFactory.create(M, { logger: new MemoryLogger() });
+    const a = await KneadFactory.create(M, { logger: new MemoryLogger() });
     const listening = a.listen({ port, hostname: '127.0.0.1' });
     await Bun.sleep(5);
     const closing = a.close();
@@ -670,7 +670,7 @@ describe('listen after or during close', () => {
     const probe = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response('x') });
     const port = probe.port as number;
     probe.stop(true);
-    app = await HpmwsFactory.create(M, { logger: new MemoryLogger() });
+    app = await KneadFactory.create(M, { logger: new MemoryLogger() });
     const started = Date.now();
     await expect(app.listen({ port, hostname: '127.0.0.1', shutdownTimeout: 100 })).rejects.toThrow(
       new HttpConfigError('The application was closed during listen().'),

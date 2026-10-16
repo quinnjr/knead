@@ -1,13 +1,13 @@
 import { tokenName } from './tokens.js';
 
-export class HpmwsError extends Error {
+export class KneadError extends Error {
   constructor(message: string) {
     super(message);
     this.name = new.target.name;
   }
 }
 
-export class InjectionContextError extends HpmwsError {
+export class InjectionContextError extends KneadError {
   constructor(token: unknown) {
     super(
       `inject(${tokenName(token)}) was called outside an injection context. inject() only works ` +
@@ -17,20 +17,20 @@ export class InjectionContextError extends HpmwsError {
   }
 }
 
-export class NoProviderError extends HpmwsError {}
+export class NoProviderError extends KneadError {}
 
-export class CircularDependencyError extends HpmwsError {
+export class CircularDependencyError extends KneadError {
   constructor(readonly path: string[]) {
     super(`Circular dependency detected: ${path.join(' → ')}`);
   }
 }
 
-export class ModuleDefinitionError extends HpmwsError {}
+export class ModuleDefinitionError extends KneadError {}
 
-export class ProviderConfigError extends HpmwsError {}
+export class ProviderConfigError extends KneadError {}
 
 /** @internal Thrown when a synchronous resolution hits an async factory that has not settled. */
-export class AsyncProviderPendingError extends HpmwsError {
+export class AsyncProviderPendingError extends KneadError {
   constructor(
     readonly record: unknown,
     name: string,

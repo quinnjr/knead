@@ -1,4 +1,4 @@
-import { HpmwsError } from '@knead/core';
+import { KneadError } from '@knead/core';
 import {
   BadRequestException,
   ForbiddenException,
@@ -14,7 +14,7 @@ import { type ErrorCode, isLeavenError, LeavenError } from '@leaven-graphql/erro
 import { GraphQLError, type GraphQLFormattedError } from 'graphql';
 
 /** Thrown while building the schema at bootstrap; the message names the class and field. */
-export class SchemaBuildError extends HpmwsError {}
+export class SchemaBuildError extends KneadError {}
 
 export interface ArgsValidationIssue {
   arg: string;
