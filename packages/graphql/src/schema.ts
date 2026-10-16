@@ -1,4 +1,4 @@
-import { getMetadata, getOwnMetadata } from '@knead/core';
+import { getMetadata, getOwnMetadata } from '@knead-js/core';
 import {
   type GraphQLArgumentConfig,
   type GraphQLFieldConfig,

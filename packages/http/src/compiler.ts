@@ -1,4 +1,4 @@
-import { getMetadata, getMethodMetadata, getOwnMetadata, type ModuleRef } from '@knead/core';
+import { getMetadata, getMethodMetadata, getOwnMetadata, type ModuleRef } from '@knead-js/core';
 import type { Server } from 'bun';
 import { type NetConfig, RequestContext } from './context.js';
 import {

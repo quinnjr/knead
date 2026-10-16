@@ -1,4 +1,4 @@
-import { InjectionToken, inject } from '@knead/core';
+import { InjectionToken, inject } from '@knead-js/core';
 import {
   type Ctx,
   createRouteDecorator,
@@ -6,7 +6,7 @@ import {
   type Middleware,
   type Next,
   withHeaders,
-} from '@knead/http';
+} from '@knead-js/http';
 import { buildHeaders, generateNonce, nonceTargets } from './csp.js';
 import {
   DEFAULT_OPTIONS,

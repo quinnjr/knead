@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { inject, Module } from '@knead/core';
+import { inject, Module } from '@knead-js/core';
 import type { HttpApplication } from '../src/application.js';
 import { Controller, createRouteDecorator, Get, Post, UseGuards } from '../src/decorators.js';
 import {

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, mock, setSystemTime, test } from 'bun:test';
-import { ApplicationContext, inject, Module, type OnModuleInit } from '@knead/core';
+import { ApplicationContext, inject, Module, type OnModuleInit } from '@knead-js/core';
 import type { HttpApplication, ListenOptions } from '../src/application.js';
 import { HttpConfigError, TooManyRequestsException } from '../src/exceptions.js';
 import { APP_GUARD, originAllowed } from '../src/index.js';

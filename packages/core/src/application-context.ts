@@ -5,7 +5,7 @@ import type { Provider } from './providers.js';
 import type { Token } from './tokens.js';
 
 export interface CreateContextOptions {
-  /** Replace providers by token (used by @knead/testing). Applies to non-multi providers. */
+  /** Replace providers by token (used by @knead-js/testing). Applies to non-multi providers. */
   overrides?: Iterable<readonly [Token, Provider]>;
   /** Extra modules scanned before the root (e.g. framework core modules). */
   globalModules?: readonly ModuleImport[];

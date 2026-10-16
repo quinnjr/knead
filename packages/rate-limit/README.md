@@ -1,4 +1,4 @@
-# @knead/rate-limit
+# @knead-js/rate-limit
 
 `RateLimitModule.forRoot({ limit, window })` with sliding-window or token-bucket algorithms, `@RateLimit()` (validated at decoration time) / `@SkipRateLimit()`, standard `RateLimit-*` headers and `Retry-After` computed from the earliest admission time, and `MemoryStore` or `RedisStore` (atomic Lua on `Bun.redis`) for multi-instance deployments. Windows are integer milliseconds (durations are rounded up). `RedisStore` is not compatible with Redis Cluster.
 
@@ -40,4 +40,4 @@ CorsModule.forRoot({
 });
 ```
 
-`bun add @knead/core @knead/http @knead/rate-limit` (`@knead/core` and `@knead/http` are peer dependencies, so every package shares one copy). Licensed MIT OR Apache-2.0.
+`bun add @knead-js/core @knead-js/http @knead-js/rate-limit` (`@knead-js/core` and `@knead-js/http` are peer dependencies, so every package shares one copy). Licensed MIT OR Apache-2.0.

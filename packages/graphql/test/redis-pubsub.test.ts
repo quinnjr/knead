@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { inject, Module } from '@knead/core';
-import { MemoryLogger } from '@knead/http';
+import { inject, Module } from '@knead-js/core';
+import { MemoryLogger } from '@knead-js/http';
 import { RedisClient } from 'bun';
 import {
   Mutation,

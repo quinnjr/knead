@@ -4,7 +4,7 @@ import {
   type ModuleImport,
   type Provider,
   type Token,
-} from '@knead/core';
+} from '@knead-js/core';
 import type { Serve, Server, TLSOptions } from 'bun';
 import {
   type CompiledApp,

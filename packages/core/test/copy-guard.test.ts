@@ -4,7 +4,7 @@ import '../src/index.js';
 
 const store = globalThis as Record<symbol, unknown>;
 
-describe('duplicate @knead/core guard', () => {
+describe('duplicate @knead-js/core guard', () => {
   const original = store[CORE_COPY_KEY];
   afterEach(() => {
     store[CORE_COPY_KEY] = original;
@@ -20,12 +20,12 @@ describe('duplicate @knead/core guard', () => {
     const warn = spyOn(console, 'warn').mockImplementation(() => {});
     try {
       store[CORE_COPY_KEY] = {
-        url: 'file:///elsewhere/node_modules/@knead/core/dist/copy-guard.js',
+        url: 'file:///elsewhere/node_modules/@knead-js/core/dist/copy-guard.js',
       };
-      registerCoreCopy({ url: 'file:///app/node_modules/@knead/core/dist/copy-guard.js' });
-      registerCoreCopy({ url: 'file:///third/node_modules/@knead/core/dist/copy-guard.js' });
+      registerCoreCopy({ url: 'file:///app/node_modules/@knead-js/core/dist/copy-guard.js' });
+      registerCoreCopy({ url: 'file:///third/node_modules/@knead-js/core/dist/copy-guard.js' });
       expect(warn).toHaveBeenCalledTimes(1);
-      expect(String(warn.mock.calls[0]?.[0])).toContain('Multiple copies of @knead/core');
+      expect(String(warn.mock.calls[0]?.[0])).toContain('Multiple copies of @knead-js/core');
       expect(String(warn.mock.calls[0]?.[0])).toContain('inject()');
     } finally {
       warn.mockRestore();

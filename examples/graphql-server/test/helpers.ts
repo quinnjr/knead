@@ -1,5 +1,5 @@
-import type { GraphQLPayload, GraphQLSubscription, TestingModuleBuilder } from '@knead/testing';
-import { Test, type TestApp, type TestingModule } from '@knead/testing';
+import type { GraphQLPayload, GraphQLSubscription, TestingModuleBuilder } from '@knead-js/testing';
+import { Test, type TestApp, type TestingModule } from '@knead-js/testing';
 import { AppModule } from '../src/app.module.js';
 
 export const ada = { authorization: 'Bearer ada-token' }; // admin, author a1

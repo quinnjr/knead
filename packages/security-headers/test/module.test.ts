@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { CorsModule } from '@knead/cors';
-import { Controller, type Ctx, Get } from '@knead/http';
-import { RateLimitModule } from '@knead/rate-limit';
-import { Test, type TestingModule } from '@knead/testing';
+import { CorsModule } from '@knead-js/cors';
+import { Controller, type Ctx, Get } from '@knead-js/http';
+import { RateLimitModule } from '@knead-js/rate-limit';
+import { Test, type TestingModule } from '@knead-js/testing';
 import {
   SecurityHeaders,
   SecurityHeadersModule,

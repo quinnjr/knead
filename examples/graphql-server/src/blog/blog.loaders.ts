@@ -1,5 +1,5 @@
-import { inject } from '@knead/core';
-import type { BatchLoader } from '@knead/graphql';
+import { inject } from '@knead-js/core';
+import type { BatchLoader } from '@knead-js/graphql';
 import { BlogService } from './blog.service.js';
 import type { Author, Post } from './blog.types.js';
 

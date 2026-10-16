@@ -1,4 +1,4 @@
-import { MetadataKey } from '@knead/core';
+import { MetadataKey } from '@knead-js/core';
 import type {
   ControllerOptions,
   ErrorType,

@@ -1,8 +1,8 @@
-import { inject, Module } from '@knead/core';
-import { CorsModule } from '@knead/cors';
-import { GraphQLModule } from '@knead/graphql';
-import { RateLimitModule } from '@knead/rate-limit';
-import { SecurityHeadersModule } from '@knead/security-headers';
+import { inject, Module } from '@knead-js/core';
+import { CorsModule } from '@knead-js/cors';
+import { GraphQLModule } from '@knead-js/graphql';
+import { RateLimitModule } from '@knead-js/rate-limit';
+import { SecurityHeadersModule } from '@knead-js/security-headers';
 import { AuthModule, AuthService } from './auth/auth.js';
 import { UsersModule } from './users/users.module.js';
 

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { inject, Module, type OnModuleDestroy, type OnModuleInit } from '@knead/core';
+import { inject, Module, type OnModuleDestroy, type OnModuleInit } from '@knead-js/core';
 import type { StandardSchemaV1 } from '@standard-schema/spec';
 import {
   APP_GUARD,

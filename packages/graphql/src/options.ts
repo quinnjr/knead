@@ -1,5 +1,5 @@
-import { InjectionToken } from '@knead/core';
-import { type Ctx, type GuardRef, HttpConfigError, type WsMessageRate } from '@knead/http';
+import { InjectionToken } from '@knead-js/core';
+import { type Ctx, type GuardRef, HttpConfigError, type WsMessageRate } from '@knead-js/http';
 import type {
   CompilerOptions,
   ExecutionHooks,

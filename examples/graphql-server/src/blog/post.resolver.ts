@@ -1,5 +1,5 @@
-import { inject } from '@knead/core';
-import { ID, Query, ResolveField, Resolver, type ResolverCtx } from '@knead/graphql';
+import { inject } from '@knead-js/core';
+import { ID, Query, ResolveField, Resolver, type ResolverCtx } from '@knead-js/graphql';
 import * as v from 'valibot';
 import { AuthorsById } from './blog.loaders.js';
 import { BlogService } from './blog.service.js';

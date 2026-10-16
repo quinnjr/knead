@@ -1,5 +1,5 @@
-import { type DynamicModule, inject, Module } from '@knead/core';
-import { APP_MIDDLEWARE } from '@knead/http';
+import { type DynamicModule, inject, Module } from '@knead-js/core';
+import { APP_MIDDLEWARE } from '@knead-js/http';
 import { MemoryStore } from './memory-store.js';
 import {
   RATE_LIMIT_OPTIONS,

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { MASKED_MESSAGE } from '@knead/graphql';
+import { MASKED_MESSAGE } from '@knead-js/graphql';
 import { AuthorsById } from '../src/blog/blog.loaders.js';
 import { frontend, type Started, start } from './helpers.js';
 

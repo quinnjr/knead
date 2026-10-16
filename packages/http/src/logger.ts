@@ -1,4 +1,4 @@
-import { InjectionToken } from '@knead/core';
+import { InjectionToken } from '@knead-js/core';
 import { summarizeError } from './error-log.js';
 
 export interface Logger {

@@ -1,11 +1,19 @@
-import { inject } from '@knead/core';
-import { Field, ID, Mutation, ObjectType, Query, Resolver, type ResolverCtx } from '@knead/graphql';
-import { sanitize } from '@knead/sanitize';
+import { inject } from '@knead-js/core';
+import {
+  Field,
+  ID,
+  Mutation,
+  ObjectType,
+  Query,
+  Resolver,
+  type ResolverCtx,
+} from '@knead-js/graphql';
+import { sanitize } from '@knead-js/sanitize';
 import * as v from 'valibot';
 import type { User } from '../auth/auth.js';
 import { UsersService } from './users.service.js';
 
-declare module '@knead/graphql' {
+declare module '@knead-js/graphql' {
   interface GraphQLContext {
     user?: User;
   }

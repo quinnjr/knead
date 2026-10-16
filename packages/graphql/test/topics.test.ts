@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { Module } from '@knead/core';
+import { Module } from '@knead-js/core';
 import type { PubSub } from '@leaven-graphql/ws';
 import { ID, Int, PUBSUB, Query, Resolver, Subscription } from '../src/index.js';
 import { type Started, startGraphQL } from './helpers.js';

@@ -1,4 +1,4 @@
-import { InjectionToken, inject, type OnModuleDestroy } from '@knead/core';
+import { InjectionToken, inject, type OnModuleDestroy } from '@knead-js/core';
 import {
   type Ctx,
   ForbiddenException,
@@ -12,7 +12,7 @@ import {
   ServiceUnavailableException,
   TooManyRequestsException,
   withHeaders,
-} from '@knead/http';
+} from '@knead-js/http';
 import {
   type KeyFn,
   RATE_LIMIT_META,

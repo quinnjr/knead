@@ -181,25 +181,25 @@ importers:
 
   examples/graphql-server:
     dependencies:
-      '@knead/core':
+      '@knead-js/core':
         specifier: workspace:^
         version: link:../../packages/core
-      '@knead/cors':
+      '@knead-js/cors':
         specifier: workspace:^
         version: link:../../packages/cors
-      '@knead/graphql':
+      '@knead-js/graphql':
         specifier: workspace:^
         version: link:../../packages/graphql
-      '@knead/http':
+      '@knead-js/http':
         specifier: workspace:^
         version: link:../../packages/http
-      '@knead/rate-limit':
+      '@knead-js/rate-limit':
         specifier: workspace:^
         version: link:../../packages/rate-limit
-      '@knead/sanitize':
+      '@knead-js/sanitize':
         specifier: workspace:^
         version: link:../../packages/sanitize
-      '@knead/security-headers':
+      '@knead-js/security-headers':
         specifier: workspace:^
         version: link:../../packages/security-headers
       graphql:
@@ -209,31 +209,31 @@ importers:
         specifier: ^1.5.0
         version: 1.5.0(typescript@7.0.2)
     devDependencies:
-      '@knead/testing':
+      '@knead-js/testing':
         specifier: workspace:^
         version: link:../../packages/testing
 
   examples/rest-api:
     dependencies:
-      '@knead/core':
+      '@knead-js/core':
         specifier: workspace:^
         version: link:../../packages/core
-      '@knead/cors':
+      '@knead-js/cors':
         specifier: workspace:^
         version: link:../../packages/cors
-      '@knead/graphql':
+      '@knead-js/graphql':
         specifier: workspace:^
         version: link:../../packages/graphql
-      '@knead/http':
+      '@knead-js/http':
         specifier: workspace:^
         version: link:../../packages/http
-      '@knead/rate-limit':
+      '@knead-js/rate-limit':
         specifier: workspace:^
         version: link:../../packages/rate-limit
-      '@knead/sanitize':
+      '@knead-js/sanitize':
         specifier: workspace:^
         version: link:../../packages/sanitize
-      '@knead/security-headers':
+      '@knead-js/security-headers':
         specifier: workspace:^
         version: link:../../packages/security-headers
       graphql:
@@ -243,7 +243,7 @@ importers:
         specifier: ^1.5.0
         version: 1.5.0(typescript@7.0.2)
     devDependencies:
-      '@knead/testing':
+      '@knead-js/testing':
         specifier: workspace:^
         version: link:../../packages/testing
 
@@ -251,13 +251,13 @@ importers:
 
   packages/cors:
     devDependencies:
-      '@knead/core':
+      '@knead-js/core':
         specifier: workspace:^
         version: link:../core
-      '@knead/http':
+      '@knead-js/http':
         specifier: workspace:^
         version: link:../http
-      '@knead/testing':
+      '@knead-js/testing':
         specifier: workspace:^
         version: link:../testing
 
@@ -282,19 +282,19 @@ importers:
         specifier: 2.2.3
         version: 2.2.3
     devDependencies:
-      '@knead/core':
+      '@knead-js/core':
         specifier: workspace:^
         version: link:../core
-      '@knead/http':
+      '@knead-js/http':
         specifier: workspace:^
         version: link:../http
-      '@knead/rate-limit':
+      '@knead-js/rate-limit':
         specifier: workspace:^
         version: link:../rate-limit
-      '@knead/security-headers':
+      '@knead-js/security-headers':
         specifier: workspace:^
         version: link:../security-headers
-      '@knead/testing':
+      '@knead-js/testing':
         specifier: workspace:^
         version: link:../testing
       graphql:
@@ -307,22 +307,22 @@ importers:
         specifier: ^1.1.0
         version: 1.1.0
     devDependencies:
-      '@knead/core':
+      '@knead-js/core':
         specifier: workspace:^
         version: link:../core
 
   packages/rate-limit:
     devDependencies:
-      '@knead/core':
+      '@knead-js/core':
         specifier: workspace:^
         version: link:../core
-      '@knead/cors':
+      '@knead-js/cors':
         specifier: workspace:^
         version: link:../cors
-      '@knead/http':
+      '@knead-js/http':
         specifier: workspace:^
         version: link:../http
-      '@knead/testing':
+      '@knead-js/testing':
         specifier: workspace:^
         version: link:../testing
 
@@ -341,28 +341,28 @@ importers:
 
   packages/security-headers:
     devDependencies:
-      '@knead/core':
+      '@knead-js/core':
         specifier: workspace:^
         version: link:../core
-      '@knead/cors':
+      '@knead-js/cors':
         specifier: workspace:^
         version: link:../cors
-      '@knead/http':
+      '@knead-js/http':
         specifier: workspace:^
         version: link:../http
-      '@knead/rate-limit':
+      '@knead-js/rate-limit':
         specifier: workspace:^
         version: link:../rate-limit
-      '@knead/testing':
+      '@knead-js/testing':
         specifier: workspace:^
         version: link:../testing
 
   packages/testing:
     devDependencies:
-      '@knead/core':
+      '@knead-js/core':
         specifier: workspace:^
         version: link:../core
-      '@knead/http':
+      '@knead-js/http':
         specifier: workspace:^
         version: link:../http
 

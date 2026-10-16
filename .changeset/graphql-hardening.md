@@ -1,11 +1,11 @@
 ---
-"@knead/graphql": minor
+"@knead-js/graphql": minor
 ---
 
 Security hardening:
 
 - Safe default limits: `maxDepth` 10, `maxComplexity` 1000, `parseOptions.maxTokens` 10000, `maxQueryLength` 100 KiB (HTTP and WebSocket) and `maxAliases` 30; `Infinity` or `false` disables one. The depth check is Knead's own and does not count selections inside `__schema`/`__type`, so `getIntrospectionQuery()` passes. Exported as `GRAPHQL_LIMITS`.
-- WebSocket: the same-origin check is `@knead/http`'s `originAllowed` (default ports normalized); a second `connection_init` closes with 4429; subscriptions that resolve after close or after `complete` are returned at once; a reused id returns the earlier iterator; `subscriptions.messageRate` and `subscriptions.maxConnectionLifetime` are passed to `WsRegistry`.
+- WebSocket: the same-origin check is `@knead-js/http`'s `originAllowed` (default ports normalized); a second `connection_init` closes with 4429; subscriptions that resolve after close or after `complete` are returned at once; a reused id returns the earlier iterator; `subscriptions.messageRate` and `subscriptions.maxConnectionLifetime` are passed to `WsRegistry`.
 - Resolver guards pass only on `=== true`. New module-level `guards`, `defaultDeny` and `@Public()` (`ctx.meta[IS_PUBLIC]`).
 - Revocation: `@Subscription({ recheckGuards: true })` and the injectable `GraphQLSubscriptions.closeWhere(predicate, code?, reason?)`, which is re-applied to sockets whose `onConnect` was still pending.
 - `onConnect` receives read-only `ConnectionParams` and returns `boolean | Partial<GraphQLContext>`; returning or spreading the params is a type error.

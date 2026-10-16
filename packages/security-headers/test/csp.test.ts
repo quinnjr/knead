@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { HttpConfigError } from '@knead/http';
+import { HttpConfigError } from '@knead-js/http';
 import {
   buildHeaders,
   DEFAULT_CSP_DIRECTIVES,

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { Module } from '@knead/core';
-import { APP_GUARD, type Ctx } from '@knead/http';
+import { Module } from '@knead-js/core';
+import { APP_GUARD, type Ctx } from '@knead-js/http';
 import {
   GraphQLSubscriptions,
   Int,

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { Module } from '@knead/core';
-import { HttpConfigError, UseGuards } from '@knead/http';
+import { Module } from '@knead-js/core';
+import { HttpConfigError, UseGuards } from '@knead-js/http';
 import {
   Field,
   Int,

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { APP_GUARD, Controller, type Ctx, Get, UseGuards } from '@knead/http';
-import { Test, type TestingModule } from '@knead/testing';
+import { APP_GUARD, Controller, type Ctx, Get, UseGuards } from '@knead-js/http';
+import { Test, type TestingModule } from '@knead-js/testing';
 import { RateLimit, RateLimitGuard, RateLimitModule } from '../src/index.js';
 
 /** Signs the user in from a header; earlier in the guard chain than RateLimitGuard. */

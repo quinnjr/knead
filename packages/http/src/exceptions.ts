@@ -1,4 +1,4 @@
-import { KneadError } from '@knead/core';
+import { KneadError } from '@knead-js/core';
 
 export const STATUS_TITLES: Readonly<Record<number, string>> = {
   400: 'Bad Request',

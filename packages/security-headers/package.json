@@ -1,5 +1,5 @@
 {
-  "name": "@knead/security-headers",
+  "name": "@knead-js/security-headers",
   "version": "0.0.0",
   "description": "Secure-by-default HTTP security headers (CSP, HSTS, …) for the Knead framework",
   "license": "MIT OR Apache-2.0",
@@ -27,15 +27,15 @@
     "prepack": "bun ../../scripts/copy-licenses.ts"
   },
   "peerDependencies": {
-    "@knead/core": "workspace:^",
-    "@knead/http": "workspace:^"
+    "@knead-js/core": "workspace:^",
+    "@knead-js/http": "workspace:^"
   },
   "devDependencies": {
-    "@knead/core": "workspace:^",
-    "@knead/cors": "workspace:^",
-    "@knead/http": "workspace:^",
-    "@knead/rate-limit": "workspace:^",
-    "@knead/testing": "workspace:^"
+    "@knead-js/core": "workspace:^",
+    "@knead-js/cors": "workspace:^",
+    "@knead-js/http": "workspace:^",
+    "@knead-js/rate-limit": "workspace:^",
+    "@knead-js/testing": "workspace:^"
   },
   "publishConfig": {
     "access": "public",

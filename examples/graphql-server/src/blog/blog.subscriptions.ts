@@ -1,6 +1,6 @@
-import { inject } from '@knead/core';
-import { ID, Resolver, type ResolverCtx, Subscription } from '@knead/graphql';
-import { type Guard, UseGuards } from '@knead/http';
+import { inject } from '@knead-js/core';
+import { ID, Resolver, type ResolverCtx, Subscription } from '@knead-js/graphql';
+import { type Guard, UseGuards } from '@knead-js/http';
 import { BlogService } from './blog.service.js';
 import {
   Comment,

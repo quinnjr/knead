@@ -1,4 +1,4 @@
-import { type Ctx, createRouteDecorator } from '@knead/http';
+import { type Ctx, createRouteDecorator } from '@knead-js/http';
 import { type Duration, parseDuration } from './duration.js';
 
 export type KeyFn = (ctx: Ctx) => string | undefined | Promise<string | undefined>;

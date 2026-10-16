@@ -1,4 +1,4 @@
-import { inject } from '@knead/core';
+import { inject } from '@knead-js/core';
 import type { ServerWebSocket, WebSocketHandler } from 'bun';
 import { logError } from './error-log.js';
 import {

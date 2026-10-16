@@ -21,7 +21,7 @@ description of the impact, and steps or a proof of concept to reproduce it.
 
 ## Supported versions
 
-Knead is released as a fixed set of `@knead/*` packages that all share one
+Knead is released as a fixed set of `@knead-js/*` packages that all share one
 version.
 
 | Version                      | Supported          |
@@ -42,7 +42,7 @@ minor line.
 
 ## Scope
 
-In scope: the published `@knead/*` packages and this repository's release
+In scope: the published `@knead-js/*` packages and this repository's release
 pipeline. The example applications under `examples/` are demos; issues in them
 are welcome but are not treated as vulnerabilities in Knead itself unless they
 show a flaw in a published package.

@@ -1,5 +1,5 @@
 {
-  "name": "@knead/http",
+  "name": "@knead-js/http",
   "version": "0.0.0",
   "description": "HTTP(S) server, REST controllers and request pipeline for the Knead framework",
   "license": "MIT OR Apache-2.0",
@@ -30,10 +30,10 @@
     "@standard-schema/spec": "^1.1.0"
   },
   "peerDependencies": {
-    "@knead/core": "workspace:^"
+    "@knead-js/core": "workspace:^"
   },
   "devDependencies": {
-    "@knead/core": "workspace:^"
+    "@knead-js/core": "workspace:^"
   },
   "publishConfig": {
     "access": "public",

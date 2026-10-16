@@ -1,5 +1,5 @@
-import { inject, Module } from '@knead/core';
-import { type Ctx, createRouteDecorator, type Guard, UnauthorizedException } from '@knead/http';
+import { inject, Module } from '@knead-js/core';
+import { type Ctx, createRouteDecorator, type Guard, UnauthorizedException } from '@knead-js/http';
 
 export interface User {
   id: string;
@@ -7,7 +7,7 @@ export interface User {
   roles: string[];
 }
 
-declare module '@knead/http' {
+declare module '@knead-js/http' {
   interface CtxState {
     user?: User;
   }

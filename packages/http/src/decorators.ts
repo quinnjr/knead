@@ -6,7 +6,7 @@ import {
   readMethodMetadata,
   setMetadata,
   setMethodMetadata,
-} from '@knead/core';
+} from '@knead-js/core';
 import {
   CATCH,
   CONTROLLER,
