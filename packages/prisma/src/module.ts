@@ -8,6 +8,7 @@ import {
 import { assertClient, assertOptions } from './options.js';
 import { PrismaService } from './prisma.service.js';
 import { PRISMA_CLIENT, PRISMA_OPTIONS } from './tokens.js';
+import { TransactionHost } from './transaction-host.js';
 import type { PrismaModuleOptions } from './types.js';
 
 export interface PrismaModuleAsyncOptions {
@@ -58,8 +59,9 @@ export class PrismaModule {
           },
         },
         PrismaService,
+        TransactionHost,
       ],
-      exports: [PrismaService, PRISMA_CLIENT],
+      exports: [PrismaService, TransactionHost, PRISMA_CLIENT],
     };
   }
 }

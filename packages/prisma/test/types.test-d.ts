@@ -1,5 +1,5 @@
 import { inject } from '@knead-js/core';
-import { PrismaService } from '../src/index.js';
+import { PrismaService, Transactional } from '../src/index.js';
 
 declare module '../src/types.js' {
   interface PrismaClientRegistry {
@@ -24,4 +24,21 @@ export function check(): void {
   // @ts-expect-error event hooks are not available on a tx client
   service.db.$on;
   service.client.$on('query', () => {});
+}
+
+export class TransactionalTypes {
+  @Transactional({ isolationLevel: 'Serializable', propagation: 'requiresNew' })
+  async ok(): Promise<number> {
+    return 1;
+  }
+
+  // @ts-expect-error @Transactional needs a method that returns a Promise
+  @Transactional()
+  sync(): number {
+    return 1;
+  }
+
+  // @ts-expect-error unknown propagation mode
+  @Transactional({ propagation: 'nested' })
+  async badPropagation(): Promise<void> {}
 }

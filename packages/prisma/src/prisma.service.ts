@@ -8,6 +8,7 @@ import {
   type OnModuleInit,
 } from '@knead-js/core';
 import { PRISMA_CLIENT, PRISMA_OPTIONS } from './tokens.js';
+import { TransactionHost } from './transaction-host.js';
 import type { RegisteredClient, TxClient } from './types.js';
 
 export class PrismaService implements OnModuleInit, OnModuleDestroy {
@@ -16,10 +17,11 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   readonly #options = inject(PRISMA_OPTIONS);
   readonly #logger = inject(LOGGER);
   readonly #development = inject(DEVELOPMENT);
+  readonly #host = inject(TransactionHost);
 
-  /** The client to query through. */
+  /** The client to query through: the ambient transaction when one is active, else `client`. */
   get db(): TxClient {
-    return this.client;
+    return this.#host.current ?? this.client;
   }
 
   async onModuleInit(): Promise<void> {
