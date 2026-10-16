@@ -216,6 +216,32 @@ test('redirectHttp without tls is a configuration error', async () => {
   await app.close();
 });
 
+describe('trustProxy hop count on a wildcard address', () => {
+  const warned = (app: { logger: unknown }) =>
+    (app.logger as MemoryLogger).entries.some(
+      (e) => e.level === 'warn' && e.message.includes('trustProxy is a hop count'),
+    );
+
+  test('warns on 0.0.0.0', async () => {
+    @Module({})
+    class M {}
+    const app = await start(M, { hostname: '0.0.0.0', trustProxy: 1 });
+    expect(warned(app)).toBe(true);
+    await app.close();
+  });
+
+  test('does not warn on a specific address or with CIDRs', async () => {
+    @Module({})
+    class M {}
+    const a = await start(M, { trustProxy: 1 });
+    expect(warned(a)).toBe(false);
+    await a.close();
+    const b = await start(M, { hostname: '0.0.0.0', trustProxy: ['10.0.0.0/8'] });
+    expect(warned(b)).toBe(false);
+    await b.close();
+  });
+});
+
 test('port throws before listen', async () => {
   @Module({})
   class M {}

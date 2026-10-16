@@ -110,6 +110,11 @@ function isLoopback(hostname: string): boolean {
   return bytes?.every((b, i) => b === (i === 15 ? 1 : 0)) === true;
 }
 
+/** Whether a listen hostname binds every interface. */
+function isWildcard(hostname: string): boolean {
+  return hostname === '0.0.0.0' || hostname === '::' || hostname === '[::]';
+}
+
 /** A host name or IP literal with an optional port, and nothing else. */
 const CANONICAL_HOST =
   /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*|\[[0-9a-f:.]+\])(?::\d{1,5})?$/i;
@@ -483,6 +488,14 @@ export class HttpApplication {
     this.#redirect = redirect;
     this.#server = server;
     this.logger.info(`Listening on ${server.url}`);
+    const hostname = serveOptions.hostname as string;
+    if (typeof options.trustProxy === 'number' && options.trustProxy > 0 && isWildcard(hostname)) {
+      this.logger.warn(
+        `trustProxy is a hop count (${options.trustProxy}) and the server listens on ${hostname}: ` +
+          'a client that reaches the port directly, bypassing the proxy, can choose its own ' +
+          'ctx.ip. Use the proxy CIDRs as trustProxy, or firewall the port to the proxy.',
+      );
+    }
     if (this.development && !isLoopback(serveOptions.hostname as string)) {
       this.logger.warn(
         `Running in development mode on ${serveOptions.hostname}, which is reachable from other ` +
@@ -498,7 +511,7 @@ export class HttpApplication {
     if (!this.development) return undefined;
     const bound = options.hostname ?? '0.0.0.0';
     const defaults = ['localhost', '127.0.0.1', '[::1]'];
-    if (bound !== '0.0.0.0' && bound !== '::' && bound !== '[::]') defaults.push(bound);
+    if (!isWildcard(bound)) defaults.push(bound);
     return compileAllowedHosts(defaults);
   }
 

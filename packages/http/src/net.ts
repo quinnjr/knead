@@ -99,8 +99,13 @@ export function cidrMatcher(list: readonly string[]): (ip: string) => boolean {
     const [address, bits] = entry.split('/');
     const bytes = parseIp(address ?? '');
     if (!bytes) throw new HttpConfigError(`Invalid trustProxy entry: ${entry}`);
-    const prefix = bits === undefined ? bytes.length * 8 : Number(bits);
-    if (!Number.isInteger(prefix) || prefix < 0 || prefix > bytes.length * 8) {
+    // An IPv4-mapped entry (`::ffff:10.0.0.0/104`) parses to IPv4 bytes; its prefix counts the
+    // 96 bits of the mapped prefix, so it becomes an IPv4 /(prefix - 96).
+    const mapped = bytes.length === 4 && address!.includes(':');
+    const width = mapped ? 128 : bytes.length * 8;
+    const written = bits === undefined ? width : Number(bits);
+    const prefix = mapped ? written - 96 : written;
+    if (!Number.isInteger(written) || written > width || prefix < 0) {
       throw new HttpConfigError(`Invalid trustProxy entry: ${entry}`);
     }
     return { bytes, prefix };

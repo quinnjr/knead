@@ -61,6 +61,22 @@ describe('cidrMatcher', () => {
     expect(trusted('garbage')).toBe(false);
   });
 
+  test('IPv4-mapped CIDR entries match as IPv4 /(prefix - 96)', () => {
+    const trusted = cidrMatcher([
+      '::ffff:10.0.0.0/104',
+      '::ffff:192.168.1.1',
+      '::ffff:0a0b:0000/112',
+    ]);
+    expect(trusted('10.200.0.1')).toBe(true);
+    expect(trusted('::ffff:10.200.0.1')).toBe(true);
+    expect(trusted('11.0.0.1')).toBe(false);
+    expect(trusted('192.168.1.1')).toBe(true);
+    expect(trusted('192.168.1.2')).toBe(false);
+    expect(trusted('10.11.9.9')).toBe(true);
+    expect(() => cidrMatcher(['::ffff:10.0.0.0/95'])).toThrow(HttpConfigError);
+    expect(() => cidrMatcher(['::ffff:10.0.0.0/129'])).toThrow(HttpConfigError);
+  });
+
   test('rejects invalid entries', () => {
     expect(() => cidrMatcher(['10.0.0.0/33'])).toThrow(HttpConfigError);
     expect(() => cidrMatcher(['nope'])).toThrow(HttpConfigError);
