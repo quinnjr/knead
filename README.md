@@ -60,6 +60,8 @@ Work follows git-flow: feature branches from `develop`, squash-merged by pull re
 4. `git flow release finish <version>` (this tags `v<version>`)
 5. `git push origin main develop --follow-tags`. CI publishes to npm from the tag.
 
+CI authenticates to npm with [trusted publishing](https://docs.npmjs.com/trusted-publishers) (OIDC) rather than a stored token. Each `@hpmws/*` package on npmjs.com must trust this repository's `release.yml` workflow. A new package needs one manual publish first (`pnpm publish --access public --otp <code>` from its directory). After that, register the workflow for every public package while logged in to npm with 2FA: `pnpm trust:npm` (add `--dry-run` to preview).
+
 ## License
 
 Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE) at your option.
