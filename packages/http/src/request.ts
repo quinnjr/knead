@@ -35,6 +35,22 @@ function safeReviver(key: string, value: unknown): unknown {
   return value;
 }
 
+/**
+ * Whether `text` (a query string or urlencoded body) has more than `max` non-empty `&`-separated
+ * fields. Stops counting past `max`, so oversized input is rejected before it is parsed.
+ */
+function exceedsFields(text: string, max: number): boolean {
+  let count = 0;
+  let start = 0;
+  while (start <= text.length) {
+    let end = text.indexOf('&', start);
+    if (end === -1) end = text.length;
+    if (end > start && ++count > max) return true;
+    start = end + 1;
+  }
+  return false;
+}
+
 /** Collects a request body's fields; more than `maxParams` is a 413. */
 function collectBody<V>(entries: Iterable<[string, V]>, maxParams: number): Fields<V> {
   try {
@@ -56,12 +72,20 @@ export function requestUrl(req: Request): URL {
 
 /**
  * Query parameters as a null-prototype object (repeated keys become arrays; `__proto__`,
- * `constructor` and `prototype` are dropped). More than `maxParams` parameters is a 400.
+ * `constructor` and `prototype` are dropped). More than `maxParams` parameters is a 400; given
+ * the raw query string, that is detected before it is parsed.
  */
 export function parseQuery(
-  params: URLSearchParams,
+  params: URLSearchParams | string,
   maxParams = DEFAULT_MAX_PARAMS,
 ): Record<string, string | string[]> {
+  if (typeof params === 'string') {
+    const search = params.startsWith('?') ? params.slice(1) : params;
+    if (exceedsFields(search, maxParams)) {
+      throw new BadRequestException(`The query string has more than ${maxParams} parameters.`);
+    }
+    params = new URLSearchParams(search);
+  }
   try {
     return collect(params, maxParams);
   } catch (error) {
@@ -102,7 +126,11 @@ export async function parseBody(req: Request, maxParams = DEFAULT_MAX_PARAMS): P
     }
   }
   if (type === 'application/x-www-form-urlencoded') {
-    return collectBody(new URLSearchParams(await readBody(() => req.text())), maxParams);
+    const text = await readBody(() => req.text());
+    if (exceedsFields(text, maxParams)) {
+      throw new HttpException(413, `The request body has more than ${maxParams} fields.`);
+    }
+    return collectBody(new URLSearchParams(text), maxParams);
   }
   if (type === 'multipart/form-data') {
     let form: Iterable<[string, string | File]>;

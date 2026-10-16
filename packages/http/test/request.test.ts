@@ -35,6 +35,13 @@ describe('parseQuery', () => {
     expect(Object.keys(parseQuery(new URLSearchParams('a=1&b=2'), 2))).toEqual(['a', 'b']);
   });
 
+  test('a raw query string over maxParams is rejected before parsing', () => {
+    const t0 = performance.now();
+    expect(() => parseQuery(`?${'a=1&'.repeat(100_000)}`)).toThrow(BadRequestException);
+    expect(performance.now() - t0).toBeLessThan(50);
+    expect(Object.keys(parseQuery('?a=1&&&b=2', 2))).toEqual(['a', 'b']);
+  });
+
   test('100k repeated keys are rejected in linear time', () => {
     const query = new URLSearchParams('a=1&'.repeat(100_000));
     const t0 = performance.now();

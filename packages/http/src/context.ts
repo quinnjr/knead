@@ -40,7 +40,7 @@ export class RequestContext implements Ctx<any> {
   }
 
   get query(): any {
-    this.#query ??= parseQuery(requestUrl(this.req).searchParams, this.net.maxParams);
+    this.#query ??= parseQuery(requestUrl(this.req).search, this.net.maxParams);
     return this.#query;
   }
   set query(value: any) {
