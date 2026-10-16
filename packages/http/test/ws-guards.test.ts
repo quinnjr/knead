@@ -174,6 +174,36 @@ describe('WebSocket endpoints on the path of a guarded GET route', () => {
     expect(order).toEqual(['module-mw', 'guard:live', 'module-mw', 'guard:live']);
   });
 
+  test("the route's authorize guards run on the upgrade too, after its guards, on the raw ctx", async () => {
+    const order: string[] = [];
+    @Controller('/')
+    class Live {
+      @Get('/live', {
+        guards: [
+          () => {
+            order.push('guard');
+            return true;
+          },
+        ],
+        authorize: [
+          (ctx: Ctx) => {
+            order.push(`authorize:${ctx.upgrade?.path}`);
+            return ctx.req.headers.get('x-role') === 'admin';
+          },
+        ],
+      })
+      page() {
+        return 'page';
+      }
+    }
+    @Module({ controllers: [Live], providers: [Gateway] })
+    class M {}
+    app = await start(M);
+    expect(await upgradeStatus(app)).toContain('403');
+    expect(await upgradeStatus(app, ['X-Role: admin'])).toContain('101');
+    expect(order).toEqual(['guard', 'authorize:/live', 'guard', 'authorize:/live']);
+  });
+
   test('an endpoint with no GET route behaves as before (global guards only, ctx.route null)', async () => {
     @Controller('/', { guards: [AdminGuard] })
     class Other {

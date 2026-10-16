@@ -304,8 +304,9 @@ export function compileApplication(input: CompileInput): CompiledApp {
           // A WebSocket endpoint on the path of a GET route: upgrades run that route's
           // middleware and guards too (secure by default), with ctx.route set to it.
           const endpoint = method === 'GET' ? input.ws.get(path) : undefined;
+          // Upgrades are not validated, so the route's authorize guards see the raw ctx there.
           const ws = endpoint
-            ? upgradeChain(path, endpoint, input.ws, chain, guards, onError)
+            ? upgradeChain(path, endpoint, input.ws, chain, [...guards, ...authorize], onError)
             : undefined;
           let byMethod = routes[path];
           if (!byMethod) {

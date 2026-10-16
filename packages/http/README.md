@@ -21,7 +21,7 @@ const RolesGuard = (ctx: Ctx) => {
 };
 ```
 
-Order: guards run before the route's schemas validate the request, so they see the raw request (`ctx.params`, `ctx.query` and `ctx.json()` unvalidated). Authorization that depends on validated or canonicalized input (a trimmed, lowercased email; a coerced id) belongs in the route's `authorize` guards, which run after validation and see the schema output; anything but `true` is a 403. `authorize` guards do not run on WebSocket upgrades to the route's path (upgrades are not validated); only `guards` do:
+Order: guards run before the route's schemas validate the request, so they see the raw request (`ctx.params`, `ctx.query` and `ctx.json()` unvalidated). Authorization that depends on validated or canonicalized input (a trimmed, lowercased email; a coerced id) belongs in the route's `authorize` guards, which run after validation and see the schema output; anything but `true` is a 403. On a WebSocket upgrade to the route's path, the route's `guards` and then its `authorize` guards run too; upgrades are not validated, so there `authorize` sees the raw request:
 
 ```ts
 @Post('/invites', { body: InviteSchema, authorize: [(ctx) => canInvite(ctx.state.user, ctx.body.email)] })
