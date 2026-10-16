@@ -671,6 +671,30 @@ describe('closeWhere re-application at open (fail closed)', () => {
     }
   });
 
+  test("an older kept predicate expiring never lowers a newer upgrade's checked mark", async () => {
+    const ws = await registry();
+    ws.register('/x', { upgrade: () => ({}) });
+    const first = {};
+    ws.beginUpgrade(first);
+    ws.closeWhere(() => false); // kept for the first upgrade
+    ws.endUpgrade(first);
+    ws.closeWhere(() => false); // nothing pending: #lostSeq moves forward
+    const ctx = {};
+    const data: WsData = { endpoint: '/x', data: { user: 'ada' } };
+    ws.beginUpgrade(ctx);
+    ws.reserve(data, '1.2.3.4', ctx);
+    const socket = { data, close: mock(() => {}) } as unknown as WsSocket & {
+      close: ReturnType<typeof mock>;
+    };
+    setSystemTime(new Date(Date.now() + 31_000));
+    try {
+      await ws.handler().open?.(socket);
+      expect(socket.close).not.toHaveBeenCalled();
+    } finally {
+      setSystemTime();
+    }
+  });
+
   test('20k beginUpgrade and closeWhere calls stay under 100 ms', async () => {
     const ws = await registry();
     const started = performance.now();

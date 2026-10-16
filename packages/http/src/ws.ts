@@ -549,7 +549,7 @@ export class WsRegistry {
     for (const [key, entry] of this.#withData) {
       // Only an upgrade that was accounted for up to now stays accounted for.
       if (entry.checkedThrough < this.#lostPrevious) continue;
-      entry.checkedThrough = revocation.seq;
+      entry.checkedThrough = Math.max(entry.checkedThrough, revocation.seq);
       if (entry.revoked || entry.seq >= revocation.seq) continue;
       // Predicates read the socket's data (ws.data); the socket itself does not exist yet.
       if (this.#matches(revocation, { data: key } as WsSocket)) {
