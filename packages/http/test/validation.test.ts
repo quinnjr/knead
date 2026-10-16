@@ -144,12 +144,15 @@ describe('validateRequest', () => {
       },
     };
     const ctx = makeCtx(jsonPost('/?q=secret-query', '{"password":"hunter2"}'));
+    ctx.params = { id: 'secret-param' };
     const error = (await validateRequest(
       ctx,
-      { body: echoing, query: echoing },
+      { body: echoing, query: echoing, params: echoing },
       { redactIssueMessages: true },
     ).catch((e) => e)) as ValidationException;
+    expect(JSON.stringify(error.issues)).not.toContain('secret-param');
     expect(error.issues).toEqual([
+      { source: 'params', message: 'Invalid value', path: ['password'] },
       { source: 'query', message: 'Invalid value', path: ['password'] },
       { source: 'body', message: 'Invalid value', path: ['password'] },
     ]);

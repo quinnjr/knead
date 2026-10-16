@@ -21,13 +21,13 @@ const RolesGuard = (ctx: Ctx) => {
 };
 ```
 
-Order: guards run before the route's schemas validate the request, so they see the raw request (`ctx.params`, `ctx.query` and `ctx.json()` unvalidated). Authorization that depends on validated or canonicalized input (a trimmed, lowercased email; a coerced id) belongs in the route's `authorize` guards, which run after validation and see the schema output; anything but `true` is a 403:
+Order: guards run before the route's schemas validate the request, so they see the raw request (`ctx.params`, `ctx.query` and `ctx.json()` unvalidated). Authorization that depends on validated or canonicalized input (a trimmed, lowercased email; a coerced id) belongs in the route's `authorize` guards, which run after validation and see the schema output; anything but `true` is a 403. `authorize` guards do not run on WebSocket upgrades to the route's path (upgrades are not validated); only `guards` do:
 
 ```ts
 @Post('/invites', { body: InviteSchema, authorize: [(ctx) => canInvite(ctx.state.user, ctx.body.email)] })
 ```
 
-Route schemas (`params`, `query`, `headers`, `body`; any Standard Schema) replace the matching `ctx` field with the schema output, and once a `body` schema has passed, `ctx.json()` resolves to the validated value too, so unvalidated fields cannot slip in through it. Failures are a 400 listing every issue with its `source` and `path`; issues from the `headers` source always carry the generic message `Invalid header value`, so header values (tokens, cookies) are never echoed back. Many schema libraries quote the offending input in their messages; `listen({ validation: { redactIssueMessages: true } })` replaces body and query issue messages with `Invalid value` too, keeping `source` and `path`.
+Route schemas (`params`, `query`, `headers`, `body`; any Standard Schema) replace the matching `ctx` field with the schema output, and once a `body` schema has passed, `ctx.json()` resolves to the validated value too, so unvalidated fields cannot slip in through it. Failures are a 400 listing every issue with its `source` and `path`; issues from the `headers` source always carry the generic message `Invalid header value`, so header values (tokens, cookies) are never echoed back. Many schema libraries quote the offending input in their messages; `listen({ validation: { redactIssueMessages: true } })` replaces body, query and params issue messages with `Invalid value` too, keeping `source` and `path`.
 
 Responses the framework builds from a handler's return value (JSON, text, `Blob`, bytes, streams, `204`), problem responses and redirects carry `x-content-type-options: nosniff`; a `Response` returned by a handler is sent as is. A `Blob` keeps its own `type`, so when serving user-uploaded files, force a download instead of letting the browser render them in your origin:
 

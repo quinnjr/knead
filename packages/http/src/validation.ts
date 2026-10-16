@@ -26,9 +26,9 @@ function segment(s: PropertyKey | StandardSchemaV1.PathSegment): string {
 /** `listen({ validation })`. */
 export interface ValidationOptions {
   /**
-   * Replace body and query issue messages with the generic `Invalid value` (keeping `source` and
-   * `path`), so a schema that quotes the offending input never echoes it back. Header messages
-   * are always generic. Default false.
+   * Replace body, query and params issue messages with the generic `Invalid value` (keeping
+   * `source` and `path`), so a schema that quotes the offending input never echoes it back.
+   * Header messages are always generic. Default false.
    */
   redactIssueMessages?: boolean;
 }
@@ -50,7 +50,7 @@ export async function validateRequest(
         const message =
           source === 'headers'
             ? 'Invalid header value'
-            : options.redactIssueMessages && (source === 'body' || source === 'query')
+            : options.redactIssueMessages
               ? 'Invalid value'
               : issue.message;
         issues.push({ source, message, path: (issue.path ?? []).map(segment) });
