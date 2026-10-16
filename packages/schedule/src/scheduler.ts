@@ -98,11 +98,11 @@ export class Scheduler {
 
   get(name: string): JobInfo | undefined {
     const job = this.#jobs.get(name);
-    return job && Scheduler.#info(job);
+    return job && this.#info(job);
   }
 
   list(): JobInfo[] {
-    return [...this.#jobs.values()].map((job) => Scheduler.#info(job));
+    return [...this.#jobs.values()].map((job) => this.#info(job));
   }
 
   /** Disarms and forgets the job; runs in progress finish and are awaited at shutdown. */
@@ -121,10 +121,11 @@ export class Scheduler {
     this.#disarm(job);
   }
 
-  /** Re-arms from now: firings missed while paused are not run. */
+  /** Re-arms a paused or stopped job from now (missed firings are not run); otherwise a no-op. */
   resume(name: string): void {
     this.#assertOpen();
     const job = this.#find(name);
+    if (!job.paused && !job.stopped) return;
     job.paused = false;
     job.stopped = false;
     if (this.#started) this.#arm(job, job.schedule.first(this.clock.now()));
@@ -155,7 +156,7 @@ export class Scheduler {
     this.clock.clearTimeout(timer);
     if (late) {
       const names = [...new Set(this.#inflight.values())].map((n) => `"${n}"`).join(', ');
-      console.warn(
+      this.options.logger.warn(
         `[knead:schedule] Shutdown timed out after ${this.options.shutdownTimeout}ms with jobs ` +
           `still running: ${names}.`,
       );
@@ -166,11 +167,9 @@ export class Scheduler {
     this.#disarm(job);
     if (next === null) {
       job.stopped = true;
-      if (job.schedule.kind === 'timeout') {
-        if (this.#jobs.get(job.name) === job) this.#jobs.delete(job.name);
-      } else {
-        console.warn(`[knead:schedule] Job "${job.name}" has no future run and was stopped.`);
-      }
+      this.options.logger.warn(
+        `[knead:schedule] Job "${job.name}" has no future run and was stopped.`,
+      );
       return;
     }
     job.nextAt = next;
@@ -193,9 +192,27 @@ export class Scheduler {
       this.#arm(job, scheduledAt);
       return;
     }
-    void this.#run(job, scheduledAt, 'schedule');
+    job.nextAt = undefined;
+    const run = this.#run(job, scheduledAt, 'schedule');
+    if (job.schedule.kind === 'timeout') {
+      // Stays listed (stopped) while it runs; leaves the registry once the run settles, unless it
+      // was resumed or replaced meanwhile.
+      job.stopped = true;
+      void run.then(() => {
+        if (job.stopped && this.#jobs.get(job.name) === job) this.#jobs.delete(job.name);
+      });
+      return;
+    }
+    // The handler has already started: it may have removed, paused or re-armed this job, or shut
+    // the scheduler down. Only an untouched job is armed again.
+    if (!this.#isLive(job) || job.paused || job.timer !== undefined) return;
     // Arm from the schedule, not from the run's end, so slow runs do not drift it.
     this.#arm(job, job.schedule.following(scheduledAt, now));
+  }
+
+  /** Registered under its name and the scheduler is not shutting down. */
+  #isLive(job: Job): boolean {
+    return !this.#shutdown && this.#jobs.get(job.name) === job;
   }
 
   /** Never rejects: failures go to onError. */
@@ -219,7 +236,8 @@ export class Scheduler {
           // Fail closed: without a lock the firing is skipped, never run twice.
           return this.#report(error, ctx);
         }
-        if (!acquired) return;
+        // Removed, paused or shut down while the lock was pending: the firing is cancelled.
+        if (!acquired || !this.#isLive(job) || job.paused) return;
       }
       try {
         await job.handler(ctx);
@@ -238,7 +256,10 @@ export class Scheduler {
     try {
       await this.options.onError(error, ctx);
     } catch (handlerError) {
-      console.error(`[knead:schedule] onError failed for job "${ctx.name}":`, handlerError);
+      this.options.logger.error(
+        `[knead:schedule] onError failed for job "${ctx.name}"`,
+        handlerError,
+      );
     }
   }
 
@@ -252,11 +273,11 @@ export class Scheduler {
     if (this.#shutdown) throw new ScheduleConfigError('The scheduler has shut down.');
   }
 
-  static #info(job: Job): JobInfo {
+  #info(job: Job): JobInfo {
     return {
       name: job.name,
       kind: job.schedule.kind,
-      state: job.stopped ? 'stopped' : job.paused ? 'paused' : 'scheduled',
+      state: job.stopped || this.#shutdown ? 'stopped' : job.paused ? 'paused' : 'scheduled',
       nextRunAt: job.nextAt === undefined ? undefined : new Date(job.nextAt),
       running: job.running,
     };

@@ -19,6 +19,8 @@ import { cronSchedule, intervalSchedule, timeoutSchedule } from './schedules.js'
  * runtime. Shutdown stops all timers and waits for runs in progress.
  */
 export class SchedulerRegistry implements OnApplicationBootstrap, BeforeApplicationShutdown {
+  /** Module graphs that already have a registry: a second one would run every job twice. */
+  static readonly #claimed = new WeakSet<object>();
   readonly #modules = inject(MODULES);
   readonly #scheduler = new Scheduler(
     resolveScheduleOptions(inject(SCHEDULE_OPTIONS)),
@@ -26,6 +28,12 @@ export class SchedulerRegistry implements OnApplicationBootstrap, BeforeApplicat
   );
 
   onApplicationBootstrap(): void {
+    if (SchedulerRegistry.#claimed.has(this.#modules)) {
+      throw new ScheduleConfigError(
+        'ScheduleModule.forRoot() is imported more than once; import it once, in the root module.',
+      );
+    }
+    SchedulerRegistry.#claimed.add(this.#modules);
     for (const job of discoverJobs(this.#modules)) this.#scheduler.add(job);
     this.#scheduler.start();
   }

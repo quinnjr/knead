@@ -86,4 +86,42 @@ describe('decorators', () => {
       void Jobs;
     }).toThrow(/instance methods/);
   });
+
+  test('a subclass that re-decorates an inherited method replaces its jobs', () => {
+    class Base {
+      @Interval(1_000) tick() {}
+      @Interval(1_000) other() {}
+    }
+    class Sub extends Base {
+      @Interval(2_000) override tick() {}
+    }
+    const specs = getMetadata(Sub, JOBS)!;
+    expect(specs.map((s) => s.method)).toEqual(['other', 'tick']);
+    expect(getMetadata(Base, JOBS)!.map((s) => s.method)).toEqual(['tick', 'other']);
+  });
+
+  test('several decorators on one method all register', () => {
+    class Jobs {
+      @Interval(1_000, { name: 'fast' })
+      @Cron('0 * * * *', { name: 'hourly' })
+      both() {}
+    }
+    expect(
+      getMetadata(Jobs, JOBS)!
+        .map((s) => s.name)
+        .sort(),
+    ).toEqual(['fast', 'hourly']);
+  });
+
+  test('a private method with the same name as an inherited one does not replace it', () => {
+    class Base {
+      // biome-ignore lint/correctness/noUnusedPrivateClassMembers: called through the job's handler
+      @Interval(1_000, { name: 'base' }) #tick() {}
+    }
+    class Sub extends Base {
+      // biome-ignore lint/correctness/noUnusedPrivateClassMembers: called through the job's handler
+      @Interval(1_000, { name: 'sub' }) #tick() {}
+    }
+    expect(getMetadata(Sub, JOBS)!.map((s) => s.name)).toEqual(['base', 'sub']);
+  });
 });

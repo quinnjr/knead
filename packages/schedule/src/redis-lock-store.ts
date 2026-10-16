@@ -6,7 +6,7 @@ import { assertLockTtl, type ScheduleLockStore } from './lock-store.js';
 export interface RedisLockStoreOptions {
   /**
    * An existing client (not closed by close()). A supplied client bypasses the plaintext
-   * (`requireTls`) check: configure TLS on it yourself.
+   * (`requireTls`) check: configure TLS on it yourself. Pass `client` or `url`, not both.
    */
   client?: RedisClient;
   /** Connection URL when no client is given (default: Bun's REDIS_URL / localhost). */
@@ -22,7 +22,9 @@ export interface RedisLockStoreOptions {
   logger?: { warn(message: string): void };
   /**
    * Milliseconds an acquire() waits for Redis before failing; the firing is then skipped and the
-   * error reported to onError. Default 250.
+   * error reported to onError. Default 250. If Redis applied the SET anyway, every instance skips
+   * that firing. A supplied client should set `enableOfflineQueue: false` so a timed-out command is
+   * not sent later.
    */
   commandTimeout?: number;
 }
@@ -45,6 +47,9 @@ export class RedisLockStore implements ScheduleLockStore {
       );
     }
     this.#commandTimeout = timeout;
+    if (options.client !== undefined && options.url !== undefined) {
+      throw new ScheduleConfigError('Pass either client or url to RedisLockStore, not both.');
+    }
     const remote = plaintextRedisHost(
       options.client === undefined ? (options.url ?? defaultRedisUrl()) : undefined,
     );
@@ -56,16 +61,27 @@ export class RedisLockStore implements ScheduleLockStore {
       (options.logger ?? console).warn(`[knead:schedule] ${problem}`);
     }
     this.#owned = options.client === undefined;
-    this.#client = options.client ?? new RedisClient(options.url);
+    // Without the offline queue a timed-out SET is never sent later, after the firing was
+    // reported as skipped.
+    this.#client = options.client ?? new RedisClient(options.url, { enableOfflineQueue: false });
     this.#prefix = options.prefix ?? 'knead:schedule:';
   }
 
   async acquire(key: string, ttlMs: number): Promise<boolean> {
     assertLockTtl(ttlMs);
+    const args = [`${this.#prefix}${key}`, '1', 'NX', 'PX', String(ttlMs)];
+    let expired = false;
     const reply = await withTimeout(
-      this.#client.send('SET', [`${this.#prefix}${key}`, '1', 'NX', 'PX', String(ttlMs)]),
+      (async () => {
+        if (!this.#client.connected) await this.#client.connect();
+        // A SET sent after the timeout could claim a firing that was already reported skipped.
+        if (expired) return null;
+        return this.#client.send('SET', args);
+      })(),
       this.#commandTimeout,
-    );
+    ).finally(() => {
+      expired = true;
+    });
     return reply === 'OK';
   }
 

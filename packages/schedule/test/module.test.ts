@@ -241,9 +241,54 @@ describe('ScheduleModule', () => {
     }).compile();
     try {
       expect(await ran.promise).toBe('Jobs.once');
+      await Bun.sleep(0);
       expect(mod.get(SchedulerRegistry).list()).toEqual([]);
     } finally {
       await mod.close();
     }
+  });
+
+  test('jobs on transient providers are refused', async () => {
+    class Transient {
+      @Interval(100) a() {}
+    }
+    @Module({ providers: [{ provide: Transient, useClass: Transient, scope: 'transient' }] })
+    class Feature {}
+    await expect(boot([Feature])).rejects.toThrow(/transient/);
+    ctx = undefined;
+  });
+
+  test('anonymous classes get a readable default name', async () => {
+    const Anon = (() =>
+      class {
+        @Interval(100) tick() {}
+      })();
+    Object.defineProperty(Anon, 'name', { value: '' });
+    const { registry } = await boot([], [Anon]);
+    expect(registry.list().map((j) => j.name)).toEqual(['<anonymous>.tick']);
+  });
+
+  test('importing ScheduleModule.forRoot() twice fails at bootstrap', async () => {
+    class Jobs {
+      @Interval(100) a() {}
+    }
+    @Module({ imports: [ScheduleModule.forRoot()] })
+    class Other {}
+    await expect(boot([Other], [Jobs])).rejects.toThrow(/more than once/);
+    ctx = undefined;
+  });
+
+  test('a configured logger receives the default failure report', async () => {
+    const errors: unknown[][] = [];
+    class Jobs {
+      @Interval(100) bad() {
+        throw new Error('boom');
+      }
+    }
+    await boot([], [Jobs], { logger: { warn: () => {}, error: (...args) => errors.push(args) } });
+    await clock.advance(100);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]![0]).toContain('"Jobs.bad"');
+    expect(() => ScheduleModule.forRoot({ logger: {} as never })).toThrow(/logger/);
   });
 });

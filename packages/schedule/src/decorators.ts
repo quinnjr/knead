@@ -1,4 +1,4 @@
-import { appendMetadata, MetadataKey } from '@knead-js/core';
+import { MetadataKey, readMetadata, setMetadata } from '@knead-js/core';
 import { type Duration, parseDuration } from './duration.js';
 import { ScheduleConfigError } from './errors.js';
 import { cronSchedule, intervalSchedule, type Schedule, timeoutSchedule } from './schedules.js';
@@ -36,12 +36,19 @@ export type LockSetting = false | { ttl: number | undefined };
 export interface JobSpec {
   name: string | undefined;
   method: string | symbol;
+  /** Private methods are never overridden, so a subclass's same-named one does not replace it. */
+  private: boolean;
+  /** The decorator metadata object of the class that declared this job. */
+  owner: object;
   schedule: Schedule;
   lock: LockSetting;
   handler(instance: object): JobHandler;
 }
 
-/** @internal Jobs declared on a class (inherited by subclasses). */
+/**
+ * @internal Jobs declared on a class, including inherited ones. Re-decorating an overridden
+ * method replaces the parent's jobs for it.
+ */
 export const JOBS = new MetadataKey<JobSpec[]>('knead:schedule:jobs');
 
 type JobMethodDecorator = <This, Value extends (this: This, ctx: JobContext) => unknown>(
@@ -80,16 +87,28 @@ function jobDecorator(
       );
     }
     const get = context.access.get as unknown as (instance: object) => JobHandler;
-    appendMetadata(context.metadata, JOBS, {
-      name,
-      method: context.name,
-      schedule,
-      lock,
-      handler: (instance) => {
-        const method = get(instance);
-        return (ctx) => method.call(instance, ctx);
+    const meta = context.metadata;
+    // An override that is decorated again replaces the inherited jobs of that method. A new array
+    // is always written, so the parent's list is never mutated.
+    const kept = (readMetadata(meta, JOBS) ?? []).filter(
+      (spec) =>
+        spec.owner === meta || spec.private || context.private || spec.method !== context.name,
+    );
+    setMetadata(meta, JOBS, [
+      ...kept,
+      {
+        name,
+        method: context.name,
+        private: context.private,
+        owner: meta,
+        schedule,
+        lock,
+        handler: (instance) => {
+          const method = get(instance);
+          return (ctx) => method.call(instance, ctx);
+        },
       },
-    });
+    ]);
   };
 }
 

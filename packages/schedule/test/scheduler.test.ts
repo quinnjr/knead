@@ -526,7 +526,7 @@ describe('shutdown', () => {
     });
     scheduler.start();
     await clock.advance(100);
-    expect(scheduler.get('slow')).toBeUndefined();
+    expect(scheduler.remove('slow')).toBe(true);
     let done = false;
     const closing = scheduler.shutdown().then(() => {
       done = true;
@@ -550,5 +550,210 @@ describe('shutdown', () => {
     expect(() => scheduler.pause('a')).toThrow(ScheduleConfigError);
     expect(() => scheduler.resume('a')).toThrow(ScheduleConfigError);
     await expect(scheduler.trigger('a')).rejects.toThrow(ScheduleConfigError);
+  });
+});
+
+describe('review regressions', () => {
+  test('a handler that removes its own job is not re-armed', async () => {
+    const { scheduler, clock } = setup();
+    let runs = 0;
+    scheduler.add({
+      name: 'self',
+      schedule: intervalSchedule(100),
+      handler: () => {
+        runs++;
+        scheduler.remove('self');
+      },
+      lock: noLock,
+    });
+    scheduler.start();
+    await clock.advance(500);
+    expect(runs).toBe(1);
+    expect(clock.pending).toBe(0);
+  });
+
+  test('a handler that pauses its own job is not re-armed', async () => {
+    const { scheduler, clock } = setup();
+    let runs = 0;
+    scheduler.add({
+      name: 'self',
+      schedule: intervalSchedule(100),
+      handler: () => {
+        runs++;
+        scheduler.pause('self');
+      },
+      lock: noLock,
+    });
+    scheduler.start();
+    await clock.advance(500);
+    expect(runs).toBe(1);
+    expect(scheduler.get('self')).toMatchObject({ state: 'paused', nextRunAt: undefined });
+    expect(clock.pending).toBe(0);
+  });
+
+  test('a handler that shuts the scheduler down leaves no timer behind', async () => {
+    const { scheduler, clock } = setup();
+    let runs = 0;
+    scheduler.add({
+      name: 'self',
+      schedule: intervalSchedule(100),
+      handler: () => {
+        runs++;
+        void scheduler.shutdown();
+      },
+      lock: noLock,
+    });
+    scheduler.start();
+    await clock.advance(500);
+    expect(runs).toBe(1);
+    expect(clock.pending).toBe(0);
+  });
+
+  test('a handler that replaces its own job leaves only the new one armed', async () => {
+    const { scheduler, clock } = setup();
+    const runs: string[] = [];
+    scheduler.add({
+      name: 'job',
+      schedule: intervalSchedule(100),
+      handler: () => {
+        runs.push('old');
+        scheduler.remove('job');
+        scheduler.add({
+          name: 'job',
+          schedule: intervalSchedule(1_000),
+          handler: () => {
+            runs.push('new');
+          },
+          lock: noLock,
+        });
+      },
+      lock: noLock,
+    });
+    scheduler.start();
+    await clock.advance(1_100);
+    expect(runs).toEqual(['old', 'new']);
+    expect(clock.pending).toBe(1);
+  });
+
+  test('a handler that resumes its own job keeps a single timer', async () => {
+    const { scheduler, clock } = setup();
+    let runs = 0;
+    scheduler.add({
+      name: 'self',
+      schedule: intervalSchedule(100),
+      handler: () => {
+        runs++;
+        if (runs === 1) {
+          scheduler.pause('self');
+          scheduler.resume('self');
+        }
+      },
+      lock: noLock,
+    });
+    scheduler.start();
+    await clock.advance(300);
+    expect(runs).toBe(3);
+    expect(clock.pending).toBe(1);
+  });
+
+  test('resume is a no-op for a job that is not paused or stopped', async () => {
+    const { scheduler, clock } = setup();
+    const { runs, handler } = recorder();
+    scheduler.add({ name: 't', schedule: timeoutSchedule(1_000), handler, lock: noLock });
+    scheduler.start();
+    await clock.advance(900);
+    scheduler.resume('t');
+    await clock.advance(100);
+    expect(runs).toHaveLength(1);
+  });
+
+  test('a timeout is visible as stopped while its run is in progress, then removed', async () => {
+    const { scheduler, clock } = setup();
+    const gate = deferred();
+    scheduler.add({
+      name: 't',
+      schedule: timeoutSchedule(100),
+      handler: () => gate.promise,
+      lock: noLock,
+    });
+    scheduler.start();
+    await clock.advance(100);
+    expect(scheduler.get('t')).toMatchObject({
+      state: 'stopped',
+      running: 1,
+      nextRunAt: undefined,
+    });
+    gate.resolve();
+    await clock.advance(0);
+    expect(scheduler.get('t')).toBeUndefined();
+  });
+
+  test('resuming a timeout while it runs re-arms it and keeps it registered', async () => {
+    const { scheduler, clock } = setup();
+    const gate = deferred();
+    let runs = 0;
+    scheduler.add({
+      name: 't',
+      schedule: timeoutSchedule(100),
+      handler: () => {
+        runs++;
+        return runs === 1 ? gate.promise : undefined;
+      },
+      lock: noLock,
+    });
+    scheduler.start();
+    await clock.advance(100);
+    scheduler.resume('t');
+    gate.resolve();
+    await clock.advance(100);
+    expect(runs).toBe(2);
+  });
+
+  test('every job reports stopped after shutdown', async () => {
+    const { scheduler } = setup();
+    const { handler } = recorder();
+    scheduler.add({ name: 'a', schedule: intervalSchedule(100), handler, lock: noLock });
+    scheduler.start();
+    await scheduler.shutdown();
+    expect(scheduler.get('a')).toMatchObject({ state: 'stopped', nextRunAt: undefined });
+  });
+
+  for (const [label, act] of [
+    ['shutdown', (s: Scheduler) => void s.shutdown()],
+    ['remove', (s: Scheduler) => void s.remove('j')],
+    ['pause', (s: Scheduler) => s.pause('j')],
+  ] as const) {
+    test(`${label} while the lock is being acquired cancels the run`, async () => {
+      const acquired = deferred<boolean>();
+      const lockStore: ScheduleLockStore = { acquire: () => acquired.promise };
+      const { scheduler, clock } = setup({ lockStore });
+      const { runs, handler } = recorder();
+      scheduler.add({
+        name: 'j',
+        schedule: cronSchedule('* * * * *', 'UTC'),
+        handler,
+        lock: { ttl: undefined },
+      });
+      scheduler.start();
+      await clock.advance(60_000);
+      act(scheduler);
+      acquired.resolve(true);
+      await clock.advance(0);
+      expect(runs).toHaveLength(0);
+    });
+  }
+
+  test('warnings go to the configured logger', async () => {
+    const warnings: string[] = [];
+    const { scheduler } = setup({ logger: { warn: (m) => warnings.push(m), error: () => {} } });
+    scheduler.add({
+      name: 'past',
+      schedule: cronSchedule('0 0 0 1 1 * 2020', 'UTC'),
+      handler: () => {},
+      lock: noLock,
+    });
+    scheduler.start();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('"past"');
   });
 });
