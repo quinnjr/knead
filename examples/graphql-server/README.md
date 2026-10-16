@@ -47,7 +47,7 @@ curl -G localhost:3000/graphql -H 'x-graphql-request: 1' --data-urlencode 'query
 
 ## Mutations
 
-Every mutation needs a token (`UNAUTHENTICATED` otherwise). `deletePost` is admin-only (`FORBIDDEN` for `grace-token`).
+Drafts are visible only to their author and to admins: everyone else sees published posts only, and someone else's draft is reported as not found (`post`, `node`, `Author.posts`, `addComment`, `publishPost` and the `commentAdded` subscription alike). Every mutation needs a token (`UNAUTHENTICATED` otherwise). `deletePost` is admin-only (`FORBIDDEN` for `grace-token`).
 
 ```bash
 curl localhost:3000/graphql -H 'content-type: application/json' -H 'authorization: Bearer grace-token' \

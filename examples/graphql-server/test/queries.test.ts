@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { AuthorsById, PostsByAuthor } from '../src/blog/blog.loaders.js';
-import { frontend, type Started, start } from './helpers.js';
+import { ada, frontend, grace, type Started, start } from './helpers.js';
 
 let s: Started;
 beforeAll(async () => {
@@ -42,7 +42,9 @@ describe('queries', () => {
   });
 
   test('drafts are listed by the DRAFT enum value; nullable fields are null', async () => {
-    const res = await s.app.graphql('{ posts(status: DRAFT) { id status publishedAt } }');
+    const res = await s.app.graphql('{ posts(status: DRAFT) { id status publishedAt } }', {
+      headers: ada,
+    });
     expect(res.data).toEqual({ posts: [{ id: 'p4', status: 'DRAFT', publishedAt: null }] });
     const bad = await s.app.graphql('{ posts(status: ARCHIVED) { id } }');
     expect(bad.errors?.[0]?.message).toContain('ARCHIVED');
@@ -52,6 +54,7 @@ describe('queries', () => {
     const query = 'query($since: DateTime) { posts(since: $since) { id createdAt } }';
     const res = await s.app.graphql<{ posts: { id: string; createdAt: string }[] }>(query, {
       variables: { since: '2026-03-01T00:00:00+00:00' },
+      headers: ada,
     });
     expect(res.data?.posts).toEqual([
       { id: 'p3', createdAt: '2026-03-15T15:30:00.000Z' },
@@ -59,6 +62,7 @@ describe('queries', () => {
     ]);
     const literal = await s.app.graphql<{ posts: { id: string }[] }>(
       '{ posts(since: "2026-04-01T08:00:00.000Z") { id } }',
+      { headers: ada },
     );
     expect(literal.data?.posts).toEqual([{ id: 'p4' }]);
     const invalid = await s.app.graphql(query, { variables: { since: 'last tuesday' } });
@@ -81,6 +85,7 @@ describe('queries', () => {
     const before = loader.batchCalls;
     const res = await s.app.graphql<{ posts: { author: { name: string } }[] }>(
       '{ posts { title author { name } } }',
+      { headers: ada },
     );
     expect(res.errors).toBeUndefined();
     expect(res.data?.posts.map((p) => p.author.name)).toEqual([
@@ -98,6 +103,7 @@ describe('queries', () => {
     const before = loader.batchCalls;
     const res = await s.app.graphql<{ authors: { name: string; posts: { id: string }[] }[] }>(
       '{ authors { name posts { id } } }',
+      { headers: ada },
     );
     expect(res.data?.authors).toEqual([
       { name: 'Ada Lovelace', posts: [{ id: 'p1' }, { id: 'p4' }] },
@@ -145,5 +151,34 @@ describe('queries', () => {
     expect(res.headers.get('ratelimit-limit')).toBe('100');
     expect(res.headers.get('x-frame-options')).toBe('DENY');
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+  });
+});
+
+describe('draft visibility', () => {
+  test('anonymous readers and other authors see only published posts', async () => {
+    for (const headers of [undefined, grace]) {
+      const list = await s.app.graphql<{ posts: { id: string }[] }>('{ posts { id } }', {
+        headers,
+      });
+      expect(list.data?.posts.map((p) => p.id)).toEqual(['p1', 'p2', 'p3']);
+      const drafts = await s.app.graphql('{ posts(status: DRAFT) { id } }', { headers });
+      expect(drafts.data).toEqual({ posts: [] });
+      const one = await s.app.graphql('{ post(id: "p4") { id } }', { headers });
+      expect(one.data).toEqual({ post: null });
+      const node = await s.app.graphql('{ node(id: "p4") { id } }', { headers });
+      expect(node.data).toEqual({ node: null });
+      const authored = await s.app.graphql<{ author: { posts: { id: string }[] } }>(
+        '{ author(id: "a1") { posts { id } } }',
+        { headers },
+      );
+      expect(authored.data?.author.posts).toEqual([{ id: 'p1' }]);
+    }
+  });
+
+  test('the author and admins see drafts', async () => {
+    const one = await s.app.graphql('{ post(id: "p4") { id status } }', { headers: ada });
+    expect(one.data).toEqual({ post: { id: 'p4', status: 'DRAFT' } });
+    const node = await s.app.graphql('{ node(id: "p4") { id } }', { headers: ada });
+    expect(node.data).toEqual({ node: { id: 'p4' } });
   });
 });

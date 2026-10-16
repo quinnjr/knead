@@ -19,6 +19,6 @@ export class SearchResolver {
   /** An interface: any Author, Post or Comment by id. */
   @Query(() => Node, { nullable: true, args: { id: ID } })
   node(ctx: ResolverCtx<{ id: string }>): Node | undefined {
-    return this.#blog.node(ctx.args.id);
+    return this.#blog.node(ctx.args.id, ctx.currentUser);
   }
 }

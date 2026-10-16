@@ -18,8 +18,10 @@ export class AuthorResolver {
     return this.#blog.author(ctx.args.id);
   }
 
+  /** Batched per operation; drafts are filtered per viewer after the shared lookup. */
   @ResolveField(() => [Post])
-  posts(ctx: ResolverCtx<{}, Author>): Promise<Post[]> {
-    return ctx.loader(PostsByAuthor).load(ctx.parent.id);
+  async posts(ctx: ResolverCtx<{}, Author>): Promise<Post[]> {
+    const posts = await ctx.loader(PostsByAuthor).load(ctx.parent.id);
+    return posts.filter((post) => this.#blog.visible(post, ctx.currentUser));
   }
 }

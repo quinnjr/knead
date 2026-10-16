@@ -15,7 +15,7 @@ export class HealthController {
   health() {
     return {
       status: 'ok',
-      posts: this.#blog.posts({ first: Number.MAX_SAFE_INTEGER, offset: 0 }).length,
+      posts: this.#blog.posts({ first: Number.MAX_SAFE_INTEGER, offset: 0 }, undefined).length,
       pubsub: this.#pubsub instanceof RedisPubSub ? 'redis' : 'memory',
     };
   }

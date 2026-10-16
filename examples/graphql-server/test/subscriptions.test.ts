@@ -68,6 +68,32 @@ describe('subscriptions', () => {
     await sub.close();
   });
 
+  test("commentAdded on someone else's draft is refused at subscribe time", async () => {
+    const sub = await s.app.graphqlSubscribe('subscription { commentAdded(postId: "p4") { id } }', {
+      connectionParams: { token: 'grace-token' },
+    });
+    const first = await sub.next();
+    expect(
+      (first.value as { errors: { extensions?: { code?: string } }[] }).errors[0]?.extensions?.code,
+    ).toBe('NOT_FOUND');
+    await sub.close();
+  });
+
+  test('the author can follow comments on their own draft', async () => {
+    type Event = { commentAdded: { postId: string } };
+    const sub = await s.app.graphqlSubscribe<Event>(
+      'subscription { commentAdded(postId: "p4") { postId } }',
+      { connectionParams: { token: 'ada-token' } },
+    );
+    const event = await nextEvent(sub, () =>
+      s.app.graphql('mutation { addComment(postId: "p4", body: "note to self") { id } }', {
+        headers: ada,
+      }),
+    );
+    expect(event.data?.commentAdded).toEqual({ postId: 'p4' });
+    await sub.close();
+  });
+
   test('queries over the socket are refused', async () => {
     const sub = await s.app.graphqlSubscribe('{ posts { id } }', {
       connectionParams: { token: 'grace-token' },

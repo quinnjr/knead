@@ -14,12 +14,12 @@ export class PostResolver {
 
   @Query(() => [Post], { args: PostsArgs, validate: { first: PageSize, offset: Offset } })
   posts(ctx: ResolverCtx<PostsArgs>): Post[] {
-    return this.#blog.posts(ctx.args);
+    return this.#blog.posts(ctx.args, ctx.currentUser);
   }
 
   @Query(() => Post, { nullable: true, args: { id: ID } })
   post(ctx: ResolverCtx<{ id: string }>): Post | undefined {
-    return this.#blog.post(ctx.args.id);
+    return this.#blog.post(ctx.args.id, ctx.currentUser);
   }
 
   /** Batched: every Post.author in one operation tick becomes one AuthorsById.batch() call. */

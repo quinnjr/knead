@@ -67,7 +67,12 @@ describe('mutations', () => {
   });
 
   test('publishPost: only the author or an admin', async () => {
-    const forbidden = await s.app.graphql('mutation { publishPost(id: "p4") { status } }', {
+    // Someone else's draft is invisible to Grace, so it is reported as not found.
+    const hidden = await s.app.graphql('mutation { publishPost(id: "p4") { status } }', {
+      headers: grace,
+    });
+    expect(hidden.errors?.[0]?.extensions?.code).toBe('NOT_FOUND');
+    const forbidden = await s.app.graphql('mutation { publishPost(id: "p1") { status } }', {
       headers: grace,
     });
     expect(forbidden.errors?.[0]?.extensions?.code).toBe('FORBIDDEN');
@@ -79,6 +84,22 @@ describe('mutations', () => {
       headers: ada,
     });
     expect(missing.errors?.[0]?.extensions?.code).toBe('NOT_FOUND');
+  });
+
+  test('addComment on a draft the user cannot see is NOT_FOUND', async () => {
+    const draft = await s.app.graphql<{ createPost: { id: string } }>(
+      'mutation { createPost(input: { title: "Secret plans", body: "tbd" }) { id } }',
+      { headers: ada },
+    );
+    const id = draft.data?.createPost.id;
+    const res = await s.app.graphql(
+      'mutation($id: ID!) { addComment(postId: $id, body: "hi") { id } }',
+      {
+        variables: { id },
+        headers: grace,
+      },
+    );
+    expect(res.errors?.[0]?.extensions?.code).toBe('NOT_FOUND');
   });
 
   test('addComment sanitizes the HTML body', async () => {

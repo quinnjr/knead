@@ -19,7 +19,7 @@ describe('REST next to GraphQL', () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       status: 'ok',
-      posts: 4,
+      posts: 3, // published posts only: the count does not reveal drafts
       pubsub: process.env.REDIS_URL ? 'redis' : 'memory',
     });
     expect(res.headers.get('access-control-allow-origin')).toBe(frontend);

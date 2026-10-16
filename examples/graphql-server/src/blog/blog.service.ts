@@ -1,5 +1,6 @@
 import type { OnModuleInit } from '@hpmws/core';
 import { NotFoundException } from '@hpmws/http';
+import type { CurrentUser } from '../auth/auth.js';
 import { Author, Comment, type Node, Post, PostStatus } from './blog.types.js';
 
 export interface PostQuery {
@@ -61,15 +62,33 @@ export class BlogService implements OnModuleInit {
     this.addComment('p2', 'a1', '<p>Wonderful <em>find</em>.</p>');
   }
 
-  posts(query: PostQuery): Post[] {
+  /** Drafts are visible only to their author and to admins; published posts to everyone. */
+  visible(post: Post, viewer: CurrentUser | undefined): boolean {
+    return (
+      post.status === PostStatus.PUBLISHED ||
+      viewer?.id === post.authorId ||
+      viewer?.roles.includes('admin') === true
+    );
+  }
+
+  posts(query: PostQuery, viewer: CurrentUser | undefined): Post[] {
     return [...this.#posts.values()]
+      .filter((p) => this.visible(p, viewer))
       .filter((p) => !query.status || p.status === query.status)
       .filter((p) => !query.since || p.createdAt >= query.since)
       .slice(query.offset, query.offset + query.first);
   }
 
-  post(id: string): Post | undefined {
-    return this.#posts.get(id);
+  post(id: string, viewer: CurrentUser | undefined): Post | undefined {
+    const post = this.#posts.get(id);
+    return post && this.visible(post, viewer) ? post : undefined;
+  }
+
+  /** A post the viewer may see; a draft they may not see is reported as not found. */
+  requireVisible(id: string, viewer: CurrentUser | undefined): Post {
+    const post = this.post(id, viewer);
+    if (!post) throw new NotFoundException(`Post ${id} not found`);
+    return post;
   }
 
   authors(): Author[] {
@@ -97,8 +116,13 @@ export class BlogService implements OnModuleInit {
     return [...this.#comments.values()].filter((c) => c.postId === postId);
   }
 
-  node(id: string): Node | undefined {
-    return this.#authors.get(id) ?? this.#posts.get(id) ?? this.#comments.get(id);
+  node(id: string, viewer: CurrentUser | undefined): Node | undefined {
+    const author = this.#authors.get(id);
+    if (author) return author;
+    const post = this.#posts.get(id);
+    if (post) return this.visible(post, viewer) ? post : undefined;
+    const comment = this.#comments.get(id);
+    return comment && this.post(comment.postId, viewer) ? comment : undefined;
   }
 
   search(term: string): (Post | Author)[] {

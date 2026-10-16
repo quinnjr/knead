@@ -45,11 +45,11 @@ export class BlogMutations {
   @Mutation(() => Post, { args: { id: ID } })
   publishPost(ctx: ResolverCtx<{ id: string }>): Post {
     const user = ctx.currentUser!;
-    const existing = this.#blog.post(ctx.args.id);
-    if (existing && existing.authorId !== user.id && !user.roles.includes('admin')) {
+    const existing = this.#blog.requireVisible(ctx.args.id, user);
+    if (existing.authorId !== user.id && !user.roles.includes('admin')) {
       throw new ForbiddenException('Only the author or an admin can publish this post.');
     }
-    const wasPublished = existing?.publishedAt != null;
+    const wasPublished = existing.publishedAt != null;
     const post = this.#blog.publish(ctx.args.id);
     if (!wasPublished) void this.#pubsub.publish(POST_PUBLISHED, post);
     return post;
@@ -60,7 +60,9 @@ export class BlogMutations {
     validate: { body: Html(2000) },
   })
   addComment(ctx: ResolverCtx<{ postId: string; body: string }>): Comment {
-    const comment = this.#blog.addComment(ctx.args.postId, ctx.currentUser!.id, ctx.args.body);
+    const user = ctx.currentUser!;
+    this.#blog.requireVisible(ctx.args.postId, user);
+    const comment = this.#blog.addComment(ctx.args.postId, user.id, ctx.args.body);
     void this.#pubsub.publish(commentTopic(comment.postId), comment);
     return comment;
   }
