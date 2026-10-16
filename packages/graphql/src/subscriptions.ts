@@ -126,11 +126,13 @@ function track<T>(
 }
 
 /**
- * A per-operation view of the shared upgrade Ctx: its own empty `state`; everything else
- * (headers, ip, query, ...) is read from the upgrade Ctx, with methods bound to it.
+ * A per-operation view of the shared upgrade Ctx: its own `state`, a shallow copy of the
+ * upgrade's (so it sees what middleware and guards set at upgrade time, but its writes stay its
+ * own); everything else (headers, ip, query, ...) is read from the upgrade Ctx, with methods
+ * bound to it.
  */
 export function operationView(http: Ctx): Ctx {
-  const state: Ctx['state'] = {};
+  const state: Ctx['state'] = { ...http.state };
   return new Proxy(http, {
     get(target, prop) {
       if (prop === 'state') return state;

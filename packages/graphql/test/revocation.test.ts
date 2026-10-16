@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Module } from '@hpmws/core';
+import { APP_GUARD, type Ctx } from '@hpmws/http';
 import {
   GraphQLSubscriptions,
   Int,
@@ -173,6 +174,7 @@ describe('subscription revocation', () => {
 
 describe('per-operation http state over WebSocket', () => {
   const marks: unknown[] = [];
+  const fromUpgrade: unknown[] = [];
   @Resolver()
   class Marking {
     @Query(() => Int) q() {
@@ -183,6 +185,7 @@ describe('per-operation http state over WebSocket', () => {
       guards: [
         (ctx: ResolverCtx) => {
           marks.push(ctx.http.state.mark);
+          fromUpgrade.push(ctx.http.state.upgradeUser);
           ctx.http.state.mark = 'set by an earlier operation';
           return true;
         },
@@ -193,9 +196,30 @@ describe('per-operation http state over WebSocket', () => {
   @Module({ providers: [Marking] })
   class MarkingModule {}
 
-  test('ctx.http.state written in one operation is not visible in the next', async () => {
+  test("each operation sees the upgrade state, never a sibling operation's writes", async () => {
     marks.length = 0;
-    s = await startGraphQL([MarkingModule]);
+    fromUpgrade.length = 0;
+    const contexts: unknown[] = [];
+    s = await startGraphQL(
+      [MarkingModule],
+      {
+        // The README pattern: the context factory reads what a guard set on the upgrade.
+        context: (http) => {
+          contexts.push(http.state.upgradeUser);
+          return { connectedAs: http.state.upgradeUser as string | undefined };
+        },
+      },
+      [
+        {
+          provide: APP_GUARD,
+          multi: true,
+          useValue: (ctx: Ctx) => {
+            if (ctx.upgrade) ctx.state.upgradeUser = 'ada';
+            return true;
+          },
+        },
+      ],
+    );
     const socket = open(s);
     await socket.acked;
     for (const id of ['a', 'b']) {
@@ -205,7 +229,12 @@ describe('per-operation http state over WebSocket', () => {
     }
     await until(() => marks.length === 2);
     expect(marks).toEqual([undefined, undefined]);
-    socket.ws.close();
+    expect(fromUpgrade).toEqual(['ada', 'ada']);
+    // The connection identity (closeWhere) and every operation saw the same upgrade state.
+    expect(contexts.every((c) => c === 'ada')).toBe(true);
+    const service = s.mod.get(GraphQLSubscriptions);
+    expect(service.closeWhere((c) => c.context.connectedAs === 'ada')).toBe(1);
+    await socket.closed;
   });
 });
 
