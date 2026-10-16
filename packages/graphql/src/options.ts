@@ -78,7 +78,10 @@ export interface GraphQLModuleOptions {
   playground?: boolean | PlaygroundOptions;
   /** Default: NODE_ENV === 'development', or true when `playground: true`. */
   introspection?: boolean;
-  /** Deepest selection allowed (fragments expanded). Default 10; `Infinity` or `false` disables. */
+  /**
+   * Deepest selection allowed (fragments expanded). Selections inside `__schema` and `__type`
+   * do not count, so introspection works. Default 10; `Infinity` or `false` disables.
+   */
   maxDepth?: number | false;
   /** Highest query cost allowed (see `complexity`). Default 1000; `Infinity` or `false` disables. */
   maxComplexity?: number | false;
@@ -142,6 +145,8 @@ export interface ResolvedGraphQLOptions {
   readonly defaultDeny: boolean;
   readonly maxQueryLength: number | false;
   readonly maxAliases: number | false;
+  /** Checked by hpmws (introspection fields excluded); Leaven's own maxDepth stays unset. */
+  readonly maxDepth: number | false;
   readonly executor: Pick<
     ExecutorConfig,
     'maxDepth' | 'maxComplexity' | 'cache' | 'compilerOptions' | 'parseOptions' | 'hooks'
@@ -248,8 +253,11 @@ export function resolveOptions(
     defaultDeny: options.defaultDeny ?? false,
     maxQueryLength: limit('maxQueryLength', options.maxQueryLength, GRAPHQL_LIMITS.maxQueryLength),
     maxAliases: limit('maxAliases', options.maxAliases, GRAPHQL_LIMITS.maxAliases),
+    maxDepth,
     executor: {
-      maxDepth: maxDepth === false ? undefined : maxDepth,
+      // Leaven's depth check counts introspection selections, so getIntrospectionQuery() (depth
+      // 15) would fail; runtime.ts runs its own check instead.
+      maxDepth: undefined,
       maxComplexity: maxComplexity === false ? undefined : maxComplexity,
       cache: options.cache,
       compilerOptions: options.compilerOptions,

@@ -32,15 +32,18 @@ import {
   LeavenExecutor,
   type SubscriptionIterator,
 } from '@leaven-graphql/core';
-import { type ErrorCode, LeavenError } from '@leaven-graphql/errors';
+import { DepthLimitError, type ErrorCode, LeavenError } from '@leaven-graphql/errors';
 import type { StandardSchemaV1 } from '@standard-schema/spec';
 import {
   type DocumentNode,
+  type FragmentDefinitionNode,
   type GraphQLFieldResolver,
   type GraphQLSchema,
   getOperationAST,
   isInterfaceType,
   isObjectType,
+  Kind,
+  type SelectionSetNode,
   visit,
 } from 'graphql';
 import {
@@ -246,6 +249,7 @@ export function buildHooks(
   user: ExecutionHooks | undefined,
   masking: ErrorMaskingOptions,
   maxAliases: number | false = false,
+  maxDepth: number | false = false,
 ): ExecutionHooks {
   const safe = <A extends unknown[]>(
     name: string,
@@ -266,6 +270,7 @@ export function buildHooks(
     onParse: safe('onParse', user?.onParse),
     // Runs for cached documents too, so the alias limit holds whatever the cache contains.
     onParsed: async (document: DocumentNode) => {
+      if (maxDepth !== false) checkDepth(document, maxDepth);
       if (maxAliases !== false) checkAliases(document, maxAliases);
       await userParsed?.(document);
     },
@@ -297,6 +302,77 @@ export function buildHooks(
       await userExecute?.(context, document);
     },
   };
+}
+
+/** Introspection root fields whose selections the depth limit ignores. */
+const INTROSPECTION_FIELDS = new Set(['__schema', '__type', '__typename']);
+const MAX_DEPTH_VISITS = 100_000;
+
+/**
+ * The deepest field selection of any operation, with fragments expanded (each fragment's depth
+ * is computed once; a fragment cycle counts as no extra depth, and validation rejects it).
+ * Fields named `__schema`, `__type` or `__typename` count as one level, without their
+ * selections.
+ */
+export function queryDepth(document: DocumentNode): number {
+  const fragments = new Map<string, FragmentDefinitionNode>();
+  for (const definition of document.definitions) {
+    if (definition.kind === Kind.FRAGMENT_DEFINITION)
+      fragments.set(definition.name.value, definition);
+  }
+  const memo = new Map<string, number>();
+  const expanding = new Set<string>();
+  let visits = 0;
+  const selections = (set: SelectionSetNode | undefined, depth: number): number => {
+    let deepest = 0;
+    for (const selection of set?.selections ?? []) {
+      if (++visits > MAX_DEPTH_VISITS) {
+        throw new LeavenError(
+          `Query analysis exceeded the maximum of ${MAX_DEPTH_VISITS} nodes`,
+          'COMPLEXITY_LIMIT' as ErrorCode,
+          { statusCode: 400 },
+        );
+      }
+      if (selection.kind === Kind.FIELD) {
+        const nested =
+          selection.selectionSet && !INTROSPECTION_FIELDS.has(selection.name.value)
+            ? selections(selection.selectionSet, depth + 1)
+            : 0;
+        deepest = Math.max(deepest, depth, nested);
+      } else if (selection.kind === Kind.INLINE_FRAGMENT) {
+        deepest = Math.max(deepest, selections(selection.selectionSet, depth));
+      } else {
+        const relative = fragmentDepth(selection.name.value);
+        if (relative > 0) deepest = Math.max(deepest, depth - 1 + relative);
+      }
+    }
+    return deepest;
+  };
+  // A fragment's depth relative to where it is spread (1 = its own fields).
+  const fragmentDepth = (name: string): number => {
+    const known = memo.get(name);
+    if (known !== undefined) return known;
+    const fragment = fragments.get(name);
+    if (!fragment || expanding.has(name)) return 0;
+    expanding.add(name);
+    const depth = selections(fragment.selectionSet, 1);
+    expanding.delete(name);
+    memo.set(name, depth);
+    return depth;
+  };
+  let deepest = 0;
+  for (const definition of document.definitions) {
+    if (definition.kind === Kind.OPERATION_DEFINITION) {
+      deepest = Math.max(deepest, selections(definition.selectionSet, 1));
+    }
+  }
+  return deepest;
+}
+
+/** Rejects a document deeper than `max` with Leaven's DEPTH_LIMIT error. */
+export function checkDepth(document: DocumentNode, max: number): void {
+  const depth = queryDepth(document);
+  if (depth > max) throw new DepthLimitError(depth, max);
 }
 
 /** Rejects a document with more than `max` field aliases (counted once per alias in the text). */
@@ -446,7 +522,7 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
         compilerOptions: calculator
           ? { complexityCalculator: calculator, ...compilerOptions }
           : compilerOptions,
-        hooks: buildHooks(hooks, this.masking, this.options.maxAliases),
+        hooks: buildHooks(hooks, this.masking, this.options.maxAliases, this.options.maxDepth),
         formatExecutionError: createErrorFormatter(this.masking),
       },
       this.masking,

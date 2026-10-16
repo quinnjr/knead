@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Module } from '@hpmws/core';
 import { HttpConfigError } from '@hpmws/http';
+import { getIntrospectionQuery } from 'graphql';
 import {
   Field,
   Int,
@@ -54,7 +55,9 @@ const aliases = (count: number) =>
 describe('safe default limits', () => {
   test('resolveOptions applies the defaults', () => {
     const o = resolveOptions({}, '/graphql');
-    expect(o.executor.maxDepth).toBe(10);
+    // hpmws checks depth itself (introspection excluded), so Leaven gets no maxDepth.
+    expect(o.maxDepth).toBe(10);
+    expect(o.executor.maxDepth).toBeUndefined();
     expect(o.executor.maxComplexity).toBe(1000);
     expect(o.executor.parseOptions?.maxTokens).toBe(10_000);
     expect(o.maxQueryLength).toBe(100 * 1024);
@@ -72,7 +75,7 @@ describe('safe default limits', () => {
       },
       '/graphql',
     );
-    expect(o.executor.maxDepth).toBeUndefined();
+    expect(o.maxDepth).toBe(false);
     expect(o.executor.maxComplexity).toBeUndefined();
     expect(o.executor.parseOptions).toEqual({ graphqlOptions: { noLocation: true } });
     expect(o.maxQueryLength).toBe(false);
@@ -91,6 +94,36 @@ describe('safe default limits', () => {
     expect((await s.app.graphql(deep(10))).errors).toBeUndefined();
     const res = await s.app.graphql(deep(11));
     expect(res.data).toBeUndefined();
+    expect(res.errors?.[0]?.extensions?.code).toBe('DEPTH_LIMIT');
+  });
+
+  test('the full introspection query passes with the default maxDepth', async () => {
+    s = await startGraphQL([M], { introspection: true });
+    const res = await s.app.graphql(getIntrospectionQuery());
+    expect(res.errors).toBeUndefined();
+    expect(res.data?.__schema).toBeDefined();
+  });
+
+  test('the depth error keeps its code and message shape', async () => {
+    s = await startGraphQL([M]);
+    const res = await s.app.graphql(deep(12));
+    expect(res.errors?.[0]).toMatchObject({
+      message: 'Query depth of 12 exceeds maximum allowed depth of 10',
+      extensions: { code: 'DEPTH_LIMIT' },
+    });
+  });
+
+  test('a depth bomb inside a fragment is rejected', async () => {
+    s = await startGraphQL([M]);
+    const res = await s.app.graphql(
+      `{ tree { ...F } } fragment F on Tree { ${'child { '.repeat(10)}n${' }'.repeat(10)} }`,
+    );
+    expect(res.errors?.[0]?.extensions?.code).toBe('DEPTH_LIMIT');
+  });
+
+  test('ordinary fields deeper than maxDepth next to __type are rejected', async () => {
+    s = await startGraphQL([M], { introspection: true });
+    const res = await s.app.graphql(`{ __type(name: "Tree") { name } ${deep(11).slice(1, -1)} }`);
     expect(res.errors?.[0]?.extensions?.code).toBe('DEPTH_LIMIT');
   });
 
