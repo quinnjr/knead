@@ -198,7 +198,7 @@ describe('release.yml publish allowlist', () => {
       .filter(Boolean);
     const names = publishablePackages(join(import.meta.dir, '..')).map((p) => p.name);
     expect(allowed).toEqual(names);
-    expect(allowed).toHaveLength(12);
+    expect(allowed).toHaveLength(13);
   });
 });
 

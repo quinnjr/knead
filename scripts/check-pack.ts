@@ -194,7 +194,8 @@ import { AbilityGuard, Can, CaslModule, definePermissions } from '@knead-js/casl
 import { inject, Module } from '@knead-js/core';
 import { CorsModule } from '@knead-js/cors';
 import { Field, GraphQLModule, ID, ObjectType, Query, Resolver, type ResolverCtx } from '@knead-js/graphql';
-import { Controller, type Ctx, Get, KneadFactory, MemoryLogger, UseGuards } from '@knead-js/http';
+import { Controller, type Ctx, Get, KneadFactory, UseGuards } from '@knead-js/http';
+import { JsonLogger, LoggingModule } from '@knead-js/logging';
 import { PrismaModule } from '@knead-js/prisma';
 import { toHttpException } from '@knead-js/prisma/http';
 import { RateLimitModule } from '@knead-js/rate-limit';
@@ -267,8 +268,11 @@ class GreetingResolver {
   }
 }
 
+const logLines: string[] = [];
+
 @Module({
   imports: [
+    LoggingModule.forRoot({ write: (line) => logLines.push(line) }),
     GraphQLModule.forRoot(),
     CorsModule.forRoot({ origin: 'https://app.example' }),
     RateLimitModule.forRoot({ limit: 10, window: '1m' }),
@@ -295,7 +299,7 @@ const policy: SanitizePolicy = { allowedTags: ['b'], allowedAttributes: {} };
 const builder: TestingModuleBuilder | undefined = undefined;
 void builder;
 
-const app = await KneadFactory.create(AppModule, { logger: new MemoryLogger() });
+const app = await KneadFactory.create(AppModule);
 await app.listen({ port: 0, hostname: '127.0.0.1' });
 try {
   const res = await fetch(new URL('/greet/ada', app.url), {
@@ -326,6 +330,8 @@ try {
     app.get(SchedulerRegistry).get('Ticker.tick')?.state === 'scheduled',
     toHttpException(new Error('not prisma')) === undefined,
     toHttpException({ name: 'PrismaClientValidationError' })?.status === 400,
+    app.logger instanceof JsonLogger,
+    logLines.some((line) => (JSON.parse(line) as { msg: string }).msg.startsWith('Listening')),
   ];
   if (checks.includes(false)) throw new Error(\`checks failed: \${JSON.stringify(checks)}\`);
 } finally {

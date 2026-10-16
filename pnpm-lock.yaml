@@ -370,6 +370,18 @@ importers:
         specifier: workspace:^
         version: link:../core
 
+  packages/logging:
+    devDependencies:
+      '@knead-js/core':
+        specifier: workspace:^
+        version: link:../core
+      '@knead-js/http':
+        specifier: workspace:^
+        version: link:../http
+      '@knead-js/testing':
+        specifier: workspace:^
+        version: link:../testing
+
   packages/prisma:
     devDependencies:
       '@knead-js/core':
