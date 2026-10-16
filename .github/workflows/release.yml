@@ -133,10 +133,13 @@ jobs:
             elif ! grep -q E404 "$errlog"; then
               cat "$errlog"; echo "::error::could not query npm for $name@$version"; exit 1
             fi
+            # Prereleases use their identifier (1.0.0-rc.1 -> rc). npm rejects a dist-tag that
+            # looks like a version, so numeric identifiers (1.0.0-0, 1.0.0-1) fall back to next.
             case "$version" in
               *-*) pre="${version#*-}"; dist_tag="${pre%%.*}" ;;
               *) dist_tag=latest ;;
             esac
+            if [[ "$dist_tag" == [0-9]* ]]; then dist_tag=next; fi
             echo "publish $name@$version (dist-tag $dist_tag)"
             if ! npm publish "./$tgz" --access public --tag "$dist_tag" --ignore-scripts 2>"$errlog"; then
               cat "$errlog"
