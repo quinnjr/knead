@@ -23,9 +23,13 @@ export {
 } from './options.js';
 export {
   PLAYGROUND_ASSETS,
+  PLAYGROUND_REFERENCE,
+  PLAYGROUND_SCRIPT_HASHES,
   PlaygroundAssetError,
   PlaygroundGate,
+  PlaygroundScriptError,
   playgroundPage,
+  playgroundScriptHashes,
 } from './playground.js';
 export { deepFreeze, eventIterator, PUBSUB } from './pubsub.js';
 export { RedisPubSub, type RedisPubSubKey, type RedisPubSubOptions } from './redis-pubsub.js';
