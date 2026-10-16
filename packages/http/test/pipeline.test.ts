@@ -5,11 +5,17 @@ import { Catch } from '../src/decorators.js';
 import {
   ForbiddenException,
   HttpException,
+  InternalServerErrorException,
   NotFoundException,
   UnauthorizedException,
 } from '../src/exceptions.js';
 import { MemoryLogger } from '../src/logger.js';
-import { composeMiddleware, createErrorHandler, runGuards } from '../src/pipeline.js';
+import {
+  composeMiddleware,
+  createErrorHandler,
+  defaultErrorResponse,
+  runGuards,
+} from '../src/pipeline.js';
 import { resolveFilter, resolveGuard, resolveMiddleware } from '../src/resolve.js';
 import type { ExceptionFilter, Middleware } from '../src/types.js';
 import { makeCtx } from './helpers.js';
@@ -220,6 +226,60 @@ describe('createErrorHandler', () => {
     const cut = `${'x'.repeat(490)} redis://admin:${'p'.repeat(2000)}@cache`;
     await createErrorHandler([], logger, false)(new Error(cut), makeCtx('/p'));
     expect(logger.entries.at(-1)!.message).not.toContain('redis://');
+  });
+});
+
+describe('declining filters', () => {
+  const declines: ExceptionFilter = { catch: () => undefined };
+  const answers418: ExceptionFilter = { catch: () => new Response('teapot', { status: 418 }) };
+
+  test('a filter returning undefined passes to the next filter', async () => {
+    const mem = new MemoryLogger();
+    const res = await createErrorHandler(
+      [declines, answers418],
+      mem,
+      false,
+    )(new Error('x'), makeCtx('/'));
+    expect(res.status).toBe(418);
+    expect(mem.entries.filter((e) => e.level === 'error')).toEqual([]);
+  });
+
+  test('all filters declining falls back to the default mapping', async () => {
+    const mem = new MemoryLogger();
+    const res = await createErrorHandler(
+      [declines],
+      mem,
+      false,
+    )(new NotFoundException(), makeCtx('/missing'));
+    expect(res.status).toBe(404);
+    expect(((await res.json()) as { status: number }).status).toBe(404);
+    expect(mem.entries.some((e) => e.message.includes('did not return a Response'))).toBe(false);
+  });
+
+  test('a filter returning a non-Response non-undefined value still logs and stops', async () => {
+    const mem = new MemoryLogger();
+    const bad = { catch: () => ({}) } as unknown as ExceptionFilter;
+    const res = await createErrorHandler(
+      [bad, answers418],
+      mem,
+      false,
+    )(new Error('x'), makeCtx('/'));
+    expect(res.status).toBe(500);
+    const errors = mem.entries.filter((e) => e.message.includes('did not return a Response'));
+    expect(errors).toHaveLength(1);
+  });
+
+  test('defaultErrorResponse is exported and masks 5xx outside development', async () => {
+    const mem = new MemoryLogger();
+    const res = defaultErrorResponse(
+      new InternalServerErrorException('secret'),
+      { req: new Request('http://localhost/x') },
+      mem,
+      false,
+    );
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.detail).toBeUndefined();
+    expect(typeof body.correlationId).toBe('string');
   });
 });
 
