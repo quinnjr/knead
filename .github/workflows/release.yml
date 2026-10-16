@@ -19,6 +19,7 @@ jobs:
   # OIDC access. Its only output is the tarballs and SBOMs it uploads.
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -79,6 +80,7 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       id-token: write
