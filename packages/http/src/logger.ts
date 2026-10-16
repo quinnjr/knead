@@ -15,20 +15,21 @@ export const LOGGER = new InjectionToken<Logger>('LOGGER');
  * scans are capped, so the work is linear in the input length.
  */
 const URL_CREDENTIALS = /(?<![a-z0-9+.-])([a-z][a-z0-9+.-]{0,31}:\/\/)([^\s"'<>]{1,1024})/gi;
-/** A token starting `host[:port]/`: an `@` after it is in the path, not in the userinfo. */
+/** An http(s) URL starting `host[:port]/`: an `@` after it is in the path, not the userinfo. */
 const HOST_THEN_PATH = /^[^:/@]+(?::\d*)?\//;
+const WEB_SCHEME = /^https?:\/\/$/i;
 
 /**
  * Replaces URL credentials with `***`: `redis://user:pass@host` becomes `redis://***@host`. The
  * userinfo runs to the LAST `@` within the first 1024 characters of the URL, since passwords
- * often contain unencoded `@` or `/`, unless the URL starts with `host[:port]/` (then the `@` is
- * in its path). Passwords with spaces or quotes cannot appear unencoded in a valid
+ * often contain unencoded `@` or `/`. Only http(s) URLs starting `host[:port]/` are exempt (an
+ * `@` there is in the path). Passwords with spaces or quotes cannot appear unencoded in a valid
  * URL and are not recognized; neither is userinfo longer than 1024 characters.
  */
 export function redactCredentials(text: string): string {
   return text.replace(URL_CREDENTIALS, (match, scheme: string, rest: string) => {
     const at = rest.lastIndexOf('@');
-    if (at < 0 || HOST_THEN_PATH.test(rest)) return match;
+    if (at < 0 || (WEB_SCHEME.test(scheme) && HOST_THEN_PATH.test(rest))) return match;
     return `${scheme}***${rest.slice(at)}`;
   });
 }

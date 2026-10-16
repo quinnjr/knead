@@ -98,6 +98,10 @@ describe('redactCredentials', () => {
     ['postgres://app:secret@db/app?sslmode=require', 'postgres://***@db/app?sslmode=require'],
     ['see https://example.com/path?q=1 now', 'see https://example.com/path?q=1 now'],
     ['a redis://x:y@h1 and redis://p:q@h2', 'a redis://***@h1 and redis://***@h2'],
+    ['redis://admin:2024/pw@host', 'redis://***@host'],
+    ['postgres://u:12/x@h/db', 'postgres://***@h/db'],
+    ['https://example.com:8443/users/@alice', 'https://example.com:8443/users/@alice'],
+    ['http://example.com/a@b', 'http://example.com/a@b'],
   ])('%s', (input, expected) => {
     expect(redactCredentials(input)).toBe(expected);
   });
