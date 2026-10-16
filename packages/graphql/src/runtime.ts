@@ -598,7 +598,10 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
       },
       this.masking,
     );
-    (this.pubsub as { useLogger?: (logger: unknown) => void }).useLogger?.(this.logger);
+    (this.pubsub as { useLogger?: (logger: unknown, development?: boolean) => void }).useLogger?.(
+      this.logger,
+      this.development,
+    );
     if (this.options.playground) {
       this.#playground = new PlaygroundGate(this.logger);
       if (!this.development) {

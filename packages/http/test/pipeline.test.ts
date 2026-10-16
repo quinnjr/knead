@@ -166,14 +166,21 @@ describe('createErrorHandler', () => {
     const prod = await createErrorHandler([], logger, false)(new Error('secret'), makeCtx('/p'));
     expect(prod.status).toBe(500);
     expect(prod.headers.get('content-type')).toBe('application/problem+json; charset=utf-8');
-    const body = await prod.json();
-    expect(body).toEqual({
+    const body = (await prod.json()) as { correlationId: string };
+    expect(body as unknown).toEqual({
       type: 'about:blank',
       title: 'Internal Server Error',
       status: 500,
       instance: '/p',
+      correlationId: expect.any(String),
     });
-    expect(logger.entries.at(-1)!.level).toBe('error');
+    // Production logs only name, message and the correlation id: no stack, cause or properties.
+    const entry = logger.entries.at(-1)!;
+    expect(entry.level).toBe('error');
+    expect(entry.message).toBe(
+      `Unhandled error on GET /p (correlation id ${body.correlationId}): Error: secret`,
+    );
+    expect(entry.meta).toEqual([]);
     const dev = (await (
       await createErrorHandler([], logger, true)(new Error('secret'), makeCtx('/p'))
     ).json()) as {
@@ -182,6 +189,37 @@ describe('createErrorHandler', () => {
     };
     expect(dev.detail).toBe('secret');
     expect(typeof dev.stack).toBe('string');
+  });
+
+  test('development detail, stack and the logged error are redacted', async () => {
+    logger.clear();
+    const error = Object.assign(new Error('connect redis://app:pw@cache failed'), {
+      config: { headers: { authorization: 'Bearer t' } },
+    });
+    const dev = (await (
+      await createErrorHandler([], logger, true)(error, makeCtx('/p'))
+    ).json()) as { detail: string; stack: string };
+    expect(dev.detail).toBe('connect redis://***@cache failed');
+    expect(dev.stack).not.toContain('app:pw');
+    const logged = logger.entries.at(-1)!.meta[0] as string;
+    expect(logged).toContain('redis://***@cache');
+    expect(logged).not.toContain('app:pw');
+    expect(logged).not.toContain('Bearer t');
+  });
+
+  test('a production summary is redacted before it is truncated', async () => {
+    logger.clear();
+    // The cut at 500 characters falls inside the userinfo.
+    const message = `${'x'.repeat(480)} redis://admin:${'p'.repeat(100)}@cache`;
+    await createErrorHandler([], logger, false)(new Error(message), makeCtx('/p'));
+    const text = logger.entries.at(-1)!.message;
+    expect(text).not.toContain('admin');
+    expect(text).not.toContain('ppp');
+    // A trailing scheme fragment without its '@' is dropped too.
+    logger.clear();
+    const cut = `${'x'.repeat(490)} redis://admin:${'p'.repeat(2000)}@cache`;
+    await createErrorHandler([], logger, false)(new Error(cut), makeCtx('/p'));
+    expect(logger.entries.at(-1)!.message).not.toContain('redis://');
   });
 });
 

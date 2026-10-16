@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { ConsoleLogger, HttpConfigError, type Logger } from '@hpmws/http';
+import { ConsoleLogger, HttpConfigError, type Logger, logError } from '@hpmws/http';
 import type { PubSubEngine } from '@leaven-graphql/ws';
 import { RedisClient } from 'bun';
 
@@ -85,6 +85,7 @@ export class RedisPubSub implements PubSubEngine {
   readonly #subscribed = new WeakSet<Set<Listener>>();
   #logger: Logger;
   #explicitLogger: boolean;
+  #development = process.env.NODE_ENV === 'development';
   #subscriber: Promise<RedisClient> | undefined;
   #closed = false;
   readonly #signingKey: Uint8Array | undefined;
@@ -127,9 +128,18 @@ export class RedisPubSub implements PubSubEngine {
     }
   }
 
-  /** @internal GraphQLModule passes the application LOGGER unless one was configured. */
-  useLogger(logger: Logger): void {
+  /**
+   * @internal GraphQLModule passes the application LOGGER (unless one was configured) and its
+   * development flag.
+   */
+  useLogger(logger: Logger, development?: boolean): void {
     if (!this.#explicitLogger) this.#logger = logger;
+    if (development !== undefined) this.#development = development;
+  }
+
+  /** Logs through logError(): a summary outside development, the redacted error in it. */
+  #logError(message: string, error: unknown, level: 'error' | 'warn' = 'error'): void {
+    logError({ logger: this.#logger, development: this.#development }, message, error, level);
   }
 
   subscribe(
@@ -163,7 +173,7 @@ export class RedisPubSub implements PubSubEngine {
     try {
       await this.publishOrThrow(topic, payload);
     } catch (error) {
-      this.#logger.error(`RedisPubSub failed to publish to ${topic}`, error);
+      this.#logError(`RedisPubSub failed to publish to ${JSON.stringify(topic)}`, error);
     }
   }
 
@@ -236,7 +246,11 @@ export class RedisPubSub implements PubSubEngine {
       await (await subscriber).unsubscribe(this.#prefix + topic);
     } catch (error) {
       if (!this.#closed)
-        this.#logger.warn(`RedisPubSub failed to unsubscribe from ${topic}`, error);
+        this.#logError(
+          `RedisPubSub failed to unsubscribe from ${JSON.stringify(topic)}`,
+          error,
+          'warn',
+        );
     }
   }
 
@@ -262,7 +276,7 @@ export class RedisPubSub implements PubSubEngine {
           json = this.#verified(topic, message);
           if (json === undefined) {
             this.#logger.warn(
-              `RedisPubSub dropped a message on ${topic} without a valid signature`,
+              `RedisPubSub dropped a message on ${JSON.stringify(topic)} without a valid signature`,
             );
             return;
           }
@@ -271,21 +285,21 @@ export class RedisPubSub implements PubSubEngine {
         try {
           payload = JSON.parse(json);
         } catch {
-          this.#logger.warn(`RedisPubSub dropped a non-JSON message on ${topic}`);
+          this.#logger.warn(`RedisPubSub dropped a non-JSON message on ${JSON.stringify(topic)}`);
           return;
         }
         for (const listener of this.#topics.get(topic) ?? []) {
           try {
             listener.callback(payload);
           } catch (error) {
-            this.#logger.error(`RedisPubSub listener for ${topic} threw`, error);
+            this.#logError(`RedisPubSub listener for ${JSON.stringify(topic)} threw`, error);
           }
         }
       });
       this.#subscribed.add(listeners);
     } catch (error) {
       if (this.#closed) return;
-      this.#logger.error(`RedisPubSub failed to subscribe to ${topic}`, error);
+      this.#logError(`RedisPubSub failed to subscribe to ${JSON.stringify(topic)}`, error);
       if (this.#topics.get(topic) === listeners) this.#topics.delete(topic);
       const failure = error instanceof Error ? error : new Error(String(error));
       for (const listener of listeners) listener.onError?.(failure);

@@ -478,3 +478,28 @@ describe('closeWhere', () => {
     ).toBe(true);
   });
 });
+
+describe('WebSocket handler errors are logged as summaries in production', () => {
+  test('a throwing message handler logs Name: message, redacted, without the error object', async () => {
+    app = await startWith({
+      '/boom': {
+        endpoint: {
+          message() {
+            throw Object.assign(new Error('dial redis://u:pw@h\nFAKE'), { secret: 's' });
+          },
+        },
+      },
+    });
+    const socket = await connect(app, '/boom');
+    socket.send('x');
+    const logger = app.logger as MemoryLogger;
+    for (let i = 0; i < 100 && !logger.entries.some((e) => e.level === 'error'); i++) {
+      await Bun.sleep(5);
+    }
+    socket.close();
+    const entry = logger.entries.find((e) => e.level === 'error')!;
+    expect(entry.message).toContain('WebSocket message handler for /boom threw');
+    expect(entry.message).toContain('Error: dial redis://***@h\\nFAKE');
+    expect(entry.meta).toEqual([]);
+  });
+});

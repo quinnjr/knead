@@ -8,6 +8,13 @@ export {
 } from './application.js';
 export type { BunHandler, RouteTableEntry } from './compiler.js';
 export * from './decorators.js';
+export {
+  ErrorLog,
+  type ErrorLogOptions,
+  LOGGED_MESSAGE_LENGTH,
+  logError,
+  summarizeError,
+} from './error-log.js';
 export * from './exceptions.js';
 export * from './logger.js';
 export * from './metadata.js';

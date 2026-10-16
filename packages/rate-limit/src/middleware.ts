@@ -2,8 +2,10 @@ import { InjectionToken, inject, type OnModuleDestroy } from '@hpmws/core';
 import {
   type Ctx,
   ForbiddenException,
+  HTTP_DEVELOPMENT,
   isIpv6Prefix,
   LOGGER,
+  logError,
   type Middleware,
   type Next,
   ServiceUnavailableException,
@@ -72,6 +74,7 @@ export class RateLimitMiddleware implements Middleware, OnModuleDestroy {
   readonly #options = inject(RATE_LIMIT_OPTIONS);
   readonly #store = inject(RATE_LIMIT_STORE);
   readonly #logger = inject(LOGGER);
+  readonly #development = inject(HTTP_DEVELOPMENT, { optional: true }) ?? false;
   readonly #windowMs = parseDuration(this.#options.window);
   readonly #ipv6Subnet = this.#options.ipv6Subnet ?? 64;
   readonly #defaultKey: KeyFn = (ctx) =>
@@ -109,7 +112,12 @@ export class RateLimitMiddleware implements Middleware, OnModuleDestroy {
         algorithm: this.#options.algorithm ?? 'sliding-window',
       });
     } catch (error) {
-      this.#logger.warn('Rate limit store failed', error);
+      logError(
+        { logger: this.#logger, development: this.#development },
+        'Rate limit store failed',
+        error,
+        'warn',
+      );
       if (this.#options.onStoreError === 'deny')
         throw new ServiceUnavailableException('Rate limiting is unavailable');
       return next();

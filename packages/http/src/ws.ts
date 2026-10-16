@@ -1,14 +1,16 @@
 import { inject } from '@hpmws/core';
 import type { ServerWebSocket, WebSocketHandler } from 'bun';
+import { logError } from './error-log.js';
 import {
   ForbiddenException,
   HttpConfigError,
   ServiceUnavailableException,
   TooManyRequestsException,
 } from './exceptions.js';
-import { LOGGER } from './logger.js';
+import { LOGGER, logValue } from './logger.js';
 import { isIpv6Prefix, maskIp } from './net.js';
 import { joinPaths } from './path.js';
+import { HTTP_DEVELOPMENT } from './tokens.js';
 import type { Ctx } from './types.js';
 
 export interface WsData {
@@ -182,7 +184,10 @@ export class WsRegistry {
   readonly #reserved = new WeakMap<object, string | undefined>();
   readonly #perIp = new Map<string, number>();
   #reservedTotal = 0;
-  readonly #logger = inject(LOGGER);
+  readonly #log = {
+    logger: inject(LOGGER),
+    development: inject(HTTP_DEVELOPMENT, { optional: true }) ?? false,
+  };
   #server: ResolvedServerOptions = resolveServerOptions({});
   #sealed = false;
 
@@ -330,7 +335,11 @@ export class WsRegistry {
         matches = predicate(ws);
       } catch (error) {
         // One bad socket (or a predicate bug) must not stop the revocation of the others.
-        this.#logger.error(`WsRegistry.closeWhere predicate threw for ${ws.data.endpoint}`, error);
+        logError(
+          this.#log,
+          `WsRegistry.closeWhere predicate threw for ${logValue(ws.data.endpoint)}`,
+          error,
+        );
         continue;
       }
       if (!matches) continue;
@@ -394,7 +403,11 @@ export class WsRegistry {
     try {
       await fn.call(endpoint, ws, ...args);
     } catch (error) {
-      this.#logger.error(`WebSocket ${event} handler for ${ws.data.endpoint} threw`, error);
+      logError(
+        this.#log,
+        `WebSocket ${event} handler for ${logValue(ws.data.endpoint)} threw`,
+        error,
+      );
     }
   }
 }

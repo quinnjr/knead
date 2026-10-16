@@ -1,5 +1,5 @@
 import { InjectionToken } from '@hpmws/core';
-import type { Logger } from '@hpmws/http';
+import { type Logger, redactCredentials, redactValue, summarizeError } from '@hpmws/http';
 import type { PubSubEngine } from '@leaven-graphql/ws';
 
 /** The PubSubEngine used by @Subscription resolvers: `inject(PUBSUB).publish(topic, payload)`. */
@@ -103,22 +103,32 @@ export function eventIterator<T>(
 
 /**
  * Adapts an hpmws `Logger` to the logger Leaven's WebSocket transport and in-memory `PubSub`
- * accept, so their diagnostics go through `LOGGER` (and its credential redaction) instead of
- * `console`.
+ * accept, so their diagnostics go through `LOGGER` instead of `console`. Arguments are redacted
+ * whatever LOGGER is configured; outside development an Error argument is reduced to
+ * `Name: message` (summarizeError), without its stack, cause or properties.
  */
-export function leavenLogger(logger: Logger): {
+export function leavenLogger(
+  logger: Logger,
+  development = false,
+): {
   error(...args: unknown[]): void;
   warn(...args: unknown[]): void;
 } {
-  const split = (args: unknown[]): [string, unknown[]] =>
-    typeof args[0] === 'string' ? [args[0], args.slice(1)] : ['Leaven', args];
+  const prepare = (args: unknown[]): [string, unknown[]] => {
+    const [message, meta] =
+      typeof args[0] === 'string' ? [args[0], args.slice(1)] : ['Leaven', args];
+    const safe = meta.map((value) =>
+      !development && value instanceof Error ? summarizeError(value) : redactValue(value),
+    );
+    return [redactCredentials(message), safe];
+  };
   return {
     error: (...args) => {
-      const [message, meta] = split(args);
+      const [message, meta] = prepare(args);
       logger.error(message, ...meta);
     },
     warn: (...args) => {
-      const [message, meta] = split(args);
+      const [message, meta] = prepare(args);
       logger.warn(message, ...meta);
     },
   };

@@ -12,6 +12,7 @@ import {
   misdirectedResponse,
   type RouteTableEntry,
 } from './compiler.js';
+import { ErrorLog, logError } from './error-log.js';
 import { HttpConfigError } from './exceptions.js';
 import { ConsoleLogger, LOGGER, type Logger } from './logger.js';
 import {
@@ -96,8 +97,9 @@ export class HpmwsFactory {
         { provide: LOGGER, useValue: options.logger ?? new ConsoleLogger() },
         { provide: HTTP_DEVELOPMENT, useValue: development },
         WsRegistry,
+        ErrorLog,
       ],
-      exports: [LOGGER, HTTP_DEVELOPMENT, WsRegistry],
+      exports: [LOGGER, HTTP_DEVELOPMENT, WsRegistry, ErrorLog],
     };
     const context = await ApplicationContext.create(root, {
       overrides: options.overrides,
@@ -338,7 +340,7 @@ export class HttpApplication {
             if (exit) process.exit(0);
           },
           (error) => {
-            this.logger.error(`Graceful shutdown on ${signal} failed`, error);
+            logError(this, `Graceful shutdown on ${signal} failed`, error);
             if (exit) process.exit(1);
           },
         );
@@ -491,7 +493,7 @@ export class HttpApplication {
       try {
         await server.stop(true);
       } catch (stopError) {
-        this.logger.error('Failed to release the HTTPS listener after a bind failure', stopError);
+        logError(this, 'Failed to release the HTTPS listener after a bind failure', stopError);
       }
       throw error;
     }

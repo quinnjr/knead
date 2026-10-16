@@ -120,12 +120,18 @@ describe('5xx problem responses', () => {
     const res = await fetch(new URL('/fail/5xx', app.url));
     expect(res.status).toBe(503);
     expect(res.headers.get('retry-after')).toBe('5');
-    expect(await res.json()).toEqual({
+    const body = (await res.json()) as { correlationId: string };
+    expect(body as unknown).toEqual({
       type: 'about:blank',
       title: 'Service Unavailable',
       status: 503,
       instance: '/fail/5xx',
+      correlationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
     });
+    const logged = (app.logger as MemoryLogger).entries.find((e) => e.level === 'error')!;
+    expect(logged.message).toContain(body.correlationId);
+    expect(logged.message).toContain('ServiceUnavailableException: database at 10.0.0.7 is down');
+    expect(logged.meta).toEqual([]);
     const client = await fetch(new URL('/fail/4xx', app.url));
     expect(await client.json()).toMatchObject({ detail: 'bad input', field: 'name' });
   });

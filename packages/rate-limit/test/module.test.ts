@@ -109,6 +109,24 @@ describe('RateLimitModule', () => {
     expect((await closed.request('GET', '/r/global')).status).toBe(503);
   });
 
+  test('store failures are logged as a redacted summary outside development', async () => {
+    const error = Object.assign(new Error('dial redis://app:pw@cache failed'), {
+      command: 'AUTH app pw',
+    });
+    const broken: RateLimitStore = { consume: async () => Promise.reject(error) };
+    mod = await Test.createModule({
+      imports: [RateLimitModule.forRoot({ limit: 2, window: '1m', store: broken })],
+      controllers: [LimitedController],
+    }).compile({ development: false });
+    const app = await mod.createApp();
+    expect((await app.request('GET', '/r/global')).status).toBe(200);
+    const entry = mod.logs.find((e) => e.message.includes('Rate limit store failed'))!;
+    expect(entry.level).toBe('warn');
+    expect(entry.message).toContain('Error: dial redis://***@cache failed');
+    expect(entry.message).toMatch(/correlation id [0-9a-f-]{36}/);
+    expect(entry.meta).toEqual([]);
+  });
+
   test('parallel requests never exceed the limit', async () => {
     const app = await serve({ limit: 5 });
     const statuses = await Promise.all(

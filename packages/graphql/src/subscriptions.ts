@@ -223,7 +223,7 @@ export function createSubscriptionEndpoint(
   });
   const handler = createHandler({
     schema: runtime.schema,
-    logger: leavenLogger(runtime.logger),
+    logger: leavenLogger(runtime.logger, runtime.development),
     connectionInitTimeout: options.connectionInitTimeout,
     keepAliveInterval: options.keepAliveInterval,
     subscriptionManager: {
@@ -269,7 +269,11 @@ export function createSubscriptionEndpoint(
         try {
           matches = revocation.predicate(connection);
         } catch (error) {
-          runtime.logger.error('GraphQLSubscriptions.closeWhere predicate threw', error);
+          logInternalError(
+            runtime.masking,
+            'GraphQLSubscriptions.closeWhere predicate threw',
+            error,
+          );
         }
         if (matches) {
           (socket as unknown as SocketFacade).close(revocation.code, revocation.reason);
