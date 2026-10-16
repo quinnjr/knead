@@ -109,3 +109,114 @@ describe('RedisPubSub failure handling', () => {
     await pubsub.close();
   });
 });
+
+/** A fake Redis whose PUBLISH reaches every SUBSCRIBE of the channel (shared between clients). */
+function loopback(options: { publishFails?: boolean } = {}) {
+  const handlers = new Map<string, ((message: string) => void)[]>();
+  const subscriber = {
+    subscribe: async (channel: string, handler: (message: string) => void) => {
+      handlers.set(channel, [...(handlers.get(channel) ?? []), handler]);
+      return 1;
+    },
+    unsubscribe: async () => {},
+    close: () => {},
+    connected: false,
+  };
+  const client = {
+    duplicate: async () => subscriber,
+    publish: async (channel: string, message: string) => {
+      if (options.publishFails) throw new Error('connection to redis://user:secret@db lost');
+      for (const handler of handlers.get(channel) ?? []) handler(message);
+      return 1;
+    },
+    close: () => {},
+  } as unknown as RedisClient;
+  const inject = (channel: string, message: string) => {
+    for (const handler of handlers.get(channel) ?? []) handler(message);
+  };
+  return { client, inject, subscribed: () => handlers.size };
+}
+
+describe('RedisPubSub hardening', () => {
+  test('publish never rejects: the failure is logged; publishOrThrow rejects', async () => {
+    const logger = new MemoryLogger();
+    const pubsub = new RedisPubSub({ client: loopback({ publishFails: true }).client, logger });
+    await expect(pubsub.publish('t', 1)).resolves.toBeUndefined();
+    expect(logger.entries.some((e) => e.level === 'error' && e.message.includes('t'))).toBe(true);
+    await expect(pubsub.publishOrThrow('t', 1)).rejects.toThrow('connection');
+    await pubsub.close();
+  });
+
+  test('warns at construction about plain redis:// to a non-loopback host', async () => {
+    const cases: [string, boolean][] = [
+      ['redis://cache.internal:6379', true],
+      ['redis://user:pw@10.0.0.5:6379/0', true],
+      ['redis://localhost:6379', false],
+      ['redis://127.0.0.1:6379', false],
+      ['redis://[::1]:6379', false],
+      ['rediss://cache.internal:6379', false],
+    ];
+    for (const [url, warns] of cases) {
+      const logger = new MemoryLogger();
+      const pubsub = new RedisPubSub({ url, logger });
+      const warned = logger.entries.some(
+        (e) => e.level === 'warn' && e.message.includes('rediss://'),
+      );
+      expect([url, warned]).toEqual([url, warns]);
+      expect(logger.entries.some((e) => e.message.includes('pw@'))).toBe(false);
+      await pubsub.close();
+    }
+  });
+
+  test('signingKey: signed messages are delivered; unsigned and forged ones are dropped', async () => {
+    const fake = loopback();
+    const signingKey = 'k'.repeat(32);
+    const logger = new MemoryLogger();
+    const sender = new RedisPubSub({ client: fake.client, signingKey, logger });
+    const receiver = new RedisPubSub({ client: fake.client, signingKey, logger });
+    const received: unknown[] = [];
+    receiver.subscribe('t', (payload) => received.push(payload));
+    await until(() => fake.subscribed() === 1);
+    await sender.publish('t', { n: 1 });
+    expect(received).toEqual([{ n: 1 }]);
+    fake.inject('hpmws:gql:t', JSON.stringify({ n: 2 }));
+    fake.inject('hpmws:gql:t', `${'0'.repeat(64)}.${JSON.stringify({ n: 3 })}`);
+    const other = new RedisPubSub({ client: fake.client, signingKey: 'x'.repeat(32), logger });
+    await other.publish('t', { n: 4 });
+    expect(received).toEqual([{ n: 1 }]);
+    const drops = logger.entries.filter(
+      (e) => e.level === 'warn' && e.message.includes('signature'),
+    );
+    expect(drops.length).toBe(3);
+    for (const p of [sender, receiver, other]) await p.close();
+  });
+
+  test('the signature covers the topic', async () => {
+    const fake = loopback();
+    const signingKey = 'k'.repeat(32);
+    const logger = new MemoryLogger();
+    const receiver = new RedisPubSub({ client: fake.client, signingKey, logger });
+    const received: unknown[] = [];
+    receiver.subscribe('b', (payload) => received.push(payload));
+    await until(() => fake.subscribed() === 1);
+    // Capture a message signed for topic "a" and replay it on "b".
+    let captured = '';
+    const spy = {
+      publish: async (_channel: string, message: string) => {
+        captured = message;
+        return 1;
+      },
+      close: () => {},
+    } as unknown as RedisClient;
+    await new RedisPubSub({ client: spy, signingKey }).publish('a', { n: 1 });
+    fake.inject('hpmws:gql:b', captured);
+    expect(received).toEqual([]);
+    await receiver.close();
+  });
+
+  test('a signingKey shorter than 32 bytes is a configuration error', () => {
+    expect(() => new RedisPubSub({ client: loopback().client, signingKey: 'short' })).toThrow(
+      '32 bytes',
+    );
+  });
+});

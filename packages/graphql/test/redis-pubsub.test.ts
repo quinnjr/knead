@@ -55,6 +55,22 @@ describe.skipIf(!url)('RedisPubSub', () => {
     await pubsub.close();
   });
 
+  test('signed messages round-trip through Redis; unsigned ones are dropped', async () => {
+    const logger = new MemoryLogger();
+    const signingKey = crypto.getRandomValues(new Uint8Array(32));
+    const pubsub = new RedisPubSub({ url, prefix, signingKey, logger });
+    const received: unknown[] = [];
+    const off = pubsub.subscribe('signed', (p) => received.push(p));
+    await until(async () => (await channelSubscribers('signed')) === 1);
+    await admin!.publish(`${prefix}signed`, JSON.stringify({ forged: true }));
+    await pubsub.publishOrThrow('signed', { n: 1 });
+    await until(() => received.length === 1);
+    expect(received).toEqual([{ n: 1 }]);
+    expect(logger.entries.some((e) => e.message.includes('signature'))).toBe(true);
+    off();
+    await pubsub.close();
+  });
+
   test('close() with active subscriptions lets the process exit', async () => {
     const source = new URL('../src/redis-pubsub.ts', import.meta.url).pathname;
     const script = `

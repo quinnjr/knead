@@ -1,4 +1,5 @@
-import { ConsoleLogger, type Logger } from '@hpmws/http';
+import { createHmac, timingSafeEqual } from 'node:crypto';
+import { ConsoleLogger, HttpConfigError, type Logger } from '@hpmws/http';
 import type { PubSubEngine } from '@leaven-graphql/ws';
 import { RedisClient } from 'bun';
 
@@ -11,6 +12,39 @@ export interface RedisPubSubOptions {
   prefix?: string;
   /** Where failures are reported. Default: the application's LOGGER once GraphQLModule starts. */
   logger?: Logger;
+  /**
+   * Shared secret (at least 32 bytes) for HMAC-SHA256 message signatures over topic + "\0" +
+   * payload. Every instance must use the same key; messages without a valid signature are
+   * dropped and logged. Use it when other clients can publish to the Redis server.
+   */
+  signingKey?: string | Uint8Array;
+}
+
+/** Hex-encoded HMAC-SHA256 length; a signed message is `<signature>.<payload JSON>`. */
+const SIGNATURE_LENGTH = 64;
+
+function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.replace(/^\[(.*)\]$/, '$1').toLowerCase();
+  return (
+    host === 'localhost' ||
+    host.endsWith('.localhost') ||
+    /^127(?:\.\d{1,3}){3}$/.test(host) ||
+    host === '::1' ||
+    host === '0:0:0:0:0:0:0:1'
+  );
+}
+
+/** The host of a plain redis:// URL to a non-loopback host, or undefined. */
+function plaintextRemoteHost(url: string | undefined): string | undefined {
+  if (url === undefined) return undefined;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'redis:' && !isLoopbackHost(parsed.hostname)
+      ? parsed.host
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 interface Listener {
@@ -23,6 +57,9 @@ interface Listener {
  * connection in subscriber mode to do nothing else, so subscriptions use a dedicated connection.
  * If that connection or a SUBSCRIBE fails, the failure is logged, every subscriber of the topic
  * is told through its `onError` (ending its GraphQL subscription), and the next subscriber retries.
+ * `publish()` never rejects (failures are logged); `publishOrThrow()` does. Connect with
+ * `rediss://` and an ACL user limited to the prefix's channels in production, and set
+ * `signingKey` when anything else can publish to the server.
  */
 export class RedisPubSub implements PubSubEngine {
   readonly #publisher: RedisClient;
@@ -41,13 +78,36 @@ export class RedisPubSub implements PubSubEngine {
   #explicitLogger: boolean;
   #subscriber: Promise<RedisClient> | undefined;
   #closed = false;
+  readonly #signingKey: Uint8Array | undefined;
 
   constructor(options: RedisPubSubOptions = {}) {
+    if (options.signingKey !== undefined) {
+      const key =
+        typeof options.signingKey === 'string'
+          ? new TextEncoder().encode(options.signingKey)
+          : options.signingKey;
+      if (key.byteLength < 32) {
+        throw new HttpConfigError('RedisPubSub signingKey must be at least 32 bytes.');
+      }
+      this.#signingKey = key;
+    }
     this.#owned = options.client === undefined;
     this.#publisher = options.client ?? new RedisClient(options.url);
     this.#prefix = options.prefix ?? 'hpmws:gql:';
     this.#explicitLogger = options.logger !== undefined;
     this.#logger = options.logger ?? new ConsoleLogger('hpmws:graphql');
+    const url =
+      options.url ??
+      (options.client === undefined
+        ? process.env.REDIS_URL || process.env.VALKEY_URL || undefined
+        : undefined);
+    const remote = plaintextRemoteHost(url);
+    if (remote !== undefined) {
+      this.#logger.warn(
+        `RedisPubSub connects to ${remote} over plain redis://, so events and credentials ` +
+          'cross the network unencrypted. Use rediss:// (TLS) with an ACL user.',
+      );
+    }
   }
 
   /** @internal GraphQLModule passes the application LOGGER unless one was configured. */
@@ -78,9 +138,36 @@ export class RedisPubSub implements PubSubEngine {
     };
   }
 
-  /** Resolves once Redis accepted the message (fire-and-forget callers may ignore it). */
+  /**
+   * Publishes `payload` (as JSON) and never rejects: a failure is logged, and the event is lost.
+   * Use publishOrThrow() when the caller must know.
+   */
   async publish(topic: string, payload: unknown): Promise<void> {
-    await this.#publisher.publish(this.#prefix + topic, JSON.stringify(payload));
+    try {
+      await this.publishOrThrow(topic, payload);
+    } catch (error) {
+      this.#logger.error(`RedisPubSub failed to publish to ${topic}`, error);
+    }
+  }
+
+  /** Like publish(), but rejects when Redis did not accept the message. */
+  async publishOrThrow(topic: string, payload: unknown): Promise<void> {
+    const json = JSON.stringify(payload);
+    const message = this.#signingKey ? `${this.#sign(topic, json)}.${json}` : json;
+    await this.#publisher.publish(this.#prefix + topic, message);
+  }
+
+  #sign(topic: string, json: string): string {
+    return createHmac('sha256', this.#signingKey!).update(`${topic}\0${json}`).digest('hex');
+  }
+
+  /** The payload JSON of a correctly signed message, or undefined. */
+  #verified(topic: string, message: string): string | undefined {
+    if (message.length <= SIGNATURE_LENGTH || message[SIGNATURE_LENGTH] !== '.') return undefined;
+    const json = message.slice(SIGNATURE_LENGTH + 1);
+    const given = Buffer.from(message.slice(0, SIGNATURE_LENGTH), 'utf8');
+    const expected = Buffer.from(this.#sign(topic, json), 'utf8');
+    return given.length === expected.length && timingSafeEqual(given, expected) ? json : undefined;
   }
 
   async close(): Promise<void> {
@@ -141,9 +228,19 @@ export class RedisPubSub implements PubSubEngine {
     try {
       const subscriber = await this.#subscriberClient();
       await subscriber.subscribe(this.#prefix + topic, (message) => {
+        let json: string | undefined = message;
+        if (this.#signingKey) {
+          json = this.#verified(topic, message);
+          if (json === undefined) {
+            this.#logger.warn(
+              `RedisPubSub dropped a message on ${topic} without a valid signature`,
+            );
+            return;
+          }
+        }
         let payload: unknown;
         try {
-          payload = JSON.parse(message);
+          payload = JSON.parse(json);
         } catch {
           this.#logger.warn(`RedisPubSub dropped a non-JSON message on ${topic}`);
           return;
