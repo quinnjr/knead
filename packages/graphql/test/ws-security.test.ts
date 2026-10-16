@@ -52,6 +52,16 @@ describe('WebSocket transport security', () => {
     expect(await upgradeStatus(s.app, { 'x-ok': '1' })).toBe(101);
   });
 
+  test('a header-authenticating APP_GUARD can let upgrades through via ctx.upgrade', async () => {
+    const bearer = (ctx: Ctx) =>
+      ctx.upgrade !== null || ctx.req.headers.get('authorization') === 'Bearer ok';
+    s = await startGraphQL([M], {}, [{ provide: APP_GUARD, multi: true, useValue: bearer }]);
+    expect(await upgradeStatus(s.app)).toBe(101);
+    expect((await s.app.graphql('{ n }')).status).toBe(403);
+    const ok = await s.app.graphql('{ n }', { headers: { authorization: 'Bearer ok' } });
+    expect(ok.status).toBe(200);
+  });
+
   test('cross-origin upgrades are 403 by default; no Origin header is allowed', async () => {
     s = await startGraphQL([M]);
     expect(await upgradeStatus(s.app, { origin: 'https://evil.example' })).toBe(403);
