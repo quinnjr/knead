@@ -14,19 +14,49 @@ export function pickPermitted<T extends object>(
   const out: Partial<T> = {};
   for (const key of Object.keys(record)) {
     if (ability.can('read', subject, key) === true) {
-      (out as Record<string, unknown>)[key] = (record as Record<string, unknown>)[key];
+      Object.defineProperty(out, key, {
+        value: (record as Record<string, unknown>)[key],
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
     }
   }
   return out;
 }
 
-function isPlainObject(value: unknown): value is object {
-  if (typeof value !== 'object' || value === null) return false;
-  const proto = Object.getPrototypeOf(value);
-  return proto === Object.prototype || proto === null;
+function isOpaque(value: unknown): boolean {
+  return (
+    typeof value !== 'object' ||
+    value === null ||
+    value instanceof Response ||
+    value instanceof Blob ||
+    value instanceof ReadableStream ||
+    value instanceof ArrayBuffer ||
+    ArrayBuffer.isView(value) ||
+    value instanceof Date
+  );
 }
 
-/** Method decorator: filters the handler's result to fields `read`-permitted on `subjectType`. */
+/** Fails closed: every non-opaque object is stripped, whatever its prototype. */
+function strip(ability: AppAbility, subjectType: string, value: unknown, toJson = true): unknown {
+  if (isOpaque(value)) return value;
+  if (Array.isArray(value)) return value.map((item) => strip(ability, subjectType, item));
+  const record = value as object;
+  const { toJSON } = record as { toJSON?: unknown };
+  if (toJson && typeof toJSON === 'function') {
+    return strip(ability, subjectType, toJSON.call(record), false);
+  }
+  return pickPermitted(ability, subjectType, record);
+}
+
+/**
+ * Method decorator: filters the handler's result to fields `read`-permitted on `subjectType`.
+ *
+ * The result itself (or each array element, recursively) is stripped; objects with `toJSON` are
+ * stripped after it runs. Envelopes such as `{ data: [...], total }` are only stripped at the top
+ * level, so handlers should return the records or the array directly.
+ */
 export function PermittedFields(subjectType: string) {
   return <T extends (this: any, ctx: Ctx<any>) => unknown>(
     method: T,
@@ -36,13 +66,7 @@ export function PermittedFields(subjectType: string) {
       const pending = cachedAbility(ctx as AbilityCtx);
       const ability = pending ? await pending : null;
       if (!ability) throw new ForbiddenException('PermittedFields requires AbilityGuard');
-      const result = await method.call(this, ctx);
-      if (Array.isArray(result)) {
-        return result.map((item) =>
-          isPlainObject(item) ? pickPermitted(ability, subjectType, item) : item,
-        );
-      }
-      return isPlainObject(result) ? pickPermitted(ability, subjectType, result) : result;
+      return strip(ability, subjectType, await method.call(this, ctx));
     };
     return wrapped as unknown as T;
   };

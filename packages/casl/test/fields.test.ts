@@ -1,14 +1,16 @@
 import { afterEach, expect, test } from 'bun:test';
 import type { AbilityBuilder, MongoAbility } from '@casl/ability';
-import { Controller, type Ctx, Get, UseGuards } from '@knead-js/http';
+import { Controller, Get, UseGuards } from '@knead-js/http';
 import { Test, type TestApp } from '@knead-js/testing';
 import {
   AbilityGuard,
   Can,
   CaslModule,
+  createAppAbility,
   definePermissions,
   fullGrant,
   PermittedFields,
+  pickPermitted,
   SkipAbility,
 } from '../src/index.js';
 import { bearer, resolve, type TestUser } from './fixtures.js';
@@ -17,6 +19,10 @@ const permissions = definePermissions({
   users: {
     levels: ['none', 'read'],
     rules: { read: [{ action: 'read', subject: 'User', fields: ['id', 'name', 'email'] }] },
+  },
+  everything: {
+    levels: ['none', 'read'],
+    rules: { read: [{ action: 'read', subject: 'User' }] },
   },
   billing: {
     levels: ['none', 'read'],
@@ -27,12 +33,21 @@ const permissions = definePermissions({
 function defineUserAbility(user: TestUser, { can }: AbilityBuilder<MongoAbility>): void {
   can('read', 'User', ['id', 'name']);
   can('read', 'User', { id: user.id });
+  if (user.id === 'root') can('read', 'User');
 }
 
 const rows = () => [
   { id: 'alice', name: 'Alice', email: 'a@x', billingAddress: '1 Main' },
   { id: 'bob', name: 'Bob', email: 'b@x', billingAddress: '2 Main' },
 ];
+
+class UserEntity {
+  constructor(
+    public id: string,
+    public name: string,
+    public billingAddress: string,
+  ) {}
+}
 
 @Controller()
 @UseGuards(AbilityGuard)
@@ -61,7 +76,31 @@ class UsersController {
     return null;
   }
 
-  @Get('/noguard') @SkipAbility() @PermittedFields('User') noguard(_ctx: Ctx) {
+  @Get('/entity') @Can('read', 'User') @PermittedFields('User') entity() {
+    return new UserEntity('bob', 'Bob', '2 Main');
+  }
+
+  @Get('/tojson') @Can('read', 'User') @PermittedFields('User') toJson() {
+    return { toJSON: () => rows()[1] };
+  }
+
+  @Get('/nested') @Can('read', 'User') @PermittedFields('User') nested() {
+    return [rows()];
+  }
+
+  @Get('/date') @Can('read', 'User') @PermittedFields('User') date() {
+    return { id: 'alice', name: new Date(0) };
+  }
+
+  @Get('/bytes') @Can('read', 'User') @PermittedFields('User') bytes() {
+    return new Uint8Array([1, 2, 3]);
+  }
+
+  @Get('/proto') @Can('read', 'User') @PermittedFields('User') proto() {
+    return JSON.parse('{"__proto__":{"x":1},"id":"u1"}');
+  }
+
+  @Get('/noguard') @SkipAbility() @PermittedFields('User') noguard() {
     return rows();
   }
 }
@@ -126,4 +165,51 @@ test('without guard is a 403', async () => {
   const a = await serve();
   const res = await a.request('GET', '/noguard', bearer('alice', fullGrant(permissions)));
   expect(res.status).toBe(403);
+});
+
+test('class instances are stripped', async () => {
+  const a = await serve();
+  const res = await a.request('GET', '/entity', bearer('alice', fullGrant(permissions)));
+  expect(await res.json()).toEqual({ id: 'bob', name: 'Bob' });
+});
+
+test('toJSON results are stripped', async () => {
+  const a = await serve();
+  const res = await a.request('GET', '/tojson', bearer('alice', fullGrant(permissions)));
+  expect(await res.json()).toEqual({ id: 'bob', name: 'Bob' });
+});
+
+test('nested arrays are stripped per record', async () => {
+  const a = await serve();
+  const res = await a.request('GET', '/nested', bearer('alice', fullGrant(permissions)));
+  expect(await res.json()).toEqual([[rows()[0], { id: 'bob', name: 'Bob' }]]);
+});
+
+test('a Date value inside a permitted key survives', async () => {
+  const a = await serve();
+  const res = await a.request('GET', '/date', bearer('alice', fullGrant(permissions)));
+  expect(await res.json()).toEqual({ id: 'alice', name: new Date(0).toISOString() });
+});
+
+test('binary results pass through', async () => {
+  const a = await serve();
+  const res = await a.request('GET', '/bytes', bearer('alice', fullGrant(permissions)));
+  expect(new Uint8Array(await res.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
+});
+
+test('an own __proto__ key does not pollute the prototype', async () => {
+  const a = await serve();
+  const res = await a.request('GET', '/proto', bearer('root', { everything: 'read' }));
+  const body = (await res.json()) as Record<string, unknown>;
+  expect(body.id).toBe('u1');
+  expect(Object.getPrototypeOf(body)).toBe(Object.prototype);
+  expect((body as { x?: number }).x).toBeUndefined();
+});
+
+test('pickPermitted defines an own __proto__ key instead of setting the prototype', () => {
+  const ability = createAppAbility([{ action: 'read', subject: 'User' }]);
+  const out = pickPermitted(ability, 'User', JSON.parse('{"__proto__":{"x":1},"id":"u1"}'));
+  expect(Object.getPrototypeOf(out)).toBe(Object.prototype);
+  expect((out as { x?: number }).x).toBeUndefined();
+  expect(Object.keys(out)).toEqual(['__proto__', 'id']);
 });
