@@ -456,6 +456,10 @@ jobs:
             if jq -e 'has("bundleDependencies") or has("bundledDependencies")' >/dev/null <<<"$manifest"; then
               fail "$name: package.json has bundled dependencies"
             fi
+            # No package ships executables, so no bin shims (or the directories/man that create them).
+            if jq -e 'has("bin") or has("directories") or has("man")' >/dev/null <<<"$manifest"; then
+              fail "$name: package.json may not declare bin, directories or man"
+            fi
             bad_dep="$(jq -r --arg allow "$ALLOWED_DEPENDENCIES" '
               .name as $name
               | ($allow | split("\n") | map(select(startswith($name + ":")))) as $lines

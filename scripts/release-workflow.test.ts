@@ -847,6 +847,20 @@ describe('release.yml publish step', () => {
     });
   });
 
+  describe('bin shims', () => {
+    test.each([
+      [{ bin: { x: 'dist/index.js' } }, 'may not declare bin, directories or man'],
+      [{ directories: { lib: 'dist' } }, 'may not declare bin, directories or man'],
+      // npm publish normalises these, so the cross-check refuses them first.
+      [{ bin: 'dist/index.js' }, 'npm reads a different package.json'],
+      [{ man: './dist/x.1' }, 'npm reads a different package.json'],
+      [{ directories: { bin: 'dist' } }, 'npm reads a different package.json'],
+    ])('rejects %j', (manifest, message) => {
+      const r = publish('v1.2.3', [{ name: '@hpmws/core', version: '1.2.3', manifest }]);
+      expectRejected(r, message);
+    });
+  });
+
   describe('manifest', () => {
     test.each([
       [
