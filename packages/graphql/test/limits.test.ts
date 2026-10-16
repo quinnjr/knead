@@ -264,3 +264,48 @@ describe('maxFields (FIELD_LIMIT)', () => {
     });
   });
 });
+
+describe('maxIntrospectionDepth', () => {
+  /** `{ __schema { types { fields { type { ofType { ofType ... { name } } } } } } }` */
+  const bomb = (levels: number) =>
+    `{ __schema { types { fields { type { ${'ofType { '.repeat(levels)}name${' }'.repeat(levels)} } } } } }`;
+
+  test('the standard introspection query passes (depth 15)', async () => {
+    s = await startGraphQL([M], { introspection: true });
+    expect((await s.app.graphql(getIntrospectionQuery())).errors).toBeUndefined();
+    expect(resolveOptions({}, '/graphql').maxIntrospectionDepth).toBe(15);
+  });
+
+  test('a deeper introspection bomb is DEPTH_LIMIT', async () => {
+    s = await startGraphQL([M], { introspection: true });
+    // __schema(1) types(2) fields(3) type(4) + levels ofType + name.
+    expect((await s.app.graphql(bomb(10))).errors).toBeUndefined(); // depth 15
+    const res = await s.app.graphql(bomb(11)); // depth 16
+    expect(res.data).toBeUndefined();
+    expect(res.errors?.[0]).toMatchObject({
+      message: 'Introspection depth of 16 exceeds maximum allowed depth of 15',
+      extensions: { code: 'DEPTH_LIMIT' },
+    });
+  });
+
+  test('a bomb through fragments and __type is caught too', async () => {
+    s = await startGraphQL([M], { introspection: true });
+    const res = await s.app.graphql(
+      `{ __type(name: "Tree") { ...T } } fragment T on __Type { fields { type { ${'ofType { '.repeat(20)}name${' }'.repeat(20)} } } }`,
+    );
+    expect(res.errors?.[0]?.extensions?.code).toBe('DEPTH_LIMIT');
+  });
+
+  test("Leaven's complexity counts introspection fields", async () => {
+    s = await startGraphQL([M], { introspection: true, maxComplexity: 5 });
+    const res = await s.app.graphql('{ __schema { types { name kind description } } }');
+    expect(res.errors?.[0]?.extensions?.code).toBe('COMPLEXITY_LIMIT');
+  });
+
+  test('configurable and validated', () => {
+    expect(resolveOptions({ maxIntrospectionDepth: false }, '/graphql').maxIntrospectionDepth).toBe(
+      false,
+    );
+    expect(() => resolveOptions({ maxIntrospectionDepth: 0 }, '/graphql')).toThrow(HttpConfigError);
+  });
+});

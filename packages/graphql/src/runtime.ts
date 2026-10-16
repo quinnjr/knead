@@ -260,6 +260,7 @@ export interface DocumentLimits {
   readonly maxAliases?: number | false;
   readonly maxDepth?: number | false;
   readonly maxFields?: number | false;
+  readonly maxIntrospectionDepth?: number | false;
 }
 
 export function buildHooks(
@@ -267,7 +268,12 @@ export function buildHooks(
   masking: ErrorMaskingOptions,
   limits: DocumentLimits = {},
 ): ExecutionHooks {
-  const { maxAliases = false, maxDepth = false, maxFields = false } = limits;
+  const {
+    maxAliases = false,
+    maxDepth = false,
+    maxFields = false,
+    maxIntrospectionDepth = false,
+  } = limits;
   const safe = <A extends unknown[]>(
     name: string,
     fn: ((...args: A) => void | Promise<void>) | undefined,
@@ -291,6 +297,7 @@ export function buildHooks(
     onParsed: async (document: DocumentNode) => {
       if (maxFields !== false) checkFields(document, maxFields);
       if (maxDepth !== false) checkDepth(document, maxDepth);
+      if (maxIntrospectionDepth !== false) checkIntrospectionDepth(document, maxIntrospectionDepth);
       if (maxAliases !== false) checkAliases(document, maxAliases);
       await userParsed?.(document);
     },
@@ -435,10 +442,96 @@ export function checkFields(document: DocumentNode, max: number): void {
   }
 }
 
+/**
+ * The deepest selection under an introspection field (`__schema` or `__type`), counting that
+ * field as level 1, with fragments expanded (memoized; a cycle adds no depth).
+ */
+export function introspectionDepth(document: DocumentNode): number {
+  const fragments = new Map<string, FragmentDefinitionNode>();
+  for (const definition of document.definitions) {
+    if (definition.kind === Kind.FRAGMENT_DEFINITION)
+      fragments.set(definition.name.value, definition);
+  }
+  const memo = new Map<string, number>();
+  const expanding = new Set<string>();
+  let visits = 0;
+  const visit = () => {
+    if (++visits > MAX_DEPTH_VISITS) {
+      throw new LeavenError(
+        `Query analysis exceeded the maximum of ${MAX_DEPTH_VISITS} nodes`,
+        'COMPLEXITY_LIMIT' as ErrorCode,
+        { statusCode: 400 },
+      );
+    }
+  };
+  // Depth of a selection set relative to its parent field (1 = its own fields).
+  const height = (set: SelectionSetNode | undefined): number => {
+    let deepest = 0;
+    for (const selection of set?.selections ?? []) {
+      visit();
+      if (selection.kind === Kind.FIELD)
+        deepest = Math.max(deepest, 1 + height(selection.selectionSet));
+      else if (selection.kind === Kind.INLINE_FRAGMENT)
+        deepest = Math.max(deepest, height(selection.selectionSet));
+      else deepest = Math.max(deepest, fragmentHeight(selection.name.value));
+    }
+    return deepest;
+  };
+  const fragmentHeight = (name: string): number => {
+    const known = memo.get(name);
+    if (known !== undefined) return known;
+    const fragment = fragments.get(name);
+    if (!fragment || expanding.has(name)) return 0;
+    expanding.add(name);
+    const h = height(fragment.selectionSet);
+    expanding.delete(name);
+    memo.set(name, h);
+    return h;
+  };
+  // Find the introspection fields anywhere in the operations (they are usually at the root).
+  const seen = new Set<string>();
+  const find = (set: SelectionSetNode | undefined): number => {
+    let deepest = 0;
+    for (const selection of set?.selections ?? []) {
+      visit();
+      if (selection.kind === Kind.FIELD) {
+        const name = selection.name.value;
+        if (name === '__schema' || name === '__type') {
+          deepest = Math.max(deepest, 1 + height(selection.selectionSet));
+        } else deepest = Math.max(deepest, find(selection.selectionSet));
+      } else if (selection.kind === Kind.INLINE_FRAGMENT) {
+        deepest = Math.max(deepest, find(selection.selectionSet));
+      } else if (!seen.has(selection.name.value)) {
+        seen.add(selection.name.value);
+        deepest = Math.max(deepest, find(fragments.get(selection.name.value)?.selectionSet));
+      }
+    }
+    return deepest;
+  };
+  let deepest = 0;
+  for (const definition of document.definitions) {
+    if (definition.kind === Kind.OPERATION_DEFINITION)
+      deepest = Math.max(deepest, find(definition.selectionSet));
+  }
+  return deepest;
+}
+
 /** Rejects a document deeper than `max` with Leaven's DEPTH_LIMIT error. */
 export function checkDepth(document: DocumentNode, max: number): void {
   const depth = queryDepth(document);
   if (depth > max) throw new DepthLimitError(depth, max);
+}
+
+/** Rejects introspection selections deeper than `max` (DEPTH_LIMIT). */
+export function checkIntrospectionDepth(document: DocumentNode, max: number): void {
+  const depth = introspectionDepth(document);
+  if (depth > max) {
+    throw new LeavenError(
+      `Introspection depth of ${depth} exceeds maximum allowed depth of ${max}`,
+      'DEPTH_LIMIT' as ErrorCode,
+      { statusCode: 400, extensions: { depth, maxIntrospectionDepth: max } },
+    );
+  }
 }
 
 /** Rejects a document with more than `max` field aliases (counted once per alias in the text). */
@@ -604,6 +697,7 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
           maxAliases: this.options.maxAliases,
           maxDepth: this.options.maxDepth,
           maxFields: this.options.maxFields,
+          maxIntrospectionDepth: this.options.maxIntrospectionDepth,
         }),
         formatExecutionError: createErrorFormatter(this.masking),
       },

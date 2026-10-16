@@ -81,9 +81,16 @@ export interface GraphQLModuleOptions {
   introspection?: boolean;
   /**
    * Deepest selection allowed (fragments expanded). Selections inside `__schema` and `__type`
-   * do not count, so introspection works. Default 10; `Infinity` or `false` disables.
+   * do not count, so introspection works; `maxIntrospectionDepth` caps them. Default 10;
+   * `Infinity` or `false` disables.
    */
   maxDepth?: number | false;
+  /**
+   * Deepest selection inside `__schema` or `__type`, counting that field as level 1 (fragments
+   * expanded). Default 15, the depth of graphql-js's `getIntrospectionQuery()`; `Infinity` or
+   * `false` disables.
+   */
+  maxIntrospectionDepth?: number | false;
   /** Highest query cost allowed (see `complexity`). Default 1000; `Infinity` or `false` disables. */
   maxComplexity?: number | false;
   /**
@@ -158,6 +165,7 @@ export interface ResolvedGraphQLOptions {
   readonly maxQueryLength: number | false;
   readonly maxAliases: number | false;
   readonly maxFields: number | false;
+  readonly maxIntrospectionDepth: number | false;
   /** Checked by hpmws (introspection fields excluded); Leaven's own maxDepth stays unset. */
   readonly maxDepth: number | false;
   readonly executor: Pick<
@@ -174,6 +182,7 @@ export const GRAPHQL_LIMITS = Object.freeze({
   maxQueryLength: 100 * 1024,
   maxAliases: 30,
   maxFields: 1000,
+  maxIntrospectionDepth: 15,
 });
 
 /** Default Leaven document cache: at most 100 parsed documents. */
@@ -220,6 +229,7 @@ export function validateGraphQLOptions(options: GraphQLModuleOptions): void {
   limit('maxQueryLength', options.maxQueryLength, 1);
   limit('maxAliases', options.maxAliases, 1);
   limit('maxFields', options.maxFields, 1);
+  limit('maxIntrospectionDepth', options.maxIntrospectionDepth, 1);
   limit('parseOptions.maxTokens', options.parseOptions?.maxTokens, 1);
   const endpoint =
     typeof options.playground === 'object' ? options.playground.subscriptionEndpoint : undefined;
@@ -273,6 +283,11 @@ export function resolveOptions(
     maxQueryLength: limit('maxQueryLength', options.maxQueryLength, GRAPHQL_LIMITS.maxQueryLength),
     maxAliases: limit('maxAliases', options.maxAliases, GRAPHQL_LIMITS.maxAliases),
     maxFields: limit('maxFields', options.maxFields, GRAPHQL_LIMITS.maxFields),
+    maxIntrospectionDepth: limit(
+      'maxIntrospectionDepth',
+      options.maxIntrospectionDepth,
+      GRAPHQL_LIMITS.maxIntrospectionDepth,
+    ),
     maxDepth,
     executor: {
       // Leaven's depth check counts introspection selections, so getIntrospectionQuery() (depth
