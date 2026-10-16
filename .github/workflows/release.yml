@@ -39,6 +39,8 @@ jobs:
       # No dependency cache: a poisoned cache must not reach a release build.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
+          # Explicit, so a bump to setup-node v5+ cannot silently turn on automatic caching.
+          package-manager-cache: false
           node-version: ${{ env.NODE_VERSION }}
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -83,6 +85,8 @@ jobs:
     steps:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
+          # Explicit, so a bump to setup-node v5+ cannot silently turn on automatic caching.
+          package-manager-cache: false
           node-version: ${{ env.NODE_VERSION }}
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
