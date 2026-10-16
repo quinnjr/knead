@@ -85,6 +85,14 @@ To check a release locally without publishing: `bun scripts/release.ts gate v<ve
 
 CI authenticates to npm with [trusted publishing](https://docs.npmjs.com/trusted-publishers) (OIDC) rather than a stored token. Each `@hpmws/*` package on npmjs.com must trust this repository's `release.yml` workflow. A new package needs one manual publish first (`pnpm publish --access public --otp <code>` from its directory). After that, register the workflow for every public package while logged in to npm with 2FA: `pnpm trust:npm` (add `--dry-run` to preview). The script logs in if needed and always logs out of npm when it exits, even on failure, so no long-lived npm session token stays in `~/.npmrc`; that also ends any session you had before running it. npm attaches provenance only while the repository is public.
 
+### Toolchain and image pins
+
+Dependabot updates npm dependencies and the SHA-pinned GitHub Actions, but not the versions written into the workflows, so these are bumped by hand:
+- **Redis service image** (`ci.yml` and `release.yml`, pinned by digest): monthly, and as soon as a Redis security release ships. Get the current digest with `docker buildx imagetools inspect redis:7-alpine` (the top-level index digest) and update both files together.
+- **Node** (`NODE_VERSION`) and **Bun** (`BUN_VERSION` plus `BUN_REVISION`, the output of `bun --revision` for that release) in both workflows: on every Node 24 LTS security release and every Bun release that fixes a security issue, otherwise monthly. Get `BUN_REVISION` by running the new Bun locally, and keep the `engines.bun` floor in sync.
+- **gitleaks** (`GITLEAKS_VERSION` and `GITLEAKS_SHA256` in `ci.yml`): quarterly; take the sha256 of `gitleaks_<version>_linux_x64.tar.gz` from the release's `checksums.txt`.
+- **pnpm** (`packageManager` in `package.json`, with its `+sha512.<hex>` integrity, the registry's `dist.integrity` converted from base64 to hex).
+
 ### Pending until the repository is public
 
 Some protections need features that private repositories on the free plan do not have:
