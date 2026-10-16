@@ -596,32 +596,95 @@ describe('closeWhere re-application at open (fail closed)', () => {
     expect(opened).toEqual([]);
   });
 
-  test('an evicted predicate newer than the upgrade closes it: revocation state unavailable', async () => {
-    const { ws, opened, socket } = await pending();
-    for (let i = 0; i < 101; i++) ws.closeWhere(() => false);
-    await ws.handler().open?.(socket);
-    expect(socket.close).toHaveBeenCalledWith(1008, 'Revocation state unavailable');
-    expect(opened).toEqual([]);
+  const eve = (s: WsSocket) => (s.data.data as { user: string }).user === 'eve';
+
+  test('20k unrelated closeWhere calls do not close a legitimate upgrade; a matching one does', async () => {
+    const legit = await pending();
+    (legit.socket.data as { data: { user: string } }).data.user = 'ada';
+    for (let i = 0; i < 20_000; i++) legit.ws.closeWhere(() => false);
+    await legit.ws.handler().open?.(legit.socket);
+    expect(legit.socket.close).not.toHaveBeenCalled();
+    expect(legit.opened).toHaveLength(1);
+    // A matching predicate pushed out by 20k others was checked when it was evicted.
+    const revoked = await pending();
+    revoked.ws.closeWhere(eve, 4001, 'gone');
+    for (let i = 0; i < 20_000; i++) revoked.ws.closeWhere(() => false);
+    await revoked.ws.handler().open?.(revoked.socket);
+    expect(revoked.socket.close).toHaveBeenCalledWith(4001, 'gone');
+    expect(revoked.opened).toEqual([]);
   });
 
-  test('an expired predicate, or an expired upgrade, also fails closed', async () => {
-    const first = await pending();
-    first.ws.closeWhere(() => false);
+  test('an upgrade still in its guards when a predicate was lost fails closed', async () => {
+    const ws = await registry();
+    ws.configure({ maxPendingRevocations: 10 });
+    ws.register('/x', { upgrade: () => ({}) });
+    const ctx = {};
+    ws.beginUpgrade(ctx); // in its guards: no socket data to check a lost predicate against
+    for (let i = 0; i < 11; i++) ws.closeWhere(() => false);
+    const data: WsData = { endpoint: '/x', data: { user: 'ada' } };
+    ws.reserve(data, '1.2.3.4', ctx);
+    const socket = { data, close: mock(() => {}) } as unknown as WsSocket & {
+      close: ReturnType<typeof mock>;
+    };
+    await ws.handler().open?.(socket);
+    expect(socket.close).toHaveBeenCalledWith(1008, 'Revocation state unavailable');
+  });
+
+  test('expired predicates are checked against upgrades with socket data first', async () => {
+    const kept = await pending();
+    (kept.socket.data as { data: { user: string } }).data.user = 'ada';
+    kept.ws.closeWhere(eve);
+    const revoked = await pending();
+    revoked.ws.closeWhere(eve);
     setSystemTime(new Date(Date.now() + 31_000));
     try {
-      await first.ws.handler().open?.(first.socket);
-      expect(first.socket.close).toHaveBeenCalledWith(1008, 'Revocation state unavailable');
+      await kept.ws.handler().open?.(kept.socket);
+      expect(kept.socket.close).not.toHaveBeenCalled();
+      await revoked.ws.handler().open?.(revoked.socket);
+      expect(revoked.socket.close).toHaveBeenCalledWith(1008, 'Connection revoked');
     } finally {
       setSystemTime();
     }
-    const second = await pending();
+  });
+
+  test('a slow upgrade (over 30s) fails closed only if it missed a revocation', async () => {
+    const slow = await pending();
+    (slow.socket.data as { data: { user: string } }).data.user = 'ada';
     setSystemTime(new Date(Date.now() + 31_000));
     try {
-      expect(second.ws.upgradesInProgress).toBe(0);
-      await second.ws.handler().open?.(second.socket);
-      expect(second.socket.close).toHaveBeenCalledWith(1008, 'Revocation state unavailable');
+      expect(slow.ws.upgradesInProgress).toBe(0);
+      await slow.ws.handler().open?.(slow.socket);
+      expect(slow.socket.close).not.toHaveBeenCalled();
     } finally {
       setSystemTime();
+    }
+    const missed = await pending();
+    setSystemTime(new Date(Date.now() + 31_000));
+    try {
+      expect(missed.ws.upgradesInProgress).toBe(0);
+      // Nothing counts as pending any more, so this predicate is not kept for it.
+      missed.ws.closeWhere(() => false);
+      await missed.ws.handler().open?.(missed.socket);
+      expect(missed.socket.close).toHaveBeenCalledWith(1008, 'Revocation state unavailable');
+    } finally {
+      setSystemTime();
+    }
+  });
+
+  test('20k beginUpgrade and closeWhere calls stay under 100 ms', async () => {
+    const ws = await registry();
+    const started = performance.now();
+    for (let i = 0; i < 20_000; i++) {
+      ws.beginUpgrade({});
+      ws.closeWhere(() => false);
+    }
+    expect(performance.now() - started).toBeLessThan(100);
+  });
+
+  test('maxPendingRevocations is validated', async () => {
+    const ws = await registry();
+    for (const maxPendingRevocations of [0, -1, 1.5]) {
+      expect(() => ws.configure({ maxPendingRevocations })).toThrow(HttpConfigError);
     }
   });
 

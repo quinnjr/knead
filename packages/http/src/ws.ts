@@ -72,6 +72,13 @@ export interface WsServerOptions {
   maxConnections?: number;
   /** Default per-socket message rate for every endpoint. Default 100 messages per 10s. */
   messageRate?: WsMessageRate | false;
+  /**
+   * closeWhere() predicates kept (for up to 30s) for sockets that are still upgrading. A
+   * predicate pushed out of this list is first checked against every upgrade that already has
+   * its socket data; only upgrades still in their guards, which it could not be checked against,
+   * then fail closed. Default 10000.
+   */
+  maxPendingRevocations?: number;
 }
 
 export const WS_DEFAULTS = Object.freeze({
@@ -82,6 +89,7 @@ export const WS_DEFAULTS = Object.freeze({
   maxConnectionsPerIp: 100,
   ipv6Subnet: 64,
   messageRate: Object.freeze({ limit: 100, windowMs: 10_000 }),
+  maxPendingRevocations: 10_000,
 });
 
 interface ResolvedServerOptions {
@@ -93,6 +101,7 @@ interface ResolvedServerOptions {
   ipv6Subnet: number;
   maxConnections: number | undefined;
   messageRate: WsMessageRate | false;
+  maxPendingRevocations: number;
 }
 
 interface PendingRevocation {
@@ -105,9 +114,26 @@ interface PendingRevocation {
 
 /** How long, and how many, closeWhere() predicates are kept for sockets still upgrading. */
 const REVOCATION_TTL = 30_000;
-/** An upgrade whose socket has not opened after this long is no longer tracked. */
+/** An upgrade whose socket has not opened after this long no longer counts as pending. */
 const UPGRADE_TTL = 30_000;
-const MAX_PENDING_REVOCATIONS = 100;
+/** Expired upgrades are swept at most this often (amortized, never on every call). */
+const SWEEP_INTERVAL = 1_000;
+
+interface UpgradeEntry {
+  /** The revocation sequence number current when the upgrade began. */
+  readonly seq: number;
+  readonly at: number;
+  /** Set once the upgrade reserved its socket data. */
+  hasData: boolean;
+  /**
+   * Lost predicates up to this sequence number were accounted for (issued before the upgrade
+   * began, or checked against its socket data when they were evicted). A loss above it was
+   * never checked against this upgrade, which then fails closed.
+   */
+  checkedThrough: number;
+  /** A lost predicate matched it when it was checked at eviction time. */
+  revoked: { code: number; reason: string } | undefined;
+}
 
 interface SocketState {
   tokens: number;
@@ -145,6 +171,7 @@ function resolveServerOptions(options: WsServerOptions): ResolvedServerOptions {
     );
   }
   assertRate('messageRate', o.messageRate);
+  assertInteger('maxPendingRevocations', o.maxPendingRevocations, 1);
   return o;
 }
 
@@ -207,17 +234,27 @@ export class WsRegistry {
   #sealed = false;
   /**
    * Upgrades in progress (from the upgrade request until the socket opens or the upgrade
-   * fails), keyed by their Ctx and then their socket data: the revocation sequence number
-   * current when they started, and when they started. Entries older than 30s (an upgrade whose
-   * socket never opened: aborted, timed out) are dropped, and remembered in #expiredUpgrades.
+   * fails), keyed by their Ctx and then their socket data. Entries older than 30s (an upgrade
+   * whose socket never opened: aborted, timed out) stop counting as pending; their entry is kept
+   * in #expiredUpgrades so a late open can still be checked.
    */
-  readonly #upgrades = new Map<object, { seq: number; at: number }>();
-  readonly #expiredUpgrades = new WeakSet<object>();
-  /** closeWhere() calls issued while an upgrade was in progress, re-applied when it opens. */
+  readonly #upgrades = new Map<object, UpgradeEntry>();
+  /** The pending upgrades that already reserved their socket data (between reserve and open). */
+  readonly #withData = new Map<object, UpgradeEntry>();
+  readonly #expiredUpgrades = new WeakMap<object, UpgradeEntry>();
+  #nextSweep = 0;
+  /** closeWhere() calls issued while an upgrade was in progress, oldest first from #head. */
   #revocations: PendingRevocation[] = [];
+  #head = 0;
   #revocationSeq = 0;
-  /** The newest revocation dropped (expired or evicted) before every upgrade could check it. */
+  /**
+   * The newest revocation that could not be kept for every upgrade that might need it (lost to
+   * the cap or the TTL, or issued while nothing was pending): expired upgrades older than it
+   * fail closed.
+   */
   #lostSeq = 0;
+  /** #lostSeq before the loss being processed. */
+  #lostPrevious = 0;
 
   register<D>(path: string, endpoint: WsEndpoint<D>, options: WsEndpointOptions = {}): void {
     const normalized = joinPaths(path);
@@ -286,39 +323,60 @@ export class WsRegistry {
     if (key !== undefined) this.#perIp.set(key, (this.#perIp.get(key) ?? 0) + 1);
     this.#reserved.set(data, key);
     // The in-progress upgrade now follows its socket data, until the socket opens.
-    const mark = ctx === undefined ? undefined : this.#upgrades.get(ctx);
-    if (mark !== undefined) {
-      this.#upgrades.delete(ctx!);
-      this.#upgrades.set(data, mark);
-    } else if (ctx !== undefined && this.#expiredUpgrades.has(ctx)) {
-      this.#expiredUpgrades.add(data);
+    if (ctx === undefined) return;
+    const entry = this.#upgrades.get(ctx);
+    if (entry !== undefined) {
+      this.#upgrades.delete(ctx);
+      entry.hasData = true;
+      this.#upgrades.set(data, entry);
+      this.#withData.set(data, entry);
+      return;
     }
+    const expired = this.#expiredUpgrades.get(ctx);
+    if (expired !== undefined) this.#expiredUpgrades.set(data, expired);
   }
 
   /** @internal Called by the compiler when an upgrade request arrives (before middleware). */
   beginUpgrade(ctx: object): void {
-    this.#pruneUpgrades(Date.now());
+    const now = Date.now();
+    this.#sweep(now);
     if (this.#upgrades.has(ctx)) return;
-    this.#upgrades.set(ctx, { seq: this.#revocationSeq, at: Date.now() });
+    this.#upgrades.set(ctx, {
+      seq: this.#revocationSeq,
+      at: now,
+      hasData: false,
+      checkedThrough: this.#revocationSeq,
+      revoked: undefined,
+    });
   }
 
   /** @internal Ends an upgrade that did not open a socket (no-op once it moved to its data). */
   endUpgrade(key: object): void {
     this.#upgrades.delete(key);
+    this.#withData.delete(key);
   }
 
   /** @internal Upgrades currently in progress (for tests). */
   get upgradesInProgress(): number {
-    this.#pruneUpgrades(Date.now());
+    this.#sweep(Date.now(), true);
     return this.#upgrades.size;
   }
 
-  /** Drops upgrades that never opened within the TTL, so the count cannot drift upwards. */
-  #pruneUpgrades(now: number): void {
+  /**
+   * Moves upgrades that never opened within the TTL out of the pending set, so the count cannot
+   * drift upwards. Runs at most once per second (or when forced), so it is amortized O(1).
+   */
+  #sweep(now: number, force = false): void {
+    if (!force && now < this.#nextSweep) return;
+    this.#nextSweep = now + SWEEP_INTERVAL;
+    // Expired predicates are checked against the upgrades with socket data before any of those
+    // upgrades leave the pending set.
+    this.#pruneRevocations(now);
     for (const [key, entry] of this.#upgrades) {
       if (now - entry.at <= UPGRADE_TTL) continue;
       this.#upgrades.delete(key);
-      this.#expiredUpgrades.add(key);
+      this.#withData.delete(key);
+      this.#expiredUpgrades.set(key, entry);
     }
   }
 
@@ -363,13 +421,11 @@ export class WsRegistry {
         this.#sockets.set(ws, this.#openState(ws));
         // Revocations issued while this socket was upgrading are applied before the endpoint
         // sees it. Fail closed when one of them can no longer be checked.
-        const mark = this.#upgrades.get(ws.data);
+        // Expire predicates first, so they are checked against this upgrade while it is pending.
+        this.#pruneRevocations(Date.now());
+        const entry = this.#upgrades.get(ws.data) ?? this.#expiredUpgrades.get(ws.data);
         this.endUpgrade(ws.data);
-        if (this.#expiredUpgrades.has(ws.data)) {
-          ws.close(1008, 'Revocation state unavailable');
-          return;
-        }
-        if (mark !== undefined && this.#reapply(ws, mark.seq)) return;
+        if (entry !== undefined && this.#reapply(ws, entry)) return;
         await this.#dispatch(ws, 'open');
       },
       message: (ws, message) => {
@@ -395,8 +451,8 @@ export class WsRegistry {
    * Closes every open socket for which `predicate` returns true (for example, all sockets of a
    * signed-out user, found through `ws.data.data`), and returns how many were closed. Sockets
    * whose upgrade is still in progress are checked when they open (the predicate is kept for up
-   * to 30s, at most 100 predicates). A predicate that throws for a socket is logged and that
-   * socket is left open.
+   * to 30s, at most `maxPendingRevocations`). A predicate that throws for a socket is logged and
+   * that socket is left open.
    */
   closeWhere(
     predicate: (ws: WsSocket) => boolean,
@@ -405,8 +461,11 @@ export class WsRegistry {
   ): number {
     // Sockets still upgrading (in guards, or between server.upgrade() and open) are not in
     // #sockets yet: the predicate is kept and applied to them when they open.
-    this.#pruneUpgrades(Date.now());
-    if (this.#upgrades.size > 0) this.#record(predicate, code, reason);
+    const now = Date.now();
+    this.#sweep(now);
+    if (this.#upgrades.size > 0) this.#record(predicate, code, reason, now);
+    // Nothing is pending to keep it for: only an expired upgrade could have needed it.
+    else this.#lostSeq = ++this.#revocationSeq;
     let count = 0;
     for (const ws of [...this.#sockets.keys()]) {
       let matches: boolean;
@@ -429,29 +488,24 @@ export class WsRegistry {
   }
 
   /**
-   * Applies closeWhere() predicates issued after this socket's upgrade began, and returns
-   * whether it closed the socket. When such a predicate was already dropped (expired, or
-   * evicted by newer ones), the socket is closed with 1008 rather than opened unchecked.
+   * Applies what happened while this socket was upgrading, and returns whether it closed the
+   * socket: a predicate that matched it when it was evicted, a kept predicate issued after its
+   * upgrade began, or (fail closed, 1008) a predicate it could not be checked against.
    */
-  #reapply(ws: WsSocket, mark: number): boolean {
-    this.#pruneRevocations(Date.now());
-    if (this.#lostSeq > mark) {
+  #reapply(ws: WsSocket, entry: UpgradeEntry): boolean {
+    if (entry.revoked) {
+      ws.close(entry.revoked.code, entry.revoked.reason);
+      return true;
+    }
+    // Fail closed only when a lost predicate was never checked against this upgrade (it was
+    // still in its guards, or no longer pending), however long the upgrade took.
+    if (this.#lostSeq > entry.checkedThrough) {
       ws.close(1008, 'Revocation state unavailable');
       return true;
     }
-    for (const revocation of this.#revocations) {
-      if (revocation.seq <= mark) continue;
-      let matches = false;
-      try {
-        matches = revocation.predicate(ws);
-      } catch (error) {
-        logError(
-          this.#log,
-          `WsRegistry.closeWhere predicate threw for ${logValue(ws.data.endpoint)}`,
-          error,
-        );
-      }
-      if (matches) {
+    for (let i = this.#firstAfter(entry.seq); i < this.#revocations.length; i++) {
+      const revocation = this.#revocations[i]!;
+      if (this.#matches(revocation, ws)) {
         ws.close(revocation.code, revocation.reason);
         return true;
       }
@@ -459,18 +513,68 @@ export class WsRegistry {
     return false;
   }
 
-  #pruneRevocations(now: number): void {
-    while (
-      this.#revocations.length > 0 &&
-      (now - this.#revocations[0]!.at > REVOCATION_TTL ||
-        this.#revocations.length > MAX_PENDING_REVOCATIONS)
-    ) {
-      this.#lostSeq = Math.max(this.#lostSeq, this.#revocations.shift()!.seq);
+  /** Index of the first kept revocation with a sequence number above `seq` (binary search). */
+  #firstAfter(seq: number): number {
+    let lo = this.#head;
+    let hi = this.#revocations.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (this.#revocations[mid]!.seq <= seq) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  }
+
+  #matches(revocation: PendingRevocation, ws: WsSocket): boolean {
+    try {
+      return revocation.predicate(ws) === true;
+    } catch (error) {
+      logError(
+        this.#log,
+        `WsRegistry.closeWhere predicate threw for ${logValue(ws.data.endpoint)}`,
+        error,
+      );
+      return false;
     }
   }
 
-  #record(predicate: (ws: WsSocket) => boolean, code: number, reason: string): void {
-    const now = Date.now();
+  /**
+   * A predicate leaves the kept list (cap or TTL): check it now against every pending upgrade
+   * that already has its socket data. Upgrades still in their guards are not walked: their
+   * `checkedThrough` stays behind #lostSeq, so they fail closed at open.
+   */
+  #lose(revocation: PendingRevocation): void {
+    this.#lostPrevious = this.#lostSeq;
+    this.#lostSeq = Math.max(this.#lostSeq, revocation.seq);
+    for (const [key, entry] of this.#withData) {
+      // Only an upgrade that was accounted for up to now stays accounted for.
+      if (entry.checkedThrough < this.#lostPrevious) continue;
+      entry.checkedThrough = revocation.seq;
+      if (entry.revoked || entry.seq >= revocation.seq) continue;
+      // Predicates read the socket's data (ws.data); the socket itself does not exist yet.
+      if (this.#matches(revocation, { data: key } as WsSocket)) {
+        entry.revoked = { code: revocation.code, reason: revocation.reason };
+      }
+    }
+  }
+
+  #pruneRevocations(now: number): void {
+    const max = this.#server.maxPendingRevocations;
+    while (
+      this.#head < this.#revocations.length &&
+      (now - this.#revocations[this.#head]!.at > REVOCATION_TTL ||
+        this.#revocations.length - this.#head > max)
+    ) {
+      this.#lose(this.#revocations[this.#head++]!);
+    }
+    // Compact once the dropped prefix is large, so eviction stays amortized O(1).
+    if (this.#head > 1024 && this.#head * 2 > this.#revocations.length) {
+      this.#revocations = this.#revocations.slice(this.#head);
+      this.#head = 0;
+    }
+  }
+
+  #record(predicate: (ws: WsSocket) => boolean, code: number, reason: string, now: number): void {
     this.#revocations.push({ seq: ++this.#revocationSeq, at: now, predicate, code, reason });
     this.#pruneRevocations(now);
   }
