@@ -381,7 +381,14 @@ jobs:
           JS
           seg='[A-Za-z0-9_@+-][A-Za-z0-9._@+-]*'
           entry_re="^(- package/(package\.json|README\.md|LICENSE-MIT|LICENSE-APACHE|dist/($seg/)*$seg)|d package/(dist/($seg/)*)?)$"
+          max_tgz=$((10 * 1024 * 1024))
+          max_unpacked=$((64 * 1024 * 1024))
+          max_manifest=$((1024 * 1024))
           for tgz in "${tarballs[@]}"; do
+            # Size limits before anything parses the archive, so a gzip bomb cannot exhaust the job.
+            [ "$(stat -c %s "$tgz")" -le "$max_tgz" ] || fail "$tgz is larger than 10 MiB"
+            unpacked="$(set +o pipefail; gzip -dc <"$tgz" 2>/dev/null | head -c "$((max_unpacked + 1))" | wc -c)"
+            [ "$unpacked" -le "$max_unpacked" ] || fail "$tgz unpacks to more than 64 MiB"
             names="$(tar -tzf "$tgz")" || fail "$tgz is not a readable tarball"
             types="$(tar -tvzf "$tgz" | cut -c1)"
             [ "$(wc -l <<<"$names")" = "$(wc -l <<<"$types")" ] || fail "$tgz has an unreadable listing"
@@ -394,7 +401,8 @@ jobs:
             fi
             grep -qx -- '- package/package.json' <<<"$listing" || fail "$tgz has no package/package.json"
             printf '%s\n' "$names" > "$work/$tgz.names"
-            tar -xzOf "$tgz" package/package.json > "$work/$tgz.gnu.json"
+            { tar -xzOf "$tgz" package/package.json || true; } | head -c "$((max_manifest + 1))" > "$work/$tgz.gnu.json"
+            [ "$(stat -c %s "$work/$tgz.gnu.json")" -le "$max_manifest" ] || fail "$tgz: package.json is larger than 1 MiB"
           done
           NPM_ROOT="$npm_root" node "$verify" "$work" "${tarballs[@]}" || fail "the npm parser cross-check failed"
           seen=()

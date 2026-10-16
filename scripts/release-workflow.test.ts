@@ -1,6 +1,7 @@
 // Runs the publish step of .github/workflows/release.yml against fake tarballs with a fake `npm`
 // on PATH, so the shell logic the publish job runs is tested without touching the registry.
 import { afterEach, describe, expect, test } from 'bun:test';
+import { randomBytes } from 'node:crypto';
 import {
   chmodSync,
   mkdirSync,
@@ -75,6 +76,8 @@ interface FakePackage {
   manifest?: Record<string, unknown>;
   /** Extra regular files, path relative to the tarball root (e.g. `package/dist/x.js`). */
   files?: string[];
+  /** Extra regular files with the given contents: [entry, contents]. */
+  blobs?: [string, Buffer][];
   /** Symlinks to add: [entry, target]. */
   symlinks?: [string, string][];
   /** Append a second package/package.json with these contents. */
@@ -214,6 +217,11 @@ function makeTarball(tmp: string, out: string, pkg: FakePackage): string {
   for (const f of pkg.files ?? []) {
     write(f, 'x');
     entries.push(f);
+  }
+  for (const [entry, contents] of pkg.blobs ?? []) {
+    mkdirSync(dirname(join(src, entry)), { recursive: true });
+    writeFileSync(join(src, entry), contents);
+    entries.push(entry);
   }
   for (const [entry, target] of pkg.symlinks ?? []) {
     mkdirSync(dirname(join(src, entry)), { recursive: true });
@@ -678,6 +686,41 @@ describe('release.yml publish step', () => {
       const r = publish('v1.2.3', [{ name: '@hpmws/core', version: '1.2.3', raw }]);
       expect(r.exitCode).toBe(0);
       expect(r.publishes).toHaveLength(1);
+    });
+  });
+
+  describe('size limits', () => {
+    test('rejects a tarball over 10 MiB before reading it', () => {
+      const r = publish('v1.2.3', [
+        {
+          name: '@hpmws/core',
+          version: '1.2.3',
+          blobs: [['package/dist/big.js', randomBytes(11 * 1024 * 1024)]],
+        },
+      ]);
+      expectRejected(r, 'hpmws-core-1.2.3.tgz is larger than 10 MiB');
+    });
+
+    test('rejects a gzip bomb', () => {
+      const r = publish('v1.2.3', [
+        {
+          name: '@hpmws/core',
+          version: '1.2.3',
+          blobs: [['package/dist/zeros.js', Buffer.alloc(80 * 1024 * 1024)]],
+        },
+      ]);
+      expectRejected(r, 'hpmws-core-1.2.3.tgz unpacks to more than 64 MiB');
+    });
+
+    test('rejects a package.json over 1 MiB', () => {
+      const r = publish('v1.2.3', [
+        {
+          name: '@hpmws/core',
+          version: '1.2.3',
+          manifest: { description: 'x'.repeat(1024 * 1024) },
+        },
+      ]);
+      expectRejected(r, 'package.json is larger than 1 MiB');
     });
   });
 
