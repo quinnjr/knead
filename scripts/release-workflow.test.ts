@@ -46,8 +46,11 @@ case "$1" in
     fi
     echo "npm error code \${FAKE_VIEW_ERROR:-E404}" >&2; exit 1 ;;
   publish) exit 0 ;;
+  # The publish step loads node-tar and pacote from the real npm's global root.
+  root) exec "$REAL_NPM" "$@" ;;
 esac
 `;
+const REAL_NPM = Bun.which('npm');
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -73,6 +76,90 @@ interface FakePackage {
   duplicateManifest?: Record<string, unknown>;
   /** Tarball file name (default: the npm-style name). */
   file?: string;
+  /** Uncompressed tar bytes to use instead of building the tarball with GNU tar. */
+  raw?: Buffer;
+}
+
+// A minimal tar writer, for tarballs GNU tar would never produce (PAX/GNU sparse tricks).
+interface RawEntry {
+  name: string;
+  data?: string | Buffer;
+  /** Typeflag (default '0', a regular file). */
+  type?: string;
+  /** PAX extended header records, written as a preceding 'x' entry. */
+  pax?: Record<string, string>;
+}
+
+function rawHeader(name: string, size: number, type: string): Buffer {
+  const h = Buffer.alloc(512);
+  h.write(name, 0, 100, 'utf8');
+  h.write('0000644\0', 100);
+  h.write('0000000\0', 108);
+  h.write('0000000\0', 116);
+  h.write(`${size.toString(8).padStart(11, '0')}\0`, 124);
+  h.write('00000000000\0', 136);
+  h.fill(' ', 148, 156);
+  h.write(type, 156);
+  h.write('ustar\0', 257);
+  h.write('00', 263);
+  let sum = 0;
+  for (const b of h) sum += b;
+  h.write(`${sum.toString(8).padStart(6, '0')}\0 `, 148);
+  return h;
+}
+
+const padBlock = (b: Buffer) => Buffer.concat([b, Buffer.alloc((512 - (b.length % 512)) % 512)]);
+
+function paxData(records: Record<string, string>): Buffer {
+  let out = '';
+  for (const [k, v] of Object.entries(records)) {
+    const body = ` ${k}=${v}\n`;
+    let len = body.length + 1;
+    while (`${len}${body}`.length !== len) len = `${len}${body}`.length;
+    out += `${len}${body}`;
+  }
+  return Buffer.from(out, 'utf8');
+}
+
+function rawTar(entries: RawEntry[], trailer: Buffer = Buffer.alloc(0)): Buffer {
+  const parts: Buffer[] = [];
+  for (const e of entries) {
+    if (e.pax) {
+      const pax = paxData(e.pax);
+      parts.push(rawHeader('././@PaxHeader', pax.length, 'x'), padBlock(pax));
+    }
+    const data = Buffer.from(e.data ?? '');
+    parts.push(rawHeader(e.name, data.length, e.type ?? '0'), padBlock(data));
+  }
+  parts.push(Buffer.alloc(1024), trailer);
+  return Buffer.concat(parts);
+}
+
+/**
+ * The reviewer's PoC: PAX `GNU.sparse.name` swaps two entries for GNU tar only. GNU tar sees a
+ * clean package/package.json, while node-tar (and so pacote and npm publish) reads one with a
+ * postinstall script.
+ */
+function sparseNameSwap(name: string, version: string): Buffer {
+  const benign = JSON.stringify({ name, version });
+  const evil = JSON.stringify({ name, version, scripts: { postinstall: 'node -e "1"' } });
+  const sparse = (path: string, sparseName: string, data: string): RawEntry => ({
+    name: path,
+    data,
+    pax: {
+      path,
+      'GNU.sparse.name': sparseName,
+      'GNU.sparse.size': String(data.length),
+      'GNU.sparse.numblocks': '1',
+      'GNU.sparse.map': `0,${data.length}`,
+    },
+  });
+  return rawTar([
+    { name: 'package/README.md', data: '# readme' },
+    { name: 'package/dist/index.js', data: 'export {};' },
+    sparse('package/package.json', 'package/dist/a.js', evil),
+    sparse('package/dist/b.js', 'package/package.json', benign),
+  ]);
 }
 
 interface PublishOptions {
@@ -93,6 +180,11 @@ const tarballName = (name: string, version: string) =>
   `${name.replace('@', '').replace('/', '-')}-${version}.tgz`;
 
 function makeTarball(tmp: string, out: string, pkg: FakePackage): string {
+  if (pkg.raw) {
+    const file = pkg.file ?? tarballName(pkg.name, pkg.version);
+    writeFileSync(join(out, file), Bun.gzipSync(new Uint8Array(pkg.raw)));
+    return file;
+  }
   const src = mkdtempSync(join(tmp, 'src-'));
   const write = (entry: string, content: string) => {
     mkdirSync(dirname(join(src, entry)), { recursive: true });
@@ -167,6 +259,7 @@ function publish(
       ...opts.env,
       PATH: `${bin}:${process.env.PATH}`,
       FAKE_LOG: log,
+      REAL_NPM: REAL_NPM ?? 'npm-not-found',
       RUNNER_TEMP: tmp,
       GITHUB_REF_NAME: tag,
     },
@@ -203,7 +296,8 @@ describe('release.yml publish step', () => {
     expect(r.publishes).toEqual([publishCmd('hpmws-core-1.2.3.tgz', 'latest')]);
     // Every npm call names the registry explicitly.
     expect(r.calls.length).toBeGreaterThan(1);
-    for (const c of r.calls) expect(c.endsWith(REGISTRY_FLAGS)).toBe(true);
+    for (const c of r.calls.filter((c) => c !== 'npm root -g'))
+      expect(c.endsWith(REGISTRY_FLAGS)).toBe(true);
   });
 
   test.each([
@@ -423,6 +517,93 @@ describe('release.yml publish step', () => {
     });
   });
 
+  describe('GNU tar and npm must read the tarball the same way', () => {
+    test('the sparse-name PoC really differs between GNU tar and node-tar', () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'hpmws-poc-'));
+      dirs.push(tmp);
+      writeFileSync(join(tmp, 'poc.tar'), sparseNameSwap('@hpmws/core', '1.2.3'));
+      const gnu = JSON.parse(sh(['tar', '-xOf', 'poc.tar', 'package/package.json'], tmp));
+      expect(gnu.scripts).toBeUndefined();
+      const npmRoot = sh([REAL_NPM as string, 'root', '-g']).trim();
+      const viaNpm = sh([
+        'node',
+        '-e',
+        `require(${JSON.stringify(join(npmRoot, 'npm/node_modules/pacote'))})
+          .manifest(${JSON.stringify(join(tmp, 'poc.tar'))})
+          .then((m) => console.log(JSON.stringify(m.scripts)))`,
+      ]);
+      expect(JSON.parse(viaNpm)).toEqual({ postinstall: 'node -e "1"' });
+    });
+
+    test('rejects the GNU.sparse.name PoC', () => {
+      const r = publish('v1.2.3', [
+        { name: '@hpmws/core', version: '1.2.3', raw: sparseNameSwap('@hpmws/core', '1.2.3') },
+      ]);
+      expectRejected(r, 'GNU sparse');
+    });
+
+    test('rejects a PAX path that differs from the header name', () => {
+      const raw = rawTar([
+        {
+          name: 'package/dist/x.js',
+          data: '{"name":"@hpmws/core","version":"1.2.3"}',
+          pax: { path: 'package/package.json' },
+        },
+        { name: 'package/README.md', data: '# readme' },
+      ]);
+      expectRejected(
+        publish('v1.2.3', [{ name: '@hpmws/core', version: '1.2.3', raw }]),
+        'PAX path',
+      );
+    });
+
+    test.each([
+      [{ comment: 'x' }, 'PAX key comment'],
+      [{ linkpath: '/etc/passwd' }, 'PAX key linkpath'],
+      // GNU tar itself refuses this one; either way nothing is published.
+      [{ 'GNU.sparse.major': '1' }, '::error::'],
+    ])('rejects PAX records %j', (pax, message) => {
+      const raw = rawTar([
+        { name: 'package/package.json', data: '{"name":"@hpmws/core","version":"1.2.3"}', pax },
+      ]);
+      expectRejected(publish('v1.2.3', [{ name: '@hpmws/core', version: '1.2.3', raw }]), message);
+    });
+
+    test.each(['S', 'g', 'L', 'K', '1', '2'])('rejects entry type %p', (type) => {
+      const raw = rawTar([
+        { name: 'package/package.json', data: '{"name":"@hpmws/core","version":"1.2.3"}' },
+        { name: 'package/dist/x.js', data: 'x', type },
+      ]);
+      const r = publish('v1.2.3', [{ name: '@hpmws/core', version: '1.2.3', raw }]);
+      expect(r.exitCode).not.toBe(0);
+      expect(r.publishes).toEqual([]);
+    });
+
+    test('rejects data after the end-of-archive marker', () => {
+      const trailer = padBlock(
+        Buffer.concat([rawHeader('package/dist/late.js', 1, '0'), Buffer.from('x')]),
+      );
+      const raw = rawTar(
+        [{ name: 'package/package.json', data: '{"name":"@hpmws/core","version":"1.2.3"}' }],
+        trailer,
+      );
+      expectRejected(
+        publish('v1.2.3', [{ name: '@hpmws/core', version: '1.2.3', raw }]),
+        'after the end-of-archive',
+      );
+    });
+
+    test('accepts a well-formed tarball written by the raw writer', () => {
+      const raw = rawTar([
+        { name: 'package/package.json', data: '{"name":"@hpmws/core","version":"1.2.3"}' },
+        { name: 'package/dist/index.js', data: 'export {};' },
+      ]);
+      const r = publish('v1.2.3', [{ name: '@hpmws/core', version: '1.2.3', raw }]);
+      expect(r.exitCode).toBe(0);
+      expect(r.publishes).toHaveLength(1);
+    });
+  });
+
   describe('manifest', () => {
     test.each([
       [
@@ -441,9 +622,10 @@ describe('release.yml publish step', () => {
       [{ scripts: { prepublishOnly: 'x' } }, 'lifecycle scripts'],
       [{ scripts: { publish: 'x' } }, 'lifecycle scripts'],
       [{ scripts: { postpack: 'x' } }, 'lifecycle scripts'],
-      [{ scripts: 'x' }, 'lifecycle scripts'],
+      // pacote normalises these, so the cross-check catches them before the jq checks.
+      [{ scripts: 'x' }, 'npm reads a different package.json'],
       [{ bundleDependencies: ['x'] }, 'bundled dependencies'],
-      [{ bundledDependencies: true }, 'bundled dependencies'],
+      [{ bundledDependencies: true }, 'npm reads a different package.json'],
       [{ name: 42 }, 'invalid package.json'],
     ])('rejects %j', (manifest, message) => {
       const r = publish('v1.2.3', [

@@ -166,8 +166,9 @@ jobs:
       #
       # Every tarball is verified before any is published: SHA256SUMS must match the digest the
       # build job reported and every tarball; each tarball holds exactly one package/package.json
-      # and only the files a package ships; the name is in ALLOWED_PACKAGES (exact match); and
-      # the manifest has no publishConfig.registry, lifecycle scripts or bundled dependencies.
+      # and only the files a package ships; npm's own parsers (node-tar, pacote) read exactly what
+      # GNU tar reads; the name is in ALLOWED_PACKAGES (exact match); and the manifest has no
+      # publishConfig.registry, lifecycle scripts or bundled dependencies.
       #
       # Changesets fixed mode gives every package the tag's version. Versions already on npm are
       # skipped, so a partly failed release can simply be re-run.
@@ -228,6 +229,145 @@ jobs:
           sha256sum --check --strict --quiet SHA256SUMS || fail "a tarball does not match SHA256SUMS"
 
           # 2. Validate every tarball before publishing any of them.
+          #
+          # npm publish reads the tarball with node-tar and pacote, not GNU tar, and the two can
+          # disagree (PAX GNU.sparse.name renames an entry for GNU tar only). So every tarball is
+          # also parsed with the node-tar and pacote bundled with this job's npm, plus a raw header
+          # walk that rejects anything the parsers might resolve differently: PAX records other
+          # than path (which must equal the header name) and timestamps/owners, GNU sparse
+          # records, entry types other than file and directory, and data after the end marker.
+          # The manifest every later check reads is pacote's, and it must equal GNU tar's.
+          npm_root="$(npm root -g)"
+          for m in tar pacote; do
+            [ -f "$npm_root/npm/node_modules/$m/package.json" ] || fail "npm's bundled $m was not found under $npm_root"
+          done
+          work="$(mktemp -d "$RUNNER_TEMP/verify.XXXXXX")"
+          verify="$work/npm-verify.cjs"
+          cat > "$verify" <<'JS'
+          'use strict';
+          // node npm-verify.cjs <work-dir> <tgz>...; NPM_ROOT = `npm root -g`. For each tarball, reads
+          // <work>/<tgz>.names and <work>/<tgz>.gnu.json (GNU tar's view) and writes pacote's manifest
+          // to <work>/<tgz>.json.
+          const fs = require('node:fs');
+          const os = require('node:os');
+          const path = require('node:path');
+          const zlib = require('node:zlib');
+          const [work, ...tarballs] = process.argv.slice(2);
+          let tgz;
+          const die = (m) => {
+            console.error(`::error::${tgz}: ${m}`);
+            process.exit(1);
+          };
+          const npmModule = (m) => require(path.join(process.env.NPM_ROOT, 'npm', 'node_modules', m));
+          async function verify(file) {
+            tgz = file;
+            let raw;
+            try {
+              raw = zlib.gunzipSync(fs.readFileSync(tgz), { maxOutputLength: 64 * 1024 * 1024 });
+            } catch (e) {
+              die(`cannot be decompressed within 64 MiB: ${e.message}`);
+            }
+            const field = (h, start, len) => {
+              const b = h.subarray(start, start + len);
+              const end = b.indexOf(0);
+              return b.subarray(0, end < 0 ? len : end).toString('utf8');
+            };
+            const PAX_KEYS = new Set(['path', 'mtime', 'atime', 'ctime', 'uid', 'gid', 'uname', 'gname']);
+            const parsePax = (data) => {
+              const records = {};
+              let rest = data.toString('utf8');
+              while (rest.length > 0) {
+                const m = /^(\d+) /.exec(rest);
+                if (!m) die('malformed PAX header');
+                const len = Number(m[1]);
+                const record = rest.slice(m[0].length, len);
+                if (Buffer.byteLength(rest.slice(0, len)) !== len || !record.endsWith('\n'))
+                  die('malformed PAX record');
+                rest = rest.slice(len);
+                const eq = record.indexOf('=');
+                const key = record.slice(0, eq);
+                if (eq < 1) die('malformed PAX record');
+                if (key.startsWith('GNU.sparse')) die(`has a GNU sparse PAX record (${key})`);
+                if (!PAX_KEYS.has(key)) die(`PAX key ${key} is not allowed`);
+                records[key] = record.slice(eq + 1, -1);
+              }
+              return records;
+            };
+            const rawNames = [];
+            let off = 0;
+            let pax = null;
+            let ended = false;
+            while (off + 512 <= raw.length) {
+              const h = raw.subarray(off, off + 512);
+              if (h.every((b) => b === 0)) {
+                ended = true;
+                off += 512;
+                break;
+              }
+              let sum = 0;
+              for (let i = 0; i < 512; i++) sum += i >= 148 && i < 156 ? 32 : h[i];
+              if (Number.parseInt(field(h, 148, 8).trim(), 8) !== sum) die(`bad header checksum at ${off}`);
+              const sizeField = field(h, 124, 12).trim();
+              if (h[124] & 0x80 || !/^[0-7]*$/.test(sizeField)) die(`bad size field at ${off}`);
+              const size = Number.parseInt(sizeField || '0', 8);
+              const type = h[156] === 0 ? '0' : String.fromCharCode(h[156]);
+              const magic = h.subarray(257, 263).toString('latin1');
+              if (magic !== 'ustar\0' && magic !== 'ustar ') die('is not a ustar archive');
+              const prefix = magic === 'ustar\0' ? field(h, 345, 155) : '';
+              const name = prefix ? `${prefix}/${field(h, 0, 100)}` : field(h, 0, 100);
+              const data = raw.subarray(off + 512, off + 512 + size);
+              if (data.length !== size) die(`entry ${name} is truncated`);
+              off += 512 + Math.ceil(size / 512) * 512;
+              if (type === 'x') {
+                if (pax) die('has two PAX headers in a row');
+                pax = parsePax(data);
+                continue;
+              }
+              if (type === 'S') die(`entry ${name} is a GNU sparse file`);
+              if (type !== '0' && type !== '5') die(`entry ${name} has unsupported type ${type}`);
+              if (pax && pax.path !== undefined && pax.path !== name)
+                die(`PAX path ${pax.path} differs from header name ${name}`);
+              pax = null;
+              rawNames.push(name);
+            }
+            if (!ended) die('has no end-of-archive marker');
+            if (pax) die('ends with a dangling PAX header');
+            if (raw.subarray(off).some((b) => b !== 0)) die('has data after the end-of-archive marker');
+            const nodeNames = [];
+            try {
+              npmModule('tar').t({
+                file: tgz,
+                sync: true,
+                strict: true,
+                onReadEntry: (e) => nodeNames.push(e.path),
+              });
+            } catch (e) {
+              die(`node-tar cannot list it: ${e.message}`);
+            }
+            const gnuNames = fs.readFileSync(path.join(work, `${tgz}.names`), 'utf8').split('\n').filter(Boolean);
+            const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+            if (!same(gnuNames, nodeNames)) die('node-tar and GNU tar list different entries');
+            if (!same(gnuNames, rawNames)) die('the raw headers and GNU tar list different entries');
+            let gnuManifest;
+            try {
+              gnuManifest = JSON.stringify(JSON.parse(fs.readFileSync(path.join(work, `${tgz}.gnu.json`), 'utf8')));
+            } catch {
+              die('has an invalid package.json');
+            }
+            const cache = fs.mkdtempSync(path.join(os.tmpdir(), 'pacote-'));
+            const m = await npmModule('pacote')
+              .manifest(path.resolve(tgz), { cache })
+              .catch((e) => die(`pacote cannot read it: ${e.message}`));
+            // pacote adds these resolution fields; everything else must match byte for byte.
+            const { _id, _integrity, _resolved, _from, ...manifest } = m;
+            const json = JSON.stringify(manifest);
+            if (json !== gnuManifest) die('npm reads a different package.json than GNU tar');
+            fs.writeFileSync(path.join(work, `${tgz}.json`), json);
+          }
+          (async () => {
+            for (const file of tarballs) await verify(file);
+          })().catch((e) => die(e.message));
+          JS
           seg='[A-Za-z0-9_@+-][A-Za-z0-9._@+-]*'
           entry_re="^(- package/(package\.json|README\.md|LICENSE-MIT|LICENSE-APACHE|dist/($seg/)*$seg)|d package/(dist/($seg/)*)?)$"
           for tgz in "${tarballs[@]}"; do
@@ -242,7 +382,12 @@ jobs:
               fail "$tgz has unexpected entries: $bad"
             fi
             grep -qx -- '- package/package.json' <<<"$listing" || fail "$tgz has no package/package.json"
-            manifest="$(tar -xzOf "$tgz" package/package.json)"
+            printf '%s\n' "$names" > "$work/$tgz.names"
+            tar -xzOf "$tgz" package/package.json > "$work/$tgz.gnu.json"
+          done
+          NPM_ROOT="$npm_root" node "$verify" "$work" "${tarballs[@]}" || fail "the npm parser cross-check failed"
+          for tgz in "${tarballs[@]}"; do
+            manifest="$(cat "$work/$tgz.json")"
             jq -e 'type == "object" and (.name | type) == "string" and (.version | type) == "string"' \
               >/dev/null <<<"$manifest" || fail "$tgz has an invalid package.json"
             name="$(jq -r .name <<<"$manifest")"
@@ -266,7 +411,7 @@ jobs:
 
           # 3. Publish.
           for tgz in "${tarballs[@]}"; do
-            manifest="$(tar -xzOf "$tgz" package/package.json)"
+            manifest="$(cat "$work/$tgz.json")"
             name="$(jq -r .name <<<"$manifest")"
             version="$(jq -r .version <<<"$manifest")"
             if published="$(npm_registry view "$name@$version" version 2>"$errlog")"; then
