@@ -21,6 +21,16 @@ const RolesGuard = (ctx: Ctx) => {
 
 Route schemas (`params`, `query`, `headers`, `body`; any Standard Schema) replace the matching `ctx` field with the schema output, and once a `body` schema has passed, `ctx.json()` resolves to the validated value too, so unvalidated fields cannot slip in through it. Failures are a 400 listing every issue with its `source` and `path`; issues from the `headers` source always carry the generic message `Invalid header value`, so header values (tokens, cookies) are never echoed back.
 
+Responses the framework builds from a handler's return value (JSON, text, `Blob`, bytes, streams, `204`), problem responses and redirects carry `x-content-type-options: nosniff`; a `Response` returned by a handler is sent as is. A `Blob` keeps its own `type`, so when serving user-uploaded files, force a download instead of letting the browser render them in your origin:
+
+```ts
+@Get('/files/:id')
+download(ctx: Ctx) {
+  ctx.res.headers.set('content-disposition', 'attachment');
+  return this.files.blob(ctx.params.id);
+}
+```
+
 Errors are RFC 9457 `application/problem+json`. Outside development (`HpmwsFactory.create(root, { development })`, default `NODE_ENV === 'development'`), a 5xx `HttpException` is sent with only `type`, `title`, `status` and `instance`: its `detail` and extensions are dropped (headers such as `Retry-After` are kept), and unknown errors are a bare 500. 4xx problems keep their detail and extensions.
 
 `ctx.ip` and `ctx.secure` come from the socket unless `listen({ trustProxy })` says which proxies to believe: a hop count (the number of proxies in front of the app) or a list of proxy CIDRs. In hop mode an `X-Forwarded-For` or `X-Forwarded-Proto` header with fewer entries than hops did not pass through every proxy and is ignored (the IP falls back to the socket peer and `secure` to the listener's TLS state). `ctx.ip` is canonical: IPv4-mapped IPv6 (`::ffff:7f00:1`) becomes `127.0.0.1` and IPv6 is lowercased and compressed (RFC 5952), so one client always gets one key; `normalizeIp()`, `parseIp()` and `formatIp()` are exported. When `trustProxy` is off and a request arrives with `X-Forwarded-*` headers, one warning is logged, since that usually means a proxy was left unconfigured.

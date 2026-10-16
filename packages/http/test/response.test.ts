@@ -4,6 +4,25 @@ import { toResponse, withHeaders } from '../src/response.js';
 const draft = (init?: Bun.HeadersInit) => new Headers(init);
 
 describe('toResponse', () => {
+  test('every framework-built response carries nosniff; handler Responses are left alone', () => {
+    const values: unknown[] = [
+      undefined,
+      'text',
+      new Blob(['<script>'], { type: 'text/html' }),
+      new Uint8Array([1]),
+      new ArrayBuffer(1),
+      new ReadableStream(),
+      { a: 1 },
+    ];
+    for (const value of values) {
+      const res = toResponse(value, undefined, draft());
+      expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    }
+    expect(
+      toResponse(new Response('raw'), undefined, draft()).headers.has('x-content-type-options'),
+    ).toBe(false);
+  });
+
   test('objects become JSON with nosniff', async () => {
     const res = toResponse({ a: 1 }, undefined, draft({ 'x-draft': '1' }));
     expect(res.status).toBe(200);
