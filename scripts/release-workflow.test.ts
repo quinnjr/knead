@@ -174,7 +174,16 @@ interface PublishOptions {
   noSums?: boolean;
   /** Extra tarballs added after SHA256SUMS is written. */
   unlisted?: FakePackage[];
+  /**
+   * Only the given packages. By default every other allowed package is added at the tag's
+   * version, since the step refuses a partial set.
+   */
+  partial?: boolean;
 }
+
+const ALLOWED = String(stepEnv.ALLOWED_PACKAGES ?? '')
+  .split(/\s+/)
+  .filter(Boolean);
 
 const tarballName = (name: string, version: string) =>
   `${name.replace('@', '').replace('/', '-')}-${version}.tgz`;
@@ -232,8 +241,19 @@ function publish(
   mkdirSync(tarballs);
   writeFileSync(join(bin, 'npm'), fakeNpm);
   chmodSync(join(bin, 'npm'), 0o755);
-  for (const p of packages) {
-    makeTarball(tmp, tarballs, Array.isArray(p) ? { name: p[0], version: p[1] } : p);
+  const given = packages.map((p) => (Array.isArray(p) ? { name: p[0], version: p[1] } : p));
+  const explicit = given.map((p) => makeTarball(tmp, tarballs, p));
+  if (!opts.partial) {
+    const version = tag.replace(/^refs\/tags\//, '').replace(/^v/, '');
+    const taken = new Set([
+      ...explicit,
+      ...(opts.unlisted ?? []).map((p) => p.file ?? tarballName(p.name, p.version)),
+    ]);
+    const named = new Set([...given, ...(opts.unlisted ?? [])].map((p) => p.name));
+    for (const name of ALLOWED) {
+      if (named.has(name) || taken.has(tarballName(name, version))) continue;
+      makeTarball(tmp, tarballs, { name, version });
+    }
   }
   let digest = '';
   if (!opts.noSums) {
@@ -271,7 +291,12 @@ function publish(
     exitCode: r.exitCode,
     output: r.stdout.toString() + r.stderr.toString(),
     calls,
-    publishes: calls.filter((c) => c.startsWith('npm publish')),
+    /** Publishes of the packages the test passed in. */
+    publishes: calls.filter(
+      (c) => c.startsWith('npm publish') && explicit.some((f) => c.includes(` ./${f} `)),
+    ),
+    /** Every publish, including the packages added to complete the set. */
+    allPublishes: calls.filter((c) => c.startsWith('npm publish')),
   };
 }
 
@@ -280,7 +305,7 @@ const publishCmd = (file: string, tag: string) =>
 
 function expectRejected(r: ReturnType<typeof publish>, message: string) {
   expect(r.exitCode).not.toBe(0);
-  expect(r.publishes).toEqual([]);
+  expect(r.allPublishes).toEqual([]);
   expect(r.output).toContain(message);
 }
 
@@ -384,6 +409,29 @@ describe('release.yml publish step', () => {
       env: { FAKE_VIEW_ERROR: 'ETIMEDOUT' },
     });
     expectRejected(r, 'could not query npm');
+  });
+
+  describe('full set', () => {
+    test('publishes every allowed package', () => {
+      const r = publish('v1.2.3', []);
+      expect(r.exitCode).toBe(0);
+      expect(r.allPublishes).toHaveLength(ALLOWED.length);
+      expect(ALLOWED).toHaveLength(8);
+    });
+
+    test('publishes nothing when a package is missing from the artifact', () => {
+      const r = publish('v1.2.3', [['@hpmws/core', '1.2.3']], { partial: true });
+      expectRejected(r, 'missing from the artifact: @hpmws/cors');
+    });
+
+    test('publishes nothing when a package appears twice', () => {
+      const r = publish('v1.2.3', [
+        ['@hpmws/core', '1.2.3'],
+        { name: '@hpmws/core', version: '1.2.3', file: 'hpmws-core-1.2.3-copy.tgz' },
+      ]);
+      expect(r.exitCode).not.toBe(0);
+      expect(r.allPublishes).toEqual([]);
+    });
   });
 
   describe('package allowlist', () => {
@@ -576,7 +624,7 @@ describe('release.yml publish step', () => {
       ]);
       const r = publish('v1.2.3', [{ name: '@hpmws/core', version: '1.2.3', raw }]);
       expect(r.exitCode).not.toBe(0);
-      expect(r.publishes).toEqual([]);
+      expect(r.allPublishes).toEqual([]);
     });
 
     test('rejects data after the end-of-archive marker', () => {

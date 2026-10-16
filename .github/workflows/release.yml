@@ -386,6 +386,7 @@ jobs:
             tar -xzOf "$tgz" package/package.json > "$work/$tgz.gnu.json"
           done
           NPM_ROOT="$npm_root" node "$verify" "$work" "${tarballs[@]}" || fail "the npm parser cross-check failed"
+          seen=()
           for tgz in "${tarballs[@]}"; do
             manifest="$(cat "$work/$tgz.json")"
             jq -e 'type == "object" and (.name | type) == "string" and (.version | type) == "string"' \
@@ -396,6 +397,7 @@ jobs:
             [ "$version" = "$want" ] || fail "$name is at $version but the tag is $GITHUB_REF_NAME"
             expected="${name#@}"; expected="${expected//\//-}-$version.tgz"
             [ "$tgz" = "$expected" ] || fail "$tgz holds $name@$version (expected file $expected)"
+            seen+=("$name")
             if jq -e '(.publishConfig // {}) | type != "object" or (keys - ["access"] | length > 0)' \
               >/dev/null <<<"$manifest"; then
               fail "$name: publishConfig may only set access (no registry or other overrides)"
@@ -408,6 +410,16 @@ jobs:
               fail "$name: package.json has bundled dependencies"
             fi
           done
+
+          # Every allowed package exactly once: a partial set would leave a half-published release.
+          missing=()
+          for n in "${allowed[@]}"; do
+            count="$(printf '%s\n' "${seen[@]}" | grep -cxF -- "$n" || true)"
+            if [ "$count" -eq 0 ]; then missing+=("$n"); fi
+            [ "$count" -le 1 ] || fail "$n appears $count times in the artifact"
+          done
+          [ "${#missing[@]}" -eq 0 ] || fail "packages missing from the artifact: ${missing[*]}"
+          [ "${#seen[@]}" -eq "${#allowed[@]}" ] || fail "expected ${#allowed[@]} packages, found ${#seen[@]}"
 
           # 3. Publish.
           for tgz in "${tarballs[@]}"; do
