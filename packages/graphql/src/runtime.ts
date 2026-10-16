@@ -10,6 +10,7 @@ import {
   type Type,
 } from '@hpmws/core';
 import {
+  BadRequestException,
   type Ctx,
   ForbiddenException,
   GUARDS,
@@ -117,6 +118,15 @@ function resolveGuard(ref: GuardRef<any>, injector: ModuleInjector): Guard<any> 
   if (isClassWith(ref, 'canActivate')) return injector.resolveOrConstruct(ref as Type<Guard<any>>);
   if (typeof ref === 'function') return { canActivate: ref as (ctx: unknown) => boolean };
   return ref;
+}
+
+/** Rejects computed topics containing a wildcard ("*" or "#") with BAD_USER_INPUT. */
+export function rejectWildcards(topics: string | readonly string[]): void {
+  for (const topic of typeof topics === 'string' ? [topics] : topics) {
+    if (/[*#]/.test(topic)) {
+      throw new BadRequestException('Subscription topics cannot contain "*" or "#".');
+    }
+  }
 }
 
 /** Stands in for an event whose rechecked guards denied; its resolver rethrows `error`. */
@@ -569,6 +579,9 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
     spec.subscribe = marked(async (parent, args, op: OperationContext, info) => {
       const ctx = await prepare(parent, args, op, info, true);
       const topics = typeof sub.topic === 'function' ? sub.topic(ctx) : sub.topic;
+      // A computed topic usually embeds client input; a wildcard there would let the client
+      // listen to other topics on engines that support patterns.
+      if (typeof sub.topic === 'function') rejectWildcards(topics);
       const filter = sub.filter;
       let warned = false;
       const events = eventIterator(
