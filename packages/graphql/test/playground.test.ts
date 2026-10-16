@@ -16,7 +16,7 @@ describe('playground subresource integrity', () => {
     const { html } = playgroundPage('/graphql');
     const script = /<script src="[^"]+"[^>]*>/.exec(html)![0];
     expect(script).toContain(
-      'integrity="sha384-8ZBpoKWpyI6F5F1R0ijmRe6NtB5mkl47ax+KcynJ79OAeWCPQMuQNOOBl6ArLPGn"',
+      'integrity="sha384-ardaO17esJ2ZxvY24V1OE6X4j+Z3WKgGMptrlDLmD+2w/JC3nbQ5ZfKGY2zfOPEE"',
     );
     expect(script).toContain('crossorigin="anonymous"');
     const sheet = /<link\s+rel="stylesheet"[^>]*>/.exec(html)![0];
@@ -32,7 +32,7 @@ describe('playground subresource integrity', () => {
     const errors = () => logger.entries.filter((e) => e.level === 'error');
     expect(errors().length).toBe(1);
     expect(errors()[0]?.message).toContain(
-      'graphql-playground-react@1.7.26/build/static/js/middleware.js',
+      'graphql-playground-react@1.7.28/build/static/js/middleware.js',
     );
     for (let i = 0; i < 3; i++) {
       const res = gate.serve('/graphql');

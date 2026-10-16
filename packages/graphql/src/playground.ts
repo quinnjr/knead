@@ -7,16 +7,15 @@ import { renderPlayground } from '@leaven-graphql/playground';
  * until the new URLs are added here (test/playground.test.ts fails first).
  * Computed with: curl -sSfL <url> | openssl dgst -sha384 -binary | base64
  *
- * NOTE: these hashes match @leaven-graphql/playground 0.2.1. When the dependency is bumped to
- * 0.2.2 (the Leaven hardening release), recompute every hash here for the URLs the new page
- * loads; test/playground.test.ts fails until they match.
+ * These match @leaven-graphql/playground 0.2.2 (graphql-playground-react 1.7.28, which fixes
+ * CVE-2021-41249). Recompute them whenever the playground dependency changes.
  */
 export const PLAYGROUND_ASSETS: Readonly<Record<string, string>> = Object.freeze({
-  'https://cdn.jsdelivr.net/npm/graphql-playground-react@1.7.26/build/static/js/middleware.js':
-    'sha384-8ZBpoKWpyI6F5F1R0ijmRe6NtB5mkl47ax+KcynJ79OAeWCPQMuQNOOBl6ArLPGn',
-  'https://cdn.jsdelivr.net/npm/graphql-playground-react@1.7.26/build/static/css/index.css':
+  'https://cdn.jsdelivr.net/npm/graphql-playground-react@1.7.28/build/static/js/middleware.js':
+    'sha384-ardaO17esJ2ZxvY24V1OE6X4j+Z3WKgGMptrlDLmD+2w/JC3nbQ5ZfKGY2zfOPEE',
+  'https://cdn.jsdelivr.net/npm/graphql-playground-react@1.7.28/build/static/css/index.css':
     'sha384-xb+UHILNN4fV3NgQMTjXk0x9A80U0hmkraTFvucUYTILJymGT8E1Aq2278NSi5+3',
-  'https://cdn.jsdelivr.net/npm/graphql-playground-react@1.7.26/build/favicon.png':
+  'https://cdn.jsdelivr.net/npm/graphql-playground-react@1.7.28/build/favicon.png':
     'sha384-VLp5/okq5I2SPX4Uw0U/e4NV26ySLulHMNoG1Tql7c51MjUKtgTFKFTuVd3fjR2q',
 });
 

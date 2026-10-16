@@ -180,7 +180,7 @@ describe('playground and CSP', () => {
     const hash = new Bun.CryptoHasher('sha256').update(script).digest('base64');
     expect(csp).toContain(`'sha256-${hash}'`);
     expect(csp).toContain(
-      'https://cdn.jsdelivr.net/npm/graphql-playground-react@1.7.26/build/static/js/middleware.js',
+      'https://cdn.jsdelivr.net/npm/graphql-playground-react@1.7.28/build/static/js/middleware.js',
     );
     expect(csp).not.toMatch(/script-src[^;]*https:\/\/cdn\.jsdelivr\.net[ ;]/);
     expect(csp).not.toContain("script-src 'self' 'unsafe-inline'");

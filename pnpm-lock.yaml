@@ -264,17 +264,17 @@ importers:
   packages/graphql:
     dependencies:
       '@leaven-graphql/core':
-        specifier: 0.2.1
-        version: 0.2.1(graphql@16.14.2)
+        specifier: 0.2.2
+        version: 0.2.2(graphql@16.14.2)
       '@leaven-graphql/errors':
         specifier: 0.2.1
         version: 0.2.1(graphql@16.14.2)
       '@leaven-graphql/playground':
-        specifier: 0.2.1
-        version: 0.2.1
+        specifier: 0.2.2
+        version: 0.2.2
       '@leaven-graphql/ws':
-        specifier: 0.2.1
-        version: 0.2.1(graphql@16.14.2)
+        specifier: 0.2.2
+        version: 0.2.2(graphql@16.14.2)
       '@standard-schema/spec':
         specifier: ^1.1.0
         version: 1.1.0
@@ -497,8 +497,8 @@ packages:
   '@leaven-graphql/context@0.2.1':
     resolution: {integrity: sha512-QUyIFbMS8s7BAWj56eN+AumuRkQ+gS7JBZ6RNk1iS6S1zBGmFnw1bzwqxc0x4pu1KRSVGUX3P1wbXEe9DOcDdg==}
 
-  '@leaven-graphql/core@0.2.1':
-    resolution: {integrity: sha512-ttCH21tWmqpocz7Rj++LjoUSyx2donmguJBEAjEveoLI1WUUm3lGNzO37L6WnZUluFRftiYEv+dCGzKOhu4Qvg==}
+  '@leaven-graphql/core@0.2.2':
+    resolution: {integrity: sha512-S6qlfCh0S//OU2FuYNG3Fv9ST8awtFlXQHnv69bZP1uqVH2mfb8nlfT4ZHpz6vmkIx5c22jm1nF3nvVPPNYdyQ==}
     peerDependencies:
       graphql: ^16.0.0
 
@@ -507,11 +507,11 @@ packages:
     peerDependencies:
       graphql: ^16.0.0
 
-  '@leaven-graphql/playground@0.2.1':
-    resolution: {integrity: sha512-2t21AeyXHoRP4lH+IJRPjqbkPQNcJvLpQJhr9UtDOtTWWx0xXNFEsFhWzow0SAcskMzTvaWGuGeZxmFcJhaTAg==}
+  '@leaven-graphql/playground@0.2.2':
+    resolution: {integrity: sha512-1cEIxqpMX7KpTWcsg9dfh+t0cJocwAcw+ZcFXqJsSBtTkTel60qZAJmKfIymlZOhdXhJIhWKlF0F9LPDLzBpIQ==}
 
-  '@leaven-graphql/ws@0.2.1':
-    resolution: {integrity: sha512-b/hGnb7ae75oFifPT8uyaIu8GbzPANLILyhYJBcJvlGxiMBvVN9qhRG6J+9V950oC7qphYSR4aiRd8XLMmHwDQ==}
+  '@leaven-graphql/ws@0.2.2':
+    resolution: {integrity: sha512-X8IpHXSgMs6jwffGYQgskvrgmhu2UeW1v0S/Naer/aSxr4NAVtgblIV7GcMHqQXWcQuA4byqJZvPwjjLP4KWyg==}
     peerDependencies:
       graphql: ^16.0.0
 
@@ -978,7 +978,7 @@ snapshots:
 
   '@leaven-graphql/context@0.2.1': {}
 
-  '@leaven-graphql/core@0.2.1(graphql@16.14.2)':
+  '@leaven-graphql/core@0.2.2(graphql@16.14.2)':
     dependencies:
       '@leaven-graphql/errors': 0.2.1(graphql@16.14.2)
       graphql: 16.14.2
@@ -987,12 +987,12 @@ snapshots:
     dependencies:
       graphql: 16.14.2
 
-  '@leaven-graphql/playground@0.2.1': {}
+  '@leaven-graphql/playground@0.2.2': {}
 
-  '@leaven-graphql/ws@0.2.1(graphql@16.14.2)':
+  '@leaven-graphql/ws@0.2.2(graphql@16.14.2)':
     dependencies:
       '@leaven-graphql/context': 0.2.1
-      '@leaven-graphql/core': 0.2.1(graphql@16.14.2)
+      '@leaven-graphql/core': 0.2.2(graphql@16.14.2)
       '@leaven-graphql/errors': 0.2.1(graphql@16.14.2)
       graphql: 16.14.2
 
