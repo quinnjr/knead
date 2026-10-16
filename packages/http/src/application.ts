@@ -13,7 +13,7 @@ import { compileTrust, parseIp, type TrustProxy } from './net.js';
 import { resolveFilter, resolveGuard, resolveMiddleware } from './resolve.js';
 import { APP_FILTER, APP_GUARD, APP_MIDDLEWARE, HTTP_DEVELOPMENT } from './tokens.js';
 import type { FilterRef, GlobalMiddleware, GuardRef, MiddlewareRef } from './types.js';
-import { type WsData, WsRegistry } from './ws.js';
+import { type WsData, WsRegistry, type WsServerOptions } from './ws.js';
 
 /** Default `maxRequestBodySize`: 1 MiB. */
 export const DEFAULT_MAX_REQUEST_BODY_SIZE = 1024 * 1024;
@@ -40,6 +40,11 @@ export interface ListenOptions {
    */
   redirectHttp?: { port: number; hostname?: string; host?: string };
   trustProxy?: TrustProxy;
+  /**
+   * WebSocket limits: 64 KiB messages, 1 MiB backpressure (closing), 120s idle timeout,
+   * 100 sockets per IP and 100 messages per 10s per socket by default.
+   */
+  websocket?: WsServerOptions;
   /** Largest accepted request body in bytes; larger bodies get 413. Default 1 MiB. */
   maxRequestBodySize?: number;
   idleTimeout?: number;
@@ -331,6 +336,7 @@ export class HttpApplication {
       .map((item, index) => ({ ...item, index }))
       .sort((a, b) => (b.entry.priority ?? 0) - (a.entry.priority ?? 0) || a.index - b.index);
     const ws = this.context.get(WsRegistry);
+    ws.configure(options.websocket ?? {});
     const compiled = compileApplication({
       modules: this.context.modules,
       globalMiddleware: entries.map(({ entry, injector }) =>

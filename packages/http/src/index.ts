@@ -18,9 +18,12 @@ export type * from './types.js';
 export { ValidationException, type ValidationIssue, type ValidationSource } from './validation.js';
 export {
   originAllowed,
+  WS_DEFAULTS,
   type WsData,
   type WsEndpoint,
   type WsEndpointOptions,
+  type WsMessageRate,
   WsRegistry,
+  type WsServerOptions,
   type WsSocket,
 } from './ws.js';

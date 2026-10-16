@@ -1,10 +1,16 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { ApplicationContext, inject, Module, type OnModuleInit } from '@hpmws/core';
 import type { HttpApplication, ListenOptions } from '../src/application.js';
-import { HttpConfigError } from '../src/exceptions.js';
+import { HttpConfigError, TooManyRequestsException } from '../src/exceptions.js';
 import { originAllowed } from '../src/index.js';
 import { LOGGER, MemoryLogger } from '../src/logger.js';
-import { type WsEndpoint, type WsEndpointOptions, WsRegistry } from '../src/ws.js';
+import {
+  type WsData,
+  type WsEndpoint,
+  type WsEndpointOptions,
+  WsRegistry,
+  type WsSocket,
+} from '../src/ws.js';
 import { start } from './helpers.js';
 
 /** Sends a raw upgrade request to `path` and returns the response status line. */
@@ -164,5 +170,236 @@ describe('WebSocket origin check', () => {
     expect(() => ws.register('/x', { upgrade: () => ({}) }, { allowedOrigins: ['nope'] })).toThrow(
       HttpConfigError,
     );
+  });
+});
+
+function fakeSocket(endpoint: string, data: unknown = null) {
+  return {
+    data: { endpoint, data } satisfies WsData,
+    close: mock(() => {}),
+  } as unknown as WsSocket & { close: ReturnType<typeof mock> };
+}
+
+/** Opens a WebSocket client and resolves once it is open (or rejects on error). */
+function connect(app: HttpApplication, path: string): Promise<WebSocket> {
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket(new URL(path, app.url).toString().replace('http', 'ws'));
+    socket.onopen = () => resolve(socket);
+    socket.onerror = () => reject(new Error('socket error'));
+  });
+}
+
+const closed = (socket: WebSocket) =>
+  new Promise<number>((resolve) => {
+    socket.onclose = (e) => resolve(e.code);
+  });
+
+describe('Bun WebSocket limits', () => {
+  test('defaults: 64 KiB payloads, 1 MiB backpressure (closing), 120s idle timeout', async () => {
+    const ws = await registry();
+    ws.configure({});
+    expect(ws.handler()).toMatchObject({
+      maxPayloadLength: 64 * 1024,
+      backpressureLimit: 1024 * 1024,
+      closeOnBackpressureLimit: true,
+      idleTimeout: 120,
+    });
+    ws.configure({
+      maxPayloadLength: 1024,
+      backpressureLimit: 2048,
+      closeOnBackpressureLimit: false,
+      idleTimeout: 30,
+    });
+    expect(ws.handler()).toMatchObject({
+      maxPayloadLength: 1024,
+      backpressureLimit: 2048,
+      closeOnBackpressureLimit: false,
+      idleTimeout: 30,
+    });
+  });
+
+  test('a message over maxPayloadLength closes the socket', async () => {
+    const received: number[] = [];
+    let serverCode: number | undefined;
+    app = await startWith({
+      '/live': {
+        endpoint: {
+          message: (_ws, m) => void received.push(m.length),
+          close: (_ws, code) => {
+            serverCode = code;
+          },
+        },
+      },
+    });
+    const socket = await connect(app, '/live');
+    const code = closed(socket);
+    socket.send('x'.repeat(64 * 1024 + 1));
+    // Bun drops the connection without a close frame, so both sides see 1006.
+    expect(await code).toBe(1006);
+    for (let i = 0; i < 50 && serverCode === undefined; i++) await Bun.sleep(5);
+    expect(serverCode).toBe(1006);
+    expect(received).toEqual([]);
+  });
+
+  test('listen({ websocket }) raises the payload limit', async () => {
+    const received: number[] = [];
+    app = await startWith(
+      { '/live': { endpoint: { message: (_ws, m) => void received.push(m.length) } } },
+      { websocket: { maxPayloadLength: 128 * 1024 } },
+    );
+    const socket = await connect(app, '/live');
+    socket.send('x'.repeat(100 * 1024));
+    for (let i = 0; i < 50 && received.length === 0; i++) await Bun.sleep(10);
+    expect(received).toEqual([100 * 1024]);
+    socket.close();
+  });
+
+  test('invalid limits are configuration errors', async () => {
+    const ws = await registry();
+    for (const bad of [
+      { maxPayloadLength: 0 },
+      { backpressureLimit: -1 },
+      { idleTimeout: 1.5 },
+      { maxConnectionsPerIp: 0 },
+      { maxConnections: Number.NaN },
+      { messageRate: { limit: 0, windowMs: 1000 } },
+    ]) {
+      expect(() => ws.configure(bad)).toThrow(HttpConfigError);
+    }
+    expect(() =>
+      ws.register('/x', { upgrade: () => ({}) }, { messageRate: { limit: 1, windowMs: 0 } }),
+    ).toThrow(HttpConfigError);
+    expect(() => ws.register('/y', { upgrade: () => ({}) }, { maxConnectionLifetime: -5 })).toThrow(
+      HttpConfigError,
+    );
+  });
+});
+
+describe('per-socket message rate', () => {
+  const messages = async (ws: WsRegistry, socket: WsSocket, count: number) => {
+    const handler = ws.handler();
+    for (let i = 0; i < count; i++) await handler.message!(socket, `m${i}`);
+  };
+
+  test('by default, more than 100 messages in 10s closes with 1008', async () => {
+    const ws = await registry();
+    const seen: string[] = [];
+    ws.register('/a', { upgrade: () => ({}), message: (_s, m) => void seen.push(String(m)) });
+    const socket = fakeSocket('/a');
+    ws.handler().open!(socket);
+    await messages(ws, socket, 101);
+    expect(seen).toHaveLength(100);
+    expect(socket.close).toHaveBeenCalledWith(1008, 'Message rate exceeded');
+    await messages(ws, socket, 5);
+    expect(seen).toHaveLength(100);
+  });
+
+  test('the rate is configurable per endpoint, or off', async () => {
+    const ws = await registry();
+    const seen: string[] = [];
+    const message = (_s: WsSocket, m: string | Buffer) => void seen.push(String(m));
+    ws.register(
+      '/slow',
+      { upgrade: () => ({}), message },
+      { messageRate: { limit: 3, windowMs: 60_000 } },
+    );
+    ws.register('/free', { upgrade: () => ({}), message }, { messageRate: false });
+    const slow = fakeSocket('/slow');
+    const free = fakeSocket('/free');
+    ws.handler().open!(slow);
+    ws.handler().open!(free);
+    await messages(ws, slow, 4);
+    expect(slow.close).toHaveBeenCalledWith(1008, 'Message rate exceeded');
+    expect(seen).toHaveLength(3);
+    await messages(ws, free, 500);
+    expect(free.close).not.toHaveBeenCalled();
+    expect(seen).toHaveLength(503);
+  });
+
+  test('tokens refill over the window', async () => {
+    const ws = await registry();
+    let count = 0;
+    ws.register(
+      '/r',
+      { upgrade: () => ({}), message: () => void count++ },
+      { messageRate: { limit: 2, windowMs: 40 } },
+    );
+    const socket = fakeSocket('/r');
+    ws.handler().open!(socket);
+    await messages(ws, socket, 2);
+    await Bun.sleep(60);
+    await messages(ws, socket, 2);
+    expect(count).toBe(4);
+    expect(socket.close).not.toHaveBeenCalled();
+  });
+});
+
+describe('connection limits', () => {
+  test('maxConnectionsPerIp answers further upgrades from that IP with 429', async () => {
+    app = await startWith({ '/live': {} }, { websocket: { maxConnectionsPerIp: 2 } });
+    const a = await connect(app, '/live');
+    const b = await connect(app, '/live');
+    expect(await upgradeStatus(app, '/live')).toContain('429');
+    const gone = closed(a);
+    a.close();
+    await gone;
+    for (let i = 0; i < 50 && app.get(WsRegistry).openSockets > 1; i++) await Bun.sleep(5);
+    expect(await upgradeStatus(app, '/live')).toContain('101');
+    b.close();
+  });
+
+  test('maxConnections caps the total with 503', async () => {
+    app = await startWith({ '/live': {} }, { websocket: { maxConnections: 1 } });
+    const a = await connect(app, '/live');
+    expect(await upgradeStatus(app, '/live')).toContain('503');
+    a.close();
+  });
+
+  test('the per-IP limit defaults to 100', async () => {
+    const ws = await registry();
+    ws.configure({});
+    const datas = Array.from({ length: 100 }, () => ({}));
+    for (const data of datas) ws.reserve(data, '10.0.0.1');
+    expect(() => ws.reserve({}, '10.0.0.1')).toThrow(TooManyRequestsException);
+    ws.reserve({}, '10.0.0.2');
+  });
+});
+
+describe('connection lifetime', () => {
+  test('maxConnectionLifetime closes the socket with 4408', async () => {
+    const ws = await registry();
+    ws.register('/l', { upgrade: () => ({}) }, { maxConnectionLifetime: 20 });
+    const socket = fakeSocket('/l');
+    ws.handler().open!(socket);
+    await Bun.sleep(50);
+    expect(socket.close).toHaveBeenCalledWith(4408, 'Connection lifetime exceeded');
+  });
+
+  test('a socket closed earlier is not closed again', async () => {
+    const ws = await registry();
+    ws.register('/l', { upgrade: () => ({}) }, { maxConnectionLifetime: 20 });
+    const socket = fakeSocket('/l');
+    ws.handler().open!(socket);
+    ws.handler().close!(socket, 1000, 'bye');
+    await Bun.sleep(50);
+    expect(socket.close).not.toHaveBeenCalled();
+  });
+});
+
+describe('closeWhere', () => {
+  test('closes the sockets matching the predicate and returns how many', async () => {
+    const ws = await registry();
+    ws.register('/c', { upgrade: () => ({}) });
+    const ada = fakeSocket('/c', { user: 'ada' });
+    const bob = fakeSocket('/c', { user: 'bob' });
+    const ada2 = fakeSocket('/c', { user: 'ada' });
+    for (const s of [ada, bob, ada2]) ws.handler().open!(s);
+    const count = ws.closeWhere((s) => (s.data.data as { user: string }).user === 'ada');
+    expect(count).toBe(2);
+    expect(ada.close).toHaveBeenCalledWith(1008, 'Connection revoked');
+    expect(ada2.close).toHaveBeenCalledWith(1008, 'Connection revoked');
+    expect(bob.close).not.toHaveBeenCalled();
+    ws.closeWhere(() => true, 4403, 'Signed out');
+    expect(bob.close).toHaveBeenCalledWith(4403, 'Signed out');
   });
 });

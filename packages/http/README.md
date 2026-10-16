@@ -51,6 +51,23 @@ ws.register('/live', endpoint, { allowedOrigins: ['https://app.example'] });
 
 `CorsModule` also rejects disallowed origins on upgrades, so a cross-origin client must be allowed by both. `originAllowed(origin, host, secure, allowed?)` is exported for transports that check origins themselves.
 
+WebSockets are limited by default. `listen({ websocket })` sets the server-wide limits:
+
+| Option | Default | |
+| --- | --- | --- |
+| `maxPayloadLength` | 64 KiB | a larger message drops the connection |
+| `backpressureLimit` / `closeOnBackpressureLimit` | 1 MiB / `true` | a reader that falls that far behind is closed |
+| `idleTimeout` | 120 (seconds) | |
+| `maxConnectionsPerIp` | 100 | open sockets per `ctx.ip`; further upgrades get 429 (`false` disables) |
+| `maxConnections` | none | open sockets in total; further upgrades get 503 |
+| `messageRate` | `{ limit: 100, windowMs: 10_000 }` | per-socket token bucket; exceeding it closes with 1008 (`false` disables) |
+
+Per endpoint, `register(path, endpoint, { allowedOrigins, messageRate, maxConnectionLifetime })` overrides the message rate and can cap how long a socket lives (`maxConnectionLifetime` in ms; on expiry it is closed with 4408). Behind a proxy, set `trustProxy` so `maxConnectionsPerIp` counts clients rather than the proxy. To revoke sockets, for example when a user signs out, `WsRegistry.closeWhere(predicate, code = 1008, reason = 'Connection revoked')` closes every open socket the predicate matches (it receives the socket; `ws.data.data` is what `upgrade()` returned) and returns how many it closed:
+
+```ts
+ws.closeWhere((socket) => (socket.data.data as { userId: string }).userId === userId);
+```
+
 `reloadTls()` hot-swaps certificates via `SO_REUSEPORT` and is Linux-only.
 
 A `listen()` that failed to bind (for example, the port is taken) binds nothing and can be retried, but the application context stays open. If you give up instead, call `await app.close()` so shutdown hooks run and resources are released. A `listen()` that failed because a lifecycle hook threw (such as `onModuleInit` of a middleware, guard or filter, which runs at `listen()`) has already closed the application and cannot be retried. `listen()` always rejects once `close()` has started, including a `close()` issued while `listen()` is still initializing:

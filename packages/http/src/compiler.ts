@@ -78,9 +78,15 @@ function upgradeChain(
       await runGuards(globalGuards, ctx);
       const data = await endpoint.upgrade(ctx);
       if (data === false) throw new ForbiddenException('WebSocket upgrade rejected');
-      const accepted = (ctx.server as Server<WsData>).upgrade(ctx.req, {
-        data: { endpoint: path, data },
-      });
+      const socketData: WsData = { endpoint: path, data, ip: ctx.ip };
+      // Synchronous from here to upgrade(): the connection limits cannot be raced.
+      registry.reserve(socketData, ctx.ip);
+      let accepted = false;
+      try {
+        accepted = (ctx.server as Server<WsData>).upgrade(ctx.req, { data: socketData });
+      } finally {
+        if (!accepted) registry.release(socketData);
+      }
       if (!accepted) throw new BadRequestException('WebSocket upgrade failed');
       upgraded.add(ctx);
       return new Response(null, { status: 101 });
