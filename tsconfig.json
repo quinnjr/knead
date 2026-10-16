@@ -8,6 +8,7 @@
     { "path": "packages/rate-limit" },
     { "path": "packages/security-headers" },
     { "path": "packages/sanitize" },
-    { "path": "packages/graphql" }
+    { "path": "packages/graphql" },
+    { "path": "packages/casl" }
   ]
 }

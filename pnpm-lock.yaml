@@ -247,6 +247,28 @@ importers:
         specifier: workspace:^
         version: link:../../packages/testing
 
+  packages/casl:
+    dependencies:
+      '@casl/ability':
+        specifier: 7.0.2
+        version: 7.0.2
+    devDependencies:
+      '@knead-js/core':
+        specifier: workspace:^
+        version: link:../core
+      '@knead-js/graphql':
+        specifier: workspace:^
+        version: link:../graphql
+      '@knead-js/http':
+        specifier: workspace:^
+        version: link:../http
+      '@knead-js/testing':
+        specifier: workspace:^
+        version: link:../testing
+      graphql:
+        specifier: ^16.14.2
+        version: 16.14.2
+
   packages/core: {}
 
   packages/cors:
@@ -424,6 +446,9 @@ packages:
     engines: {node: '>=14.21.3'}
     cpu: [x64]
     os: [win32]
+
+  '@casl/ability@7.0.2':
+    resolution: {integrity: sha512-NOYbLTaw080a1Na4CpBtyGpL+i9NZhtGGt/tPrrNpLEv8EawFusHZCgc58ewyPBiZ0NER0iudB0et+IP8xJbLg==}
 
   '@changesets/apply-release-plan@8.1.1':
     resolution: {integrity: sha512-nk2Hbq3M9NeHMdaIRBDvawKrQJzXB9sGyBUE5yWnIKtvdcNCPj75zBekJYr0gTT2ecJH3eFeTrc8eisPImcv0Q==}
@@ -663,6 +688,18 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@ucast/core@2.0.0':
+    resolution: {integrity: sha512-4XVx6LzPXZGvnZO5jp39cm/G4UvuwvEdtmg+9+4+zl6uFkCcB7UJacvtMYeBE56GJVT99Zqy6Pii7dGJq3Kz9Q==}
+
+  '@ucast/js@4.0.1':
+    resolution: {integrity: sha512-9O5xPBvwEWQk2WvO69Eh2WJB8QljVZ2vRVdFvfnKjlZwWXcYxp1lqLBhwXBU1AtuSgCvKhJPkXdjKJggUmAmQQ==}
+
+  '@ucast/mongo2js@2.0.0':
+    resolution: {integrity: sha512-vNBZzRnsfLr/TSxEoxz6W6hHQ5tmWsfEeC0nCq5z8RezC1AqIRy3cfHm8AGvlGtcn+cTSFQcZremfqnz6wm+nQ==}
+
+  '@ucast/mongo@3.0.0':
+    resolution: {integrity: sha512-kwuSH+kdB4GCR0LGhy/PEDm4PCflur89AlK82kNiYD0FvsA8A/p+0sx7m+/R8mMFAlmlkAd3VXp7sM/cLLYWYg==}
+
   bun-types@1.4.3:
     resolution: {integrity: sha512-tinRJNGOmUN+tEAsn2y2e942n9JHRHR42iUYzDH75NmhJqVBokGSQkkfSFdNWwsANIdrK6ACH9t01M452YyTwg==}
 
@@ -859,6 +896,10 @@ snapshots:
 
   '@biomejs/cli-win32-x64@2.5.15':
     optional: true
+
+  '@casl/ability@7.0.2':
+    dependencies:
+      '@ucast/mongo2js': 2.0.0
 
   '@changesets/apply-release-plan@8.1.1':
     dependencies:
@@ -1086,6 +1127,22 @@ snapshots:
 
   '@typescript/typescript-win32-x64@7.0.2':
     optional: true
+
+  '@ucast/core@2.0.0': {}
+
+  '@ucast/js@4.0.1':
+    dependencies:
+      '@ucast/core': 2.0.0
+
+  '@ucast/mongo2js@2.0.0':
+    dependencies:
+      '@ucast/core': 2.0.0
+      '@ucast/js': 4.0.1
+      '@ucast/mongo': 3.0.0
+
+  '@ucast/mongo@3.0.0':
+    dependencies:
+      '@ucast/core': 2.0.0
 
   bun-types@1.4.3:
     dependencies:
