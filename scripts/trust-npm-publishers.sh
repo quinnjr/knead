@@ -12,6 +12,10 @@
 # A package must already exist on the registry before a trusted publisher can
 # be attached to it, so a brand-new package needs one manual first publish.
 #
+# Packages that already have a trusted publisher are skipped, so the script can
+# be re-run after adding a package. To change an existing trust, revoke it first
+# (`npm trust list <pkg>`, then `npm trust revoke <pkg> --id=<id>`).
+#
 # The script logs out of npm when it exits (also on failure or Ctrl-C), so the
 # long-lived npm session token does not stay in ~/.npmrc. That also ends a
 # session you had before running it; run `npm login` again if you need one.
@@ -90,6 +94,13 @@ fi
 
 for pkg in "${packages[@]}"; do
   echo "==> $pkg"
+  # Re-running is safe: a package that already has a trusted publisher (any one) is skipped
+  # instead of failing the run. `trust list --json` prints one object per configuration; a
+  # failed lookup falls through to the create call, which reports the real error.
+  if npm11 trust list "$pkg" --json 2>/dev/null | grep -q '"type"'; then
+    echo "$pkg already has a trusted publisher, skipping"
+    continue
+  fi
   npm11 trust github "$pkg" --file "$WORKFLOW" --repo "$REPO" --allow-publish --yes \
     ${env_args[@]+"${env_args[@]}"} ${passthrough[@]+"${passthrough[@]}"}
   # The registry rate-limits trust changes; npm recommends spacing calls.
