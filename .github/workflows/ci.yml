@@ -8,6 +8,12 @@ on:
 permissions:
   contents: read
 
+env:
+  NODE_VERSION: 24.21.0
+  BUN_VERSION: 1.4.3
+  # `bun --revision` of the official BUN_VERSION release, checked after setup-bun.
+  BUN_REVISION: 1.4.3+c6da4a4d3
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -24,21 +30,74 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
+      # Installs the version in package.json `packageManager`. The action ignores the +sha512
+      # suffix (corepack verifies it), so check at least that the expected version arrived.
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - name: Check pnpm version
+        run: |
+          want="$(jq -r .packageManager package.json | sed -E 's/^pnpm@([^+]+).*/\1/')"
+          if [ "$(pnpm --version)" != "$want" ]; then
+            echo "::error::pnpm is $(pnpm --version), expected $want"; exit 1
+          fi
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          # Explicit, so a bump to setup-node v5+ cannot silently turn on automatic caching.
+          # CI caches the pnpm store on purpose (`cache: pnpm`) to keep PR runs fast; release.yml
+          # deliberately does not cache. package-manager-cache: false only stops setup-node v5+
+          # from adding its automatic cache on top of the explicit one.
           package-manager-cache: false
-          node-version: 24.21.0
+          node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
+      - name: Check Node version
+        run: |
+          if [ "$(node --version)" != "v$NODE_VERSION" ]; then
+            echo "::error::node is $(node --version), expected v$NODE_VERSION"; exit 1
+          fi
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: 1.4.2
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Check Bun revision
+        run: |
+          if [ "$(bun --revision)" != "$BUN_REVISION" ]; then
+            echo "::error::bun is $(bun --revision), expected $BUN_REVISION"; exit 1
+          fi
       - run: pnpm install --frozen-lockfile
       - run: pnpm audit --prod --audit-level=moderate
+      # The dev toolchain builds the published artifact, so audit it too. Here a finding only
+      # warns, so an advisory in a dev tool does not block unrelated PRs; release.yml fails on it.
+      - name: Audit all dependencies (warning only)
+        run: |
+          if ! pnpm audit --audit-level=high; then
+            echo "::warning::pnpm audit found high or critical advisories in dev dependencies; release.yml will refuse to publish until they are fixed"
+          fi
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm build
       - run: pnpm check:pack
       - run: pnpm test
       - run: pnpm --filter @hpmws/example-graphql-server smoke
+
+  # Scans the full git history for committed secrets with a pinned, checksum-verified gitleaks.
+  secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      # sha256 of gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz, from the release's checksums.txt.
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Install gitleaks
+        run: |
+          set -euo pipefail
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSL --proto '=https' --tlsv1.2 -o "$RUNNER_TEMP/$archive" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/$archive"
+          echo "$GITLEAKS_SHA256  $RUNNER_TEMP/$archive" | sha256sum --check --strict
+          mkdir -p "$RUNNER_TEMP/gitleaks"
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/gitleaks" gitleaks
+          echo "$RUNNER_TEMP/gitleaks" >> "$GITHUB_PATH"
+      - name: Scan for secrets
+        run: gitleaks git --config .github/gitleaks.toml --redact --no-banner --exit-code 1 .
