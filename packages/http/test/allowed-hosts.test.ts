@@ -78,6 +78,20 @@ describe('allowedHosts', () => {
     );
   });
 
+  test('each rejected Host is logged once, with a hint', async () => {
+    const port = await serve(true);
+    for (let i = 0; i < 3; i++) await raw(port, 'evil.com', '/q');
+    await raw(port, 'other.example', '/q');
+    const warnings = (app!.logger as MemoryLogger).entries.filter((e) =>
+      e.message.includes('allowedHosts'),
+    );
+    expect(warnings.map((e) => e.message.match(/Host "([^"]+)"/)?.[1])).toEqual([
+      'evil.com',
+      'other.example',
+    ]);
+    expect(warnings[0]!.message).toContain('listen({ allowedHosts })');
+  });
+
   test('the 421 is problem+json', async () => {
     await serve(true);
     const res = await fetch(new URL('/q', app!.url), { headers: { host: 'evil.com' } });

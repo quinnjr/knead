@@ -9,7 +9,7 @@ import {
   NotFoundException,
   problemResponse,
 } from './exceptions.js';
-import type { Logger } from './logger.js';
+import { type Logger, logValue } from './logger.js';
 import {
   CONTROLLER,
   FILTERS,
@@ -159,7 +159,22 @@ export function misdirectedResponse(): Response {
 
 export function compileApplication(input: CompileInput): CompiledApp {
   const { logger, development, net, hosts } = input;
-  const misdirected = (req: Request) => hosts !== undefined && !hosts(req.headers.get('host'));
+  const warnedHosts = new Set<string>();
+  const misdirected = (req: Request) => {
+    if (hosts === undefined) return false;
+    const host = req.headers.get('host');
+    if (hosts(host)) return false;
+    // Once per distinct Host (bounded), so a misconfigured name is easy to spot.
+    const name = host ?? '(none)';
+    if (!warnedHosts.has(name) && warnedHosts.size < 100) {
+      warnedHosts.add(name);
+      logger.warn(
+        `Rejected a request for Host ${JSON.stringify(logValue(name))} with 421: it is not in ` +
+          'allowedHosts. If this server should answer to it, add it to listen({ allowedHosts }).',
+      );
+    }
+    return true;
+  };
   const cacheControl = input.defaultCacheControl;
   const withCacheDefault = (res: Response): Response =>
     cacheControl === undefined || res.headers.has('cache-control')
