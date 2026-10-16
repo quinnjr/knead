@@ -1,7 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
-  type HttpException,
+  HttpException,
   InternalServerErrorException,
   NotFoundException,
   ServiceUnavailableException,
@@ -24,9 +24,22 @@ export interface ToHttpExceptionOptions {
 
 const UNAVAILABLE = 'The database is temporarily unavailable.';
 
-/** Prisma errors are recognised by name, so errors from another copy of the client still match. */
+const PRISMA_ERROR_NAMES: ReadonlySet<string> = new Set([
+  'PrismaClientKnownRequestError',
+  'PrismaClientValidationError',
+  'PrismaClientInitializationError',
+  'PrismaClientRustPanicError',
+  'PrismaClientUnknownRequestError',
+]);
+
+/** Duck-typed by exact name, so errors from another copy or realm of the client still match. */
 export function isPrismaError(e: unknown): e is PrismaErrorLike {
-  return e instanceof Error && /^PrismaClient\w*Error$/.test(e.name);
+  return (
+    typeof e === 'object' &&
+    e !== null &&
+    typeof (e as { name?: unknown }).name === 'string' &&
+    PRISMA_ERROR_NAMES.has((e as { name: string }).name)
+  );
 }
 
 function devExtensions(error: PrismaErrorLike, development: boolean | undefined) {
@@ -51,10 +64,12 @@ export function toHttpException(
   const mapper = (code === undefined ? undefined : options.map?.[code]) ?? options.map?.[name];
   if (mapper) {
     try {
-      return mapper(error);
+      const mapped: unknown = mapper(error);
+      if (mapped instanceof HttpException) return mapped;
     } catch {
-      return new InternalServerErrorException(undefined, { cause: error });
+      // A broken mapper is treated as unmapped.
     }
+    return new InternalServerErrorException(undefined, { cause: error });
   }
   const init = { cause: error, extensions: devExtensions(error, options.development) };
   switch (code) {

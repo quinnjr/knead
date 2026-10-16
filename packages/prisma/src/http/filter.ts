@@ -1,5 +1,5 @@
 import { DEVELOPMENT, inject, LOGGER } from '@knead-js/core';
-import { defaultErrorResponse, type ExceptionFilter } from '@knead-js/http';
+import { type Ctx, defaultErrorResponse, type ExceptionFilter } from '@knead-js/http';
 import { toHttpException } from './to-http-exception.js';
 import { PRISMA_HTTP_OPTIONS } from './tokens.js';
 
@@ -9,7 +9,7 @@ export class PrismaExceptionFilter implements ExceptionFilter {
   readonly #development = inject(DEVELOPMENT);
   readonly #options = inject(PRISMA_HTTP_OPTIONS);
 
-  catch(error: unknown, ctx: Parameters<ExceptionFilter['catch']>[1]): Response | undefined {
+  catch(error: unknown, ctx: Ctx): Response | undefined {
     const exception = toHttpException(error, {
       map: this.#options.map,
       development: this.#development,

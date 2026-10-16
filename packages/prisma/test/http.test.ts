@@ -91,12 +91,14 @@ describe('PrismaHttpModule', () => {
     ['P2024', prismaError('PrismaClientKnownRequestError', 'P2024'), 503, undefined],
     ['initialization', prismaError('PrismaClientInitializationError'), 503, undefined],
     ['unknown', prismaError('PrismaClientUnknownRequestError'), 500, undefined],
+    ['rust panic', prismaError('PrismaClientRustPanicError'), 500, undefined],
   ];
   for (const [label, error, status, detail] of rows) {
     test(`maps ${label} to ${status}`, async () => {
       const { res, body } = await hit(error, { development: false });
       expect(res.status).toBe(status);
-      if (detail && status < 500) expect(body.detail).toBe(detail);
+      if (status < 500) expect(body.detail).toBe(detail);
+      else expect(body.detail).toBeUndefined();
     });
   }
 
@@ -109,15 +111,18 @@ describe('PrismaHttpModule', () => {
   });
 
   test('never copies message', async () => {
-    for (const error of [
-      known('P2002'),
-      known('P1001'),
-      prismaError('PrismaClientUnknownRequestError'),
-    ]) {
-      const { res, text, body } = await hit(error, { development: false });
+    const cases: [Error, boolean][] = [
+      [known('P2002'), false],
+      [known('P1001'), false],
+      [prismaError('PrismaClientUnknownRequestError'), false],
+      [known('P2002'), true],
+      [known('P2025'), true],
+    ];
+    for (const [error, development] of cases) {
+      const { res, text, body } = await hit(error, { development });
       expect(text).not.toContain('SELECT');
       expect(text).not.toContain('secret');
-      if (res.status >= 500) {
+      if (res.status >= 500 && !development) {
         expect(body.detail).toBeUndefined();
         expect(typeof body.correlationId).toBe('string');
       }
@@ -168,7 +173,7 @@ describe('PrismaHttpModule', () => {
   });
 
   test('a mapper that throws is treated as unmapped', async () => {
-    const { res } = await hit(known('P2002'), {
+    const { res, body } = await hit(known('P2002'), {
       map: {
         P2002: () => {
           throw new Error('mapper bug');
@@ -176,6 +181,27 @@ describe('PrismaHttpModule', () => {
       },
     });
     expect(res.status).toBe(500);
+    expect(body.detail).toBeUndefined();
+    expect(typeof body.correlationId).toBe('string');
+  });
+
+  test('a mapper that returns a non-HttpException is treated as unmapped', async () => {
+    const { res, body } = await hit(known('P2002'), {
+      map: { P2002: (() => undefined) as unknown as PrismaErrorMapper },
+    });
+    expect(res.status).toBe(500);
+    expect(body.detail).toBeUndefined();
+    expect(typeof body.correlationId).toBe('string');
+  });
+
+  test('maps a plain object from another realm by name and code', async () => {
+    const { res } = await hit({ name: 'PrismaClientKnownRequestError', code: 'P2002' });
+    expect(res.status).toBe(409);
+  });
+
+  test('declines an unknown PrismaClient*Error name', async () => {
+    const { res } = await hit(prismaError('PrismaClientFooError', 'P2002'), { after: true });
+    expect(res.status).toBe(418);
   });
 });
 
@@ -184,5 +210,6 @@ describe('toHttpException', () => {
     expect(toHttpException(new Error('x'))).toBeUndefined();
     expect(toHttpException('x')).toBeUndefined();
     expect(toHttpException(null)).toBeUndefined();
+    expect(toHttpException({ name: 'PrismaClientFooError' })).toBeUndefined();
   });
 });
