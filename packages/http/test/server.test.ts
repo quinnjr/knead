@@ -43,6 +43,9 @@ afterAll(() => {
   Bun.spawnSync(['rm', '-rf', certDir]);
 });
 
+/** Server-side events, in the order they happened. */
+const serverEvents: string[] = [];
+
 @Controller('/')
 class InfoController {
   @Get('/secure') secure(ctx: Ctx) {
@@ -50,6 +53,7 @@ class InfoController {
   }
   @Get('/slow') async slow() {
     await Bun.sleep(200);
+    serverEvents.push('handled');
     return 'done';
   }
   @Get('/forever') async forever() {
@@ -387,10 +391,11 @@ describe('redirectToHttps hardening', () => {
 
 describe('graceful shutdown', () => {
   test('in-flight requests finish, then shutdown hooks run; new connections are refused', async () => {
-    const log: string[] = [];
+    serverEvents.length = 0;
+    let body = '';
     class Hooks implements BeforeApplicationShutdown {
       beforeApplicationShutdown(signal?: string) {
-        log.push(`shutdown:${signal}`);
+        serverEvents.push(`shutdown:${signal}`);
       }
     }
     @Module({ controllers: [InfoController], providers: [Hooks] })
@@ -398,12 +403,15 @@ describe('graceful shutdown', () => {
     const app = await start(M);
     const base = app.url;
     const inflight = fetch(new URL('/slow', base)).then(async (r) => {
-      log.push(`response:${await r.text()}`);
+      body = await r.text();
     });
-    await Bun.sleep(30);
+    // Wait until the request is in flight (a fixed sleep raced on a loaded machine).
+    for (let i = 0; i < 200 && app.server.pendingRequests === 0; i++) await Bun.sleep(5);
     await Promise.all([app.close('SIGTERM'), app.close('SIGTERM')]);
     await inflight;
-    expect(log).toEqual(['response:done', 'shutdown:SIGTERM']);
+    // The in-flight request completed before the shutdown hooks ran.
+    expect(serverEvents).toEqual(['handled', 'shutdown:SIGTERM']);
+    expect(body).toBe('done');
     await expect(fetch(new URL('/slow', base))).rejects.toThrow();
   });
 
