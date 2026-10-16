@@ -1,4 +1,4 @@
-import { HpmwsError } from '@hpmws/core';
+import { HpmwsError } from '@knead/core';
 
 export const STATUS_TITLES: Readonly<Record<number, string>> = {
   400: 'Bad Request',

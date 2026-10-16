@@ -1,5 +1,5 @@
 {
-  "name": "@hpmws/http",
+  "name": "@knead/http",
   "version": "0.0.0",
   "description": "HTTP(S) server, REST controllers and request pipeline for the hpmws framework",
   "license": "MIT OR Apache-2.0",
@@ -30,10 +30,10 @@
     "@standard-schema/spec": "^1.1.0"
   },
   "peerDependencies": {
-    "@hpmws/core": "workspace:^"
+    "@knead/core": "workspace:^"
   },
   "devDependencies": {
-    "@hpmws/core": "workspace:^"
+    "@knead/core": "workspace:^"
   },
   "publishConfig": {
     "access": "public",

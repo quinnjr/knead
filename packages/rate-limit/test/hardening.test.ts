@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { Controller, type Ctx, Get } from '@hpmws/http';
-import { Test, type TestApp, type TestingModule } from '@hpmws/testing';
+import { Controller, type Ctx, Get } from '@knead/http';
+import { Test, type TestApp, type TestingModule } from '@knead/testing';
 import {
   hashKey,
   MemoryStore,

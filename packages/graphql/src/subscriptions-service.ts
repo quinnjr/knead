@@ -1,5 +1,5 @@
-import { inject } from '@hpmws/core';
-import { WsRegistry } from '@hpmws/http';
+import { inject } from '@knead/core';
+import { WsRegistry } from '@knead/http';
 import { GraphQLRuntime } from './runtime.js';
 import type { GraphQLConnection } from './subscriptions.js';
 

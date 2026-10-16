@@ -21,5 +21,5 @@ export function hashSecretBytes(secret: string | Uint8Array): Uint8Array {
   return bytes;
 }
 
-/** The rate-limit key for a client address: `@hpmws/http`'s maskIp (IPv6 grouped by prefix). */
-export { maskIp } from '@hpmws/http';
+/** The rate-limit key for a client address: `@knead/http`'s maskIp (IPv6 grouped by prefix). */
+export { maskIp } from '@knead/http';

@@ -1,5 +1,5 @@
 {
-  "name": "@hpmws/security-headers",
+  "name": "@knead/security-headers",
   "version": "0.0.0",
   "description": "Secure-by-default HTTP security headers (CSP, HSTS, …) for the hpmws framework",
   "license": "MIT OR Apache-2.0",
@@ -27,15 +27,15 @@
     "prepack": "bun ../../scripts/copy-licenses.ts"
   },
   "peerDependencies": {
-    "@hpmws/core": "workspace:^",
-    "@hpmws/http": "workspace:^"
+    "@knead/core": "workspace:^",
+    "@knead/http": "workspace:^"
   },
   "devDependencies": {
-    "@hpmws/core": "workspace:^",
-    "@hpmws/cors": "workspace:^",
-    "@hpmws/http": "workspace:^",
-    "@hpmws/rate-limit": "workspace:^",
-    "@hpmws/testing": "workspace:^"
+    "@knead/core": "workspace:^",
+    "@knead/cors": "workspace:^",
+    "@knead/http": "workspace:^",
+    "@knead/rate-limit": "workspace:^",
+    "@knead/testing": "workspace:^"
   },
   "publishConfig": {
     "access": "public",

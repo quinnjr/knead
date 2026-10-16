@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { HttpConfigError, MemoryLogger } from '@hpmws/http';
+import { HttpConfigError, MemoryLogger } from '@knead/http';
 import type { RedisClient } from 'bun';
 import { hashKey, RedisStore } from '../src/index.js';
 import { resetUnkeyedHashWarning } from '../src/redis-store.js';

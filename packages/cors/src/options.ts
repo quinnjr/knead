@@ -1,5 +1,5 @@
-import { HpmwsError, InjectionToken } from '@hpmws/core';
-import type { Ctx } from '@hpmws/http';
+import { HpmwsError, InjectionToken } from '@knead/core';
+import type { Ctx } from '@knead/http';
 
 export type CorsOrigin =
   | string

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { Module } from '@hpmws/core';
-import { HttpConfigError } from '@hpmws/http';
+import { Module } from '@knead/core';
+import { HttpConfigError } from '@knead/http';
 import { getIntrospectionQuery } from 'graphql';
 import {
   Field,

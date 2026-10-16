@@ -1,11 +1,11 @@
-import { inject } from '@hpmws/core';
-import { Field, ID, Mutation, ObjectType, Query, Resolver, type ResolverCtx } from '@hpmws/graphql';
-import { sanitize } from '@hpmws/sanitize';
+import { inject } from '@knead/core';
+import { Field, ID, Mutation, ObjectType, Query, Resolver, type ResolverCtx } from '@knead/graphql';
+import { sanitize } from '@knead/sanitize';
 import * as v from 'valibot';
 import type { User } from '../auth/auth.js';
 import { UsersService } from './users.service.js';
 
-declare module '@hpmws/graphql' {
+declare module '@knead/graphql' {
   interface GraphQLContext {
     user?: User;
   }

@@ -1,4 +1,4 @@
-import { InjectionToken } from '@hpmws/core';
+import { InjectionToken } from '@knead/core';
 import type { FilterRef, GlobalMiddleware, GuardRef } from './types.js';
 
 /** Multi-provider: global middleware contributed by modules (e.g. CORS). */

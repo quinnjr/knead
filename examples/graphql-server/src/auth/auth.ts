@@ -1,6 +1,6 @@
-import { Module } from '@hpmws/core';
-import type { ResolverCtx } from '@hpmws/graphql';
-import { createRouteDecorator, UnauthorizedException } from '@hpmws/http';
+import { Module } from '@knead/core';
+import type { ResolverCtx } from '@knead/graphql';
+import { createRouteDecorator, UnauthorizedException } from '@knead/http';
 
 /** The signed-in user. Each user is also an author of the blog (same id). */
 export interface CurrentUser {
@@ -9,7 +9,7 @@ export interface CurrentUser {
   roles: string[];
 }
 
-declare module '@hpmws/graphql' {
+declare module '@knead/graphql' {
   interface GraphQLContext {
     currentUser?: CurrentUser;
     /** Subscriptions: the connection's token, re-verified by subscriptions.refreshContext. */

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { Module } from '@hpmws/core';
-import { Test } from '@hpmws/testing';
+import { Module } from '@knead/core';
+import { Test } from '@knead/testing';
 import { GraphQLScalarType } from 'graphql';
 import {
   ArgsType,

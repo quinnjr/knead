@@ -1,5 +1,5 @@
-import { InjectionToken } from '@hpmws/core';
-import { type Ctx, type GuardRef, HttpConfigError, type WsMessageRate } from '@hpmws/http';
+import { InjectionToken } from '@knead/core';
+import { type Ctx, type GuardRef, HttpConfigError, type WsMessageRate } from '@knead/http';
 import type {
   CompilerOptions,
   ExecutionHooks,

@@ -1,5 +1,5 @@
 {
-  "name": "@hpmws/core",
+  "name": "@knead/core",
   "version": "0.0.0",
   "description": "Dependency injection and module system for the hpmws framework",
   "license": "MIT OR Apache-2.0",

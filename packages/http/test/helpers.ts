@@ -1,4 +1,4 @@
-import type { ModuleImport } from '@hpmws/core';
+import type { ModuleImport } from '@knead/core';
 import type { Server } from 'bun';
 import {
   type CreateApplicationOptions,

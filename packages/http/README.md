@@ -1,4 +1,4 @@
-# @hpmws/http
+# @knead/http
 
 HTTP(S) for hpmws: `@Controller` and `@Get`/`@Post`/… compiled into Bun's native router; schema-typed `Ctx` (Standard Schema); middleware, guards and exception filters; RFC 9457 errors; TLS, HTTP→HTTPS redirect (`redirectHttp` requires `tls`), graceful shutdown and a WebSocket endpoint registry (endpoint paths must be exact). An upgrade request passes through global middleware and global guards (`APP_GUARD` and `useGlobalGuards()`) before the endpoint's `upgrade()` runs. When the endpoint's path is also the path of a `GET` route, the upgrade is secured like that route: it also runs the route's module, controller and route middleware and its controller and route guards, in the usual order, with `ctx.route` and `ctx.meta` set to that route; an endpoint without a `GET` route sees only the global ones and `ctx.route === null`. A guard that returns `false` answers the upgrade with 403. Guards can tell an upgrade apart by `ctx.upgrade`, which is `{ path }` (the endpoint path) on upgrades and `null` otherwise. Browsers cannot set headers such as `Authorization` on a WebSocket, so a guard that authenticates by header (global, or on a controller whose `GET` route shares a WebSocket path) should let upgrades through and leave authentication to the endpoint (for GraphQL, `subscriptions.onConnect`):
 
@@ -65,7 +65,7 @@ WebSockets are limited by default. `listen({ websocket })` sets the server-wide 
 
 | Option | Default | |
 | --- | --- | --- |
-| `maxPayloadLength` | 256 KiB | a larger message drops the connection (the default sits above `@hpmws/graphql`'s 100 KiB `maxQueryLength` plus its message envelope) |
+| `maxPayloadLength` | 256 KiB | a larger message drops the connection (the default sits above `@knead/graphql`'s 100 KiB `maxQueryLength` plus its message envelope) |
 | `backpressureLimit` / `closeOnBackpressureLimit` | 1 MiB / `true` | a reader that falls that far behind is closed |
 | `idleTimeout` | 120 (seconds) | |
 | `maxConnectionsPerIp` | 100 | open sockets per `ctx.ip`; further upgrades get 429 (`false` disables) |
@@ -107,4 +107,4 @@ Control characters (CR, LF, ESC and the rest of C0, and DEL) in the message and 
 
 hpmws requires Bun 1.4.3 or later (`engines.bun`), which fixes CVE-2026-48618 (TLS hostname matching, including `Bun.RedisClient`), request smuggling through bare-LF chunked bodies, WebSocket frames sent with the upgrade request, `req.url` and headers of aborted requests, and the TLS handshake idle timeout. `listen()` logs a warning once when it runs on an older Bun (`checkBunVersion()`, `compareVersions()` and `MIN_BUN_VERSION` are exported).
 
-`bun add @hpmws/core @hpmws/http` (`@hpmws/core` is a peer dependency). Licensed MIT OR Apache-2.0.
+`bun add @knead/core @knead/http` (`@knead/core` is a peer dependency). Licensed MIT OR Apache-2.0.

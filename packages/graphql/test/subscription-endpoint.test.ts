@@ -2,7 +2,7 @@
 // defence is exercised without Leaven's overlapping protections (each test fails when the
 // defence it names is removed).
 import { describe, expect, test } from 'bun:test';
-import { MemoryLogger, type WsSocket } from '@hpmws/http';
+import { MemoryLogger, type WsSocket } from '@knead/http';
 import type { WebSocketHandlerConfig } from '@leaven-graphql/ws';
 import { OperationContext } from '../src/context.js';
 import type { GraphQLRuntime } from '../src/runtime.js';

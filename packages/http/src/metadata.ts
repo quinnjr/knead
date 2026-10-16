@@ -1,4 +1,4 @@
-import { MetadataKey } from '@hpmws/core';
+import { MetadataKey } from '@knead/core';
 import type {
   ControllerOptions,
   ErrorType,

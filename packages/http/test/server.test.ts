@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { type BeforeApplicationShutdown, inject, Module, type OnModuleInit } from '@hpmws/core';
+import { type BeforeApplicationShutdown, inject, Module, type OnModuleInit } from '@knead/core';
 import { HpmwsFactory, redirectToHttps } from '../src/application.js';
 import { Controller, type Ctx, Get, HttpConfigError, WsRegistry } from '../src/index.js';
 import { MemoryLogger } from '../src/logger.js';

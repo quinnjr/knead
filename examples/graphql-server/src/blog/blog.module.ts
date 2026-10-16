@@ -1,4 +1,4 @@
-import { Module } from '@hpmws/core';
+import { Module } from '@knead/core';
 import { AuthorResolver } from './author.resolver.js';
 import { AuthorsById, PostsByAuthor } from './blog.loaders.js';
 import { BlogMutations } from './blog.mutations.js';

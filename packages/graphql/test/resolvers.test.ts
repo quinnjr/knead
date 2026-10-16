@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { inject, Module } from '@hpmws/core';
+import { inject, Module } from '@knead/core';
 import {
   BadRequestException,
   ConflictException,
@@ -10,7 +10,7 @@ import {
   TooManyRequestsException,
   UnauthorizedException,
   UseGuards,
-} from '@hpmws/http';
+} from '@knead/http';
 import { ErrorCode, LeavenError } from '@leaven-graphql/errors';
 import { GraphQLError } from 'graphql';
 import { Int, Query, Resolver, type ResolverCtx } from '../src/index.js';

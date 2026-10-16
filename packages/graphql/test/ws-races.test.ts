@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { Module } from '@hpmws/core';
-import type { TestApp } from '@hpmws/testing';
+import { Module } from '@knead/core';
+import type { TestApp } from '@knead/testing';
 import type { PubSub } from '@leaven-graphql/ws';
 import { Int, PUBSUB, Query, Resolver, Subscription } from '../src/index.js';
 import { type Started, startGraphQL, until } from './helpers.js';

@@ -1,5 +1,5 @@
-import { inject } from '@hpmws/core';
-import { ID, Query, ResolveField, Resolver, type ResolverCtx } from '@hpmws/graphql';
+import { inject } from '@knead/core';
+import { ID, Query, ResolveField, Resolver, type ResolverCtx } from '@knead/graphql';
 import { PostsByAuthor } from './blog.loaders.js';
 import { BlogService } from './blog.service.js';
 import { Author, Post } from './blog.types.js';

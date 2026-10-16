@@ -1,5 +1,5 @@
-import { inject, Module } from '@hpmws/core';
-import { type Ctx, createRouteDecorator, type Guard, UnauthorizedException } from '@hpmws/http';
+import { inject, Module } from '@knead/core';
+import { type Ctx, createRouteDecorator, type Guard, UnauthorizedException } from '@knead/http';
 
 export interface User {
   id: string;
@@ -7,7 +7,7 @@ export interface User {
   roles: string[];
 }
 
-declare module '@hpmws/http' {
+declare module '@knead/http' {
   interface CtxState {
     user?: User;
   }

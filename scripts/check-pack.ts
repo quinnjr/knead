@@ -140,14 +140,14 @@ function smokeTest(dir: string): void {
 
 function consumerApp(): string {
   return `
-import { inject, Module } from '@hpmws/core';
-import { CorsModule } from '@hpmws/cors';
-import { Field, GraphQLModule, ID, ObjectType, Query, Resolver, type ResolverCtx } from '@hpmws/graphql';
-import { Controller, type Ctx, Get, HpmwsFactory, MemoryLogger } from '@hpmws/http';
-import { RateLimitModule } from '@hpmws/rate-limit';
-import { sanitize, type SanitizePolicy } from '@hpmws/sanitize';
-import { SecurityHeadersModule } from '@hpmws/security-headers';
-import type { TestingModuleBuilder } from '@hpmws/testing';
+import { inject, Module } from '@knead/core';
+import { CorsModule } from '@knead/cors';
+import { Field, GraphQLModule, ID, ObjectType, Query, Resolver, type ResolverCtx } from '@knead/graphql';
+import { Controller, type Ctx, Get, HpmwsFactory, MemoryLogger } from '@knead/http';
+import { RateLimitModule } from '@knead/rate-limit';
+import { sanitize, type SanitizePolicy } from '@knead/sanitize';
+import { SecurityHeadersModule } from '@knead/security-headers';
+import type { TestingModuleBuilder } from '@knead/testing';
 
 class Greeter {
   greet(name: string): string {

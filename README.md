@@ -4,20 +4,20 @@ A NestJS-style framework for [Bun](https://bun.sh): standard TC39 decorators, `i
 
 | Package | Purpose |
 |---|---|
-| `@hpmws/core` | DI container, modules, lifecycle hooks |
-| `@hpmws/http` | `Bun.serve` adapter, controllers, middleware/guards/filters, TLS, WebSocket registry |
-| `@hpmws/cors` | CORS with preflight handling |
-| `@hpmws/rate-limit` | Sliding-window / token-bucket limits, memory and Redis stores |
-| `@hpmws/security-headers` | CSP (with nonces), HSTS and friends |
-| `@hpmws/graphql` | Code-first GraphQL on Leaven: typed decorators, DataLoader, subscriptions |
-| `@hpmws/sanitize` | Opt-in allowlist HTML sanitization as a Standard Schema |
-| `@hpmws/testing` | `Test.createModule`, overrides, real ephemeral servers |
+| `@knead/core` | DI container, modules, lifecycle hooks |
+| `@knead/http` | `Bun.serve` adapter, controllers, middleware/guards/filters, TLS, WebSocket registry |
+| `@knead/cors` | CORS with preflight handling |
+| `@knead/rate-limit` | Sliding-window / token-bucket limits, memory and Redis stores |
+| `@knead/security-headers` | CSP (with nonces), HSTS and friends |
+| `@knead/graphql` | Code-first GraphQL on Leaven: typed decorators, DataLoader, subscriptions |
+| `@knead/sanitize` | Opt-in allowlist HTML sanitization as a Standard Schema |
+| `@knead/testing` | `Test.createModule`, overrides, real ephemeral servers |
 
 Requires Bun ≥ 1.4.3 (it fixes CVE-2026-48618 and request-smuggling bugs; `listen()` warns on older versions). No `experimentalDecorators`, no `reflect-metadata`.
 
 ```ts
-import { Module, inject } from '@hpmws/core';
-import { Controller, type Ctx, Get, HpmwsFactory } from '@hpmws/http';
+import { Module, inject } from '@knead/core';
+import { Controller, type Ctx, Get, HpmwsFactory } from '@knead/http';
 
 class Greeter {
   greet(name: string) {
@@ -49,7 +49,7 @@ Examples (private workspace packages, not published):
 | Example | Shows |
 | --- | --- |
 | [`examples/rest-api`](examples/rest-api) | CORS, rate limiting, security headers, guards, validation and a GraphQL endpoint working together |
-| [`examples/graphql-server`](examples/graphql-server) | A GraphQL blog using every package: interfaces, unions, enums, a custom scalar, DataLoaders, auth guards and roles, subscriptions on in-memory or Redis pub/sub, plus a REST route and an end-to-end smoke test (`pnpm --filter @hpmws/example-graphql-server smoke`) |
+| [`examples/graphql-server`](examples/graphql-server) | A GraphQL blog using every package: interfaces, unions, enums, a custom scalar, DataLoaders, auth guards and roles, subscriptions on in-memory or Redis pub/sub, plus a REST route and an end-to-end smoke test (`pnpm --filter @knead/example-graphql-server smoke`) |
 
 ## Development
 
@@ -65,7 +65,7 @@ CI also scans the full git history for committed secrets with a pinned, checksum
 
 ### Releasing
 
-All `@hpmws/*` packages share one version (Changesets fixed mode). To release:
+All `@knead/*` packages share one version (Changesets fixed mode). To release:
 1. `git flow release start <version>`
 2. `pnpm version-packages`
 3. `git commit -am "chore: release v<version>"`
@@ -85,7 +85,7 @@ To check a release locally without publishing: `bun scripts/release.ts gate v<ve
 > [!WARNING]
 > Never push a `v*` tag on a commit that predates the two-job release workflow. Older commits carry the old single-job `release.yml`, which runs every repo script while holding the npm publish credential and has none of these checks.
 
-CI authenticates to npm with [trusted publishing](https://docs.npmjs.com/trusted-publishers) (OIDC) rather than a stored token. Each `@hpmws/*` package on npmjs.com must trust this repository's `release.yml` workflow. A new package needs one manual publish first (`pnpm publish --access public --otp <code>` from its directory). After that, register the workflow for every public package while logged in to npm with 2FA: `pnpm trust:npm` (add `--dry-run` to preview). The script logs in if needed and always logs out of npm when it exits, even on failure, so no long-lived npm session token stays in `~/.npmrc`; that also ends any session you had before running it. npm attaches provenance only while the repository is public.
+CI authenticates to npm with [trusted publishing](https://docs.npmjs.com/trusted-publishers) (OIDC) rather than a stored token. Each `@knead/*` package on npmjs.com must trust this repository's `release.yml` workflow. A new package needs one manual publish first (`pnpm publish --access public --otp <code>` from its directory). After that, register the workflow for every public package while logged in to npm with 2FA: `pnpm trust:npm` (add `--dry-run` to preview). The script logs in if needed and always logs out of npm when it exits, even on failure, so no long-lived npm session token stays in `~/.npmrc`; that also ends any session you had before running it. npm attaches provenance only while the repository is public.
 
 ### Toolchain and image pins
 
@@ -101,7 +101,7 @@ Some protections need features that private repositories on the free plan do not
 - **Protected release environment.** Once available:
   1. Create a GitHub environment `npm-publish` with required reviewers and a deployment rule allowing only `v*` tags.
   2. Add `environment: npm-publish` to the `publish` job in `release.yml`.
-  3. Remove the existing environment-less trusted publisher from every package, so it cannot still be used. List it with `pnpm dlx npm@11.21.0 trust list @hpmws/<pkg>` and remove it with `pnpm dlx npm@11.21.0 trust revoke @hpmws/<pkg> --id=<trust-id>`, or delete it under each package's **Settings → Trusted publishing** on npmjs.com.
+  3. Remove the existing environment-less trusted publisher from every package, so it cannot still be used. List it with `pnpm dlx npm@11.21.0 trust list @knead/<pkg>` and remove it with `pnpm dlx npm@11.21.0 trust revoke @knead/<pkg> --id=<trust-id>`, or delete it under each package's **Settings → Trusted publishing** on npmjs.com.
   4. Re-register with the environment: `pnpm trust:npm --env npm-publish`.
 - **CodeQL.** `codeql.yml` skips its analysis until the repository variable `CODEQL_ENABLED` is `true`, because code scanning is unavailable on a private free-plan repository. When the repository goes public (or gets GitHub Advanced Security), enable code scanning under **Settings → Code security** and set the variable under **Settings → Secrets and variables → Actions → Variables** (`gh variable set CODEQL_ENABLED --body true`).
 - **Private vulnerability reporting** (see [SECURITY.md](SECURITY.md)) and **CODEOWNERS enforcement** through branch protection.

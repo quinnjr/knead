@@ -1,5 +1,5 @@
 {
-  "name": "@hpmws/graphql",
+  "name": "@knead/graphql",
   "version": "0.0.0",
   "description": "Code-first GraphQL on Leaven for the hpmws framework",
   "license": "MIT OR Apache-2.0",
@@ -35,16 +35,16 @@
     "dataloader": "2.2.3"
   },
   "peerDependencies": {
-    "@hpmws/core": "workspace:^",
-    "@hpmws/http": "workspace:^",
+    "@knead/core": "workspace:^",
+    "@knead/http": "workspace:^",
     "graphql": "^16.14.2"
   },
   "devDependencies": {
-    "@hpmws/core": "workspace:^",
-    "@hpmws/http": "workspace:^",
-    "@hpmws/rate-limit": "workspace:^",
-    "@hpmws/security-headers": "workspace:^",
-    "@hpmws/testing": "workspace:^",
+    "@knead/core": "workspace:^",
+    "@knead/http": "workspace:^",
+    "@knead/rate-limit": "workspace:^",
+    "@knead/security-headers": "workspace:^",
+    "@knead/testing": "workspace:^",
     "graphql": "^16.14.2"
   },
   "publishConfig": {

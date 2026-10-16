@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { inject, Module, type OnModuleInit } from '@hpmws/core';
+import { inject, Module, type OnModuleInit } from '@knead/core';
 import type { HttpApplication } from '../src/application.js';
 import { Controller, Get, ModuleMiddleware } from '../src/decorators.js';
 import { APP_GUARD } from '../src/tokens.js';

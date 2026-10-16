@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { Module } from '@hpmws/core';
+import { Module } from '@knead/core';
 import { MemoryLogger } from '../src/logger.js';
 import {
   checkBunVersion,

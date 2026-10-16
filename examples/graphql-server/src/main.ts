@@ -1,4 +1,4 @@
-import { HpmwsFactory, LOGGER } from '@hpmws/http';
+import { HpmwsFactory, LOGGER } from '@knead/http';
 import { AppModule } from './app.module.js';
 import { config, listenOptions } from './config.js';
 

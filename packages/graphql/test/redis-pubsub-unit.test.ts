@@ -1,6 +1,6 @@
 import { describe, expect, setSystemTime, test } from 'bun:test';
 import { createHmac } from 'node:crypto';
-import { HttpConfigError, MemoryLogger } from '@hpmws/http';
+import { HttpConfigError, MemoryLogger } from '@knead/http';
 import type { RedisClient } from 'bun';
 import { RedisPubSub } from '../src/index.js';
 import { until } from './helpers.js';

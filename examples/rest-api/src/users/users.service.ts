@@ -1,4 +1,4 @@
-import { NotFoundException } from '@hpmws/http';
+import { NotFoundException } from '@knead/http';
 
 export interface UserRecord {
   id: string;

@@ -1,5 +1,5 @@
-import { InjectionToken } from '@hpmws/core';
-import { type Logger, redactCredentials, redactValue, summarizeError } from '@hpmws/http';
+import { InjectionToken } from '@knead/core';
+import { type Logger, redactCredentials, redactValue, summarizeError } from '@knead/http';
 import type { PubSubEngine } from '@leaven-graphql/ws';
 
 /** The PubSubEngine used by @Subscription resolvers: `inject(PUBSUB).publish(topic, payload)`. */

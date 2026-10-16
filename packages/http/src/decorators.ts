@@ -6,7 +6,7 @@ import {
   readMethodMetadata,
   setMetadata,
   setMethodMetadata,
-} from '@hpmws/core';
+} from '@knead/core';
 import {
   CATCH,
   CONTROLLER,

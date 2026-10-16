@@ -4,7 +4,7 @@ import {
   HttpConfigError,
   type Logger,
   plaintextRedisHost,
-} from '@hpmws/http';
+} from '@knead/http';
 import { RedisClient } from 'bun';
 import { hashKey, hashSecretBytes } from './keys.js';
 

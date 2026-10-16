@@ -1,5 +1,5 @@
-import { appendMetadata, INJECTABLE, setMetadata } from '@hpmws/core';
-import { createRouteDecorator, type GuardRef } from '@hpmws/http';
+import { appendMetadata, INJECTABLE, setMetadata } from '@knead/core';
+import { createRouteDecorator, type GuardRef } from '@knead/http';
 import type {
   ResolverCtx,
   ResolverCtxKey,

@@ -1,4 +1,4 @@
-import { InjectionToken } from '@hpmws/core';
+import { InjectionToken } from '@knead/core';
 import { summarizeError } from './error-log.js';
 
 export interface Logger {

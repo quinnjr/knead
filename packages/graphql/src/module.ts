@@ -1,5 +1,5 @@
-import { type DynamicModule, inject, Module, type ModuleImport, type Provider } from '@hpmws/core';
-import { HTTP_DEVELOPMENT, LOGGER } from '@hpmws/http';
+import { type DynamicModule, inject, Module, type ModuleImport, type Provider } from '@knead/core';
+import { HTTP_DEVELOPMENT, LOGGER } from '@knead/http';
 import { PubSub } from '@leaven-graphql/ws';
 import { createGraphQLController } from './http.js';
 import {

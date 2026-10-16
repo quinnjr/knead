@@ -1,8 +1,8 @@
-import { inject, Module } from '@hpmws/core';
-import { CorsModule } from '@hpmws/cors';
-import { GraphQLModule } from '@hpmws/graphql';
-import { RateLimitModule } from '@hpmws/rate-limit';
-import { SecurityHeadersModule } from '@hpmws/security-headers';
+import { inject, Module } from '@knead/core';
+import { CorsModule } from '@knead/cors';
+import { GraphQLModule } from '@knead/graphql';
+import { RateLimitModule } from '@knead/rate-limit';
+import { SecurityHeadersModule } from '@knead/security-headers';
 import { AuthModule, AuthService } from './auth/auth.js';
 import { UsersModule } from './users/users.module.js';
 

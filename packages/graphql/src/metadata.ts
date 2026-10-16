@@ -1,5 +1,5 @@
-import { MetadataKey } from '@hpmws/core';
-import type { GuardRef } from '@hpmws/http';
+import { MetadataKey } from '@knead/core';
+import type { GuardRef } from '@knead/http';
 import type { StandardSchemaV1 } from '@standard-schema/spec';
 import type { GraphQLResolveInfo } from 'graphql';
 import type { Class, Nullable, TypeThunkResult } from './type-refs.js';

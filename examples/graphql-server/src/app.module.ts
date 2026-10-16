@@ -1,8 +1,8 @@
-import { inject, Module } from '@hpmws/core';
-import { CorsModule } from '@hpmws/cors';
-import { GraphQLModule, PubSub, RedisPubSub } from '@hpmws/graphql';
-import { RateLimitModule, RedisStore } from '@hpmws/rate-limit';
-import { SecurityHeadersModule } from '@hpmws/security-headers';
+import { inject, Module } from '@knead/core';
+import { CorsModule } from '@knead/cors';
+import { GraphQLModule, PubSub, RedisPubSub } from '@knead/graphql';
+import { RateLimitModule, RedisStore } from '@knead/rate-limit';
+import { SecurityHeadersModule } from '@knead/security-headers';
 import { AuthModule, AuthService } from './auth/auth.js';
 import { BlogModule } from './blog/blog.module.js';
 import { config, redisPubSubOptions } from './config.js';

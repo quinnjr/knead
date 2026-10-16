@@ -1,5 +1,5 @@
-import type { ModuleImport, Provider } from '@hpmws/core';
-import { Test, type TestApp, type TestingModule } from '@hpmws/testing';
+import type { ModuleImport, Provider } from '@knead/core';
+import { Test, type TestApp, type TestingModule } from '@knead/testing';
 import {
   GraphQLModule,
   type GraphQLModuleOptions,

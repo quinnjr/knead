@@ -1,4 +1,4 @@
-import { BadRequestException, type Ctx, type WsEndpoint, type WsSocket } from '@hpmws/http';
+import { BadRequestException, type Ctx, type WsEndpoint, type WsSocket } from '@knead/http';
 import type { GraphQLRequest, LeavenExecutor, SubscriptionIterator } from '@leaven-graphql/core';
 import {
   type WebSocketContext,

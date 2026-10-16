@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { Module } from '@hpmws/core';
-import { HttpConfigError, UseGuards } from '@hpmws/http';
+import { Module } from '@knead/core';
+import { HttpConfigError, UseGuards } from '@knead/http';
 import {
   Field,
   Int,

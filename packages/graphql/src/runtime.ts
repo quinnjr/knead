@@ -8,7 +8,7 @@ import {
   type OnModuleDestroy,
   type OnModuleInit,
   type Type,
-} from '@hpmws/core';
+} from '@knead/core';
 import {
   assertGuardRef,
   BadRequestException,
@@ -22,7 +22,7 @@ import {
   ROUTE_META,
   WsRegistry,
   type WsSocket,
-} from '@hpmws/http';
+} from '@knead/http';
 import {
   type CompilerOptions,
   type ExecutionHooks,
