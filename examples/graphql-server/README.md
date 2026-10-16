@@ -17,6 +17,7 @@ pnpm --filter @hpmws/example-graphql-server start   # production defaults
 | `NODE_ENV` | | `development` turns on the playground, introspection and unmasked errors, and writes `schema.graphql`. `production` refuses to start: the demo tokens are public |
 | `REDIS_URL` | | Use `RedisPubSub` for subscriptions, so several instances share events |
 | `REDIS_PUBSUB_SIGNING_KEY` | | `RedisPubSub` `signingKey` (generate with `openssl rand -base64 32`): events are signed, and unsigned or forged ones are dropped |
+| `REDIS_PUBSUB_ENCRYPTION_KEY` | | `RedisPubSub` `encryptionKey` (generate with `openssl rand -base64 32`): event payloads are AES-256-GCM encrypted in Redis |
 | `RATE_LIMIT` | `100` | Requests per client IP per minute (`/health` is exempt) |
 | `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated browser origins for CORS and subscription sockets |
 

@@ -98,5 +98,9 @@ describe('RedisPubSub configuration', () => {
     expect(
       redisPubSubOptions({ REDIS_URL: 'redis://localhost:6379', REDIS_PUBSUB_SIGNING_KEY: 'k' }),
     ).toEqual({ url: 'redis://localhost:6379', signingKey: 'k' });
+    expect(redisPubSubOptions({ REDIS_PUBSUB_ENCRYPTION_KEY: 'e' })).toEqual({
+      url: undefined,
+      encryptionKey: 'e',
+    });
   });
 });

@@ -11,13 +11,23 @@ export const config = {
   redisUrl: process.env.REDIS_URL || undefined,
 };
 
-/** RedisPubSub options from the environment: the signing key when one is set. */
+/**
+ * RedisPubSub options from the environment: REDIS_PUBSUB_SIGNING_KEY signs events and
+ * REDIS_PUBSUB_ENCRYPTION_KEY encrypts their payloads (each `openssl rand -base64 32`, from a
+ * secret store or the environment).
+ */
 export function redisPubSubOptions(env: Record<string, string | undefined>): {
   url: string | undefined;
   signingKey?: string;
+  encryptionKey?: string;
 } {
   const signingKey = env.REDIS_PUBSUB_SIGNING_KEY || undefined;
-  return { url: env.REDIS_URL || undefined, ...(signingKey ? { signingKey } : {}) };
+  const encryptionKey = env.REDIS_PUBSUB_ENCRYPTION_KEY || undefined;
+  return {
+    url: env.REDIS_URL || undefined,
+    ...(signingKey ? { signingKey } : {}),
+    ...(encryptionKey ? { encryptionKey } : {}),
+  };
 }
 
 /**

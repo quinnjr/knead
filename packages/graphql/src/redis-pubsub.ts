@@ -1,4 +1,11 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHmac,
+  hkdfSync,
+  randomBytes,
+  timingSafeEqual,
+} from 'node:crypto';
 import {
   ConsoleLogger,
   defaultRedisUrl,
@@ -36,6 +43,17 @@ function keyList(
   });
 }
 
+/** Encrypted payloads: `e1.<iv>.<ciphertext + tag>`, base64url. */
+const ENCRYPTED_PREFIX = 'e1.';
+const ENVELOPE = /^e1\.([A-Za-z0-9_-]{16})\.([A-Za-z0-9_-]+)$/;
+
+/** An AES-256 key derived from key material (HKDF-SHA256, so any length >= 32 bytes works). */
+function aesKey(material: Uint8Array): Buffer {
+  return Buffer.from(
+    hkdfSync('sha256', material, new Uint8Array(0), 'hpmws:redis-pubsub:aes-256-gcm', 32),
+  );
+}
+
 /** Longest accepted maxSignatureAge: 10 minutes. */
 const MAX_SIGNATURE_AGE = 600_000;
 
@@ -66,6 +84,15 @@ export interface RedisPubSubOptions {
    * one with `openssl rand -base64 32` and load it from a secret store or the environment.
    */
   signingKey?: RedisPubSubKey | readonly RedisPubSubKey[];
+  /**
+   * Key material (at least 32 bytes, the same on every instance) for AES-256-GCM payload
+   * encryption: each message gets a random 12-byte IV, and the channel (prefix + topic) is the
+   * additional authenticated data, so a message cannot be replayed on another topic. Messages
+   * that fail to decrypt (tampered, wrong key, not encrypted) are dropped and logged. An array
+   * rotates keys: encrypt with the first, decrypt with any. Combined with `signingKey`, the
+   * payload is encrypted and the envelope then signed.
+   */
+  encryptionKey?: RedisPubSubKey | readonly RedisPubSubKey[];
   /** Oldest signed message accepted, in milliseconds: 1 to 600000. Default 60000. */
   maxSignatureAge?: number;
   /**
@@ -119,11 +146,14 @@ export class RedisPubSub implements PubSubEngine {
   #closed = false;
   /** Signing keys: the first signs, any verifies. */
   readonly #signingKeys: Uint8Array[] | undefined;
+  /** AES-256 keys: the first encrypts, any decrypts. */
+  readonly #encryptionKeys: Buffer[] | undefined;
   readonly #maxSignatureAge: number;
   readonly #publishTimeout: number;
 
   constructor(options: RedisPubSubOptions = {}) {
     this.#signingKeys = keyList('signingKey', options.signingKey);
+    this.#encryptionKeys = keyList('encryptionKey', options.encryptionKey)?.map(aesKey);
     const maxAge = options.maxSignatureAge ?? 60_000;
     if (!Number.isInteger(maxAge) || maxAge < 1 || maxAge > MAX_SIGNATURE_AGE) {
       throw new HttpConfigError(
@@ -207,10 +237,11 @@ export class RedisPubSub implements PubSubEngine {
   /** Like publish(), but rejects when Redis did not accept the message within publishTimeout. */
   async publishOrThrow(topic: string, payload: unknown): Promise<void> {
     const json = JSON.stringify(payload);
-    let message = json;
+    // Encrypt, then sign the envelope.
+    let message = this.#encryptionKeys ? this.#encrypt(topic, json) : json;
     if (this.#signingKeys) {
       const ts = String(Date.now());
-      message = `${this.#sign(this.#signingKeys[0]!, topic, ts, json)}.${ts}.${json}`;
+      message = `${this.#sign(this.#signingKeys[0]!, topic, ts, message)}.${ts}.${message}`;
     }
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -275,6 +306,82 @@ export class RedisPubSub implements PubSubEngine {
     if (this.#owned) this.#publisher.close();
   }
 
+  /** Verifies, decrypts and parses a message, then hands the payload to the topic's listeners. */
+  #receive(topic: string, message: string): void {
+    let body: string | undefined = message;
+    if (this.#signingKeys) {
+      body = this.#verified(topic, message);
+      if (body === undefined) {
+        this.#logger.warn(
+          `RedisPubSub dropped a message on ${JSON.stringify(topic)} without a valid signature`,
+        );
+        return;
+      }
+    }
+    let json = body;
+    if (this.#encryptionKeys) {
+      try {
+        json = this.#decrypt(topic, body);
+      } catch (error) {
+        this.#logError(
+          `RedisPubSub dropped a message on ${JSON.stringify(topic)} that failed to decrypt`,
+          error,
+          'warn',
+        );
+        return;
+      }
+    }
+    let payload: unknown;
+    try {
+      payload = JSON.parse(json);
+    } catch {
+      this.#logger.warn(`RedisPubSub dropped a non-JSON message on ${JSON.stringify(topic)}`);
+      return;
+    }
+    for (const listener of this.#topics.get(topic) ?? []) {
+      try {
+        listener.callback(payload);
+      } catch (error) {
+        this.#logError(`RedisPubSub listener for ${JSON.stringify(topic)} threw`, error);
+      }
+    }
+  }
+
+  /** `e1.<iv>.<ciphertext + tag>` (base64url), AES-256-GCM with the channel as AAD. */
+  #encrypt(topic: string, json: string): string {
+    const iv = randomBytes(12);
+    const cipher = createCipheriv('aes-256-gcm', this.#encryptionKeys![0]!, iv);
+    cipher.setAAD(Buffer.from(this.#prefix + topic, 'utf8'));
+    const sealed = Buffer.concat([
+      cipher.update(json, 'utf8'),
+      cipher.final(),
+      cipher.getAuthTag(),
+    ]);
+    return `${ENCRYPTED_PREFIX}${iv.toString('base64url')}.${sealed.toString('base64url')}`;
+  }
+
+  /** The plaintext of an envelope sealed under any of the keys, for this channel; or throws. */
+  #decrypt(topic: string, body: string): string {
+    const match = ENVELOPE.exec(body);
+    if (!match) throw new Error('The message is not an encrypted envelope.');
+    const iv = Buffer.from(match[1]!, 'base64url');
+    const sealed = Buffer.from(match[2]!, 'base64url');
+    if (iv.length !== 12 || sealed.length < 16) throw new Error('Malformed encrypted envelope.');
+    const tag = sealed.subarray(sealed.length - 16);
+    const ciphertext = sealed.subarray(0, sealed.length - 16);
+    for (const key of this.#encryptionKeys!) {
+      try {
+        const decipher = createDecipheriv('aes-256-gcm', key, iv);
+        decipher.setAAD(Buffer.from(this.#prefix + topic, 'utf8'));
+        decipher.setAuthTag(tag);
+        return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
+      } catch {
+        // Wrong key, or tampered: try the next key.
+      }
+    }
+    throw new Error('No encryption key authenticates the message.');
+  }
+
   /** Runs `op` after the topic's earlier Redis calls; `op` handles its own errors. */
   #enqueue(topic: string, op: () => Promise<void>): void {
     const next = (this.#redisOps.get(topic) ?? Promise.resolve()).then(op);
@@ -316,32 +423,7 @@ export class RedisPubSub implements PubSubEngine {
     if (this.#closed) return;
     try {
       const subscriber = await this.#subscriberClient();
-      await subscriber.subscribe(this.#prefix + topic, (message) => {
-        let json: string | undefined = message;
-        if (this.#signingKeys) {
-          json = this.#verified(topic, message);
-          if (json === undefined) {
-            this.#logger.warn(
-              `RedisPubSub dropped a message on ${JSON.stringify(topic)} without a valid signature`,
-            );
-            return;
-          }
-        }
-        let payload: unknown;
-        try {
-          payload = JSON.parse(json);
-        } catch {
-          this.#logger.warn(`RedisPubSub dropped a non-JSON message on ${JSON.stringify(topic)}`);
-          return;
-        }
-        for (const listener of this.#topics.get(topic) ?? []) {
-          try {
-            listener.callback(payload);
-          } catch (error) {
-            this.#logError(`RedisPubSub listener for ${JSON.stringify(topic)} threw`, error);
-          }
-        }
-      });
+      await subscriber.subscribe(this.#prefix + topic, (message) => this.#receive(topic, message));
       this.#subscribed.add(listeners);
     } catch (error) {
       if (this.#closed) return;

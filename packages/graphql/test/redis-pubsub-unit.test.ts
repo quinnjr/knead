@@ -361,4 +361,106 @@ describe('RedisPubSub hardening', () => {
       '32 bytes',
     );
   });
+
+  describe('encryptionKey', () => {
+    const key = 'e'.repeat(32);
+    /** A publisher that captures what it would send. */
+    const capture = () => {
+      const sent: string[] = [];
+      const client = {
+        publish: async (_channel: string, message: string) => {
+          sent.push(message);
+          return 1;
+        },
+        close: () => {},
+      } as unknown as RedisClient;
+      return { client, sent };
+    };
+    const receiver = async (fake: ReturnType<typeof loopback>, options: object, topic = 't') => {
+      const logger = new MemoryLogger();
+      const pubsub = new RedisPubSub({ client: fake.client, logger, ...options });
+      const received: unknown[] = [];
+      pubsub.subscribe(topic, (payload) => received.push(payload));
+      await until(() => fake.subscribed() >= 1);
+      return { pubsub, received, logger };
+    };
+
+    test('round trip: the payload never crosses Redis in clear text', async () => {
+      const spy = capture();
+      await new RedisPubSub({ client: spy.client, encryptionKey: key }).publish('t', {
+        secret: 'x',
+      });
+      expect(spy.sent[0]).toStartWith('e1.');
+      expect(spy.sent[0]).not.toContain('secret');
+      const fake = loopback();
+      const r = await receiver(fake, { encryptionKey: key });
+      fake.inject('hpmws:gql:t', spy.sent[0]!);
+      expect(r.received).toEqual([{ secret: 'x' }]);
+      // Every message gets a fresh IV.
+      await new RedisPubSub({ client: spy.client, encryptionKey: key }).publish('t', {
+        secret: 'x',
+      });
+      expect(spy.sent[1]).not.toBe(spy.sent[0]);
+      await r.pubsub.close();
+    });
+
+    test('tampered, wrong-key and unencrypted messages are dropped and logged', async () => {
+      const spy = capture();
+      await new RedisPubSub({ client: spy.client, encryptionKey: key }).publish('t', 1);
+      await new RedisPubSub({ client: spy.client, encryptionKey: 'w'.repeat(32) }).publish('t', 2);
+      const fake = loopback();
+      const r = await receiver(fake, { encryptionKey: key });
+      const good = spy.sent[0]!;
+      const flipped = `${good.slice(0, -2)}${good.at(-2) === 'A' ? 'B' : 'A'}${good.at(-1)}`;
+      fake.inject('hpmws:gql:t', flipped);
+      fake.inject('hpmws:gql:t', spy.sent[1]!);
+      fake.inject('hpmws:gql:t', JSON.stringify(3));
+      expect(r.received).toEqual([]);
+      expect(r.logger.entries.some((e) => e.message.includes('failed to decrypt'))).toBe(true);
+      await r.pubsub.close();
+    });
+
+    test('rotation: encrypt with the first key, decrypt with any', async () => {
+      const spy = capture();
+      await new RedisPubSub({ client: spy.client, encryptionKey: 'o'.repeat(32) }).publish('t', 1);
+      await new RedisPubSub({ client: spy.client, encryptionKey: [key, 'o'.repeat(32)] }).publish(
+        't',
+        2,
+      );
+      const fake = loopback();
+      const r = await receiver(fake, { encryptionKey: [key, 'o'.repeat(32)] });
+      for (const message of spy.sent) fake.inject('hpmws:gql:t', message);
+      expect(r.received).toEqual([1, 2]);
+      const onlyOld = await receiver(loopback(), { encryptionKey: 'o'.repeat(32) });
+      expect(onlyOld.received).toEqual([]);
+      await r.pubsub.close();
+      await onlyOld.pubsub.close();
+    });
+
+    test('a message replayed on another topic fails (the channel is the AAD)', async () => {
+      const spy = capture();
+      await new RedisPubSub({ client: spy.client, encryptionKey: key }).publish('a', 1);
+      const fake = loopback();
+      const r = await receiver(fake, { encryptionKey: key }, 'b');
+      fake.inject('hpmws:gql:b', spy.sent[0]!);
+      expect(r.received).toEqual([]);
+      expect(r.logger.entries.some((e) => e.message.includes('failed to decrypt'))).toBe(true);
+      await r.pubsub.close();
+    });
+
+    test('combined with signingKey: encrypted, then the envelope signed', async () => {
+      const fake = loopback();
+      const options = { encryptionKey: key, signingKey: 's'.repeat(32) };
+      const r = await receiver(fake, options);
+      await new RedisPubSub({ client: fake.client, ...options }).publish('t', { n: 1 });
+      expect(r.received).toEqual([{ n: 1 }]);
+      await r.pubsub.close();
+    });
+
+    test('keys shorter than 32 bytes are rejected', () => {
+      expect(() => new RedisPubSub({ client: loopback().client, encryptionKey: 'short' })).toThrow(
+        HttpConfigError,
+      );
+    });
+  });
 });
