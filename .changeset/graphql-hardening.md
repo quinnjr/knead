@@ -15,4 +15,4 @@ Security hardening:
 - Playground: `playground: { subscriptionEndpoint }`; otherwise the URL is derived only from a plain `host[:port]` Host header. Enabling it outside development logs a warning.
 - The playground, introspection, error masking and schema-file defaults follow the application's `HTTP_DEVELOPMENT` flag (NODE_ENV only when it is absent).
 - Outside development, internal errors are logged as name, truncated message and a correlation id (also returned as `extensions.correlationId`), never as objects.
-- Leaven packages are pinned exactly: `@leaven-graphql/core`, `playground` and `ws` to `0.2.2`, `@leaven-graphql/errors` to `0.2.1`.
+- Leaven packages are pinned exactly: `@leaven-graphql/core` and `ws` to `0.2.3`, `playground` to `0.2.2`, `@leaven-graphql/errors` to `0.2.1`.
