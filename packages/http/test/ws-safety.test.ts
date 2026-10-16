@@ -432,4 +432,22 @@ describe('closeWhere', () => {
     ws.closeWhere(() => true, 4403, 'Signed out');
     expect(bob.close).toHaveBeenCalledWith(4403, 'Signed out');
   });
+
+  test('a predicate that throws for one socket is logged; the others are still checked', async () => {
+    const logger = new MemoryLogger();
+    @Module({ providers: [{ provide: LOGGER, useValue: logger }, WsRegistry] })
+    class M {}
+    const ws = (await ApplicationContext.create(M)).get(WsRegistry);
+    ws.register('/c', { upgrade: () => ({}) });
+    const broken = fakeSocket('/c', null);
+    const ada = fakeSocket('/c', { user: 'ada' });
+    for (const s of [broken, ada]) ws.handler().open!(s);
+    const count = ws.closeWhere((s) => (s.data.data as { user: string }).user === 'ada');
+    expect(count).toBe(1);
+    expect(ada.close).toHaveBeenCalled();
+    expect(broken.close).not.toHaveBeenCalled();
+    expect(
+      logger.entries.some((e) => e.level === 'error' && e.message.includes('closeWhere')),
+    ).toBe(true);
+  });
 });

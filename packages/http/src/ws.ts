@@ -311,7 +311,8 @@ export class WsRegistry {
 
   /**
    * Closes every open socket for which `predicate` returns true (for example, all sockets of a
-   * signed-out user, found through `ws.data.data`), and returns how many were closed.
+   * signed-out user, found through `ws.data.data`), and returns how many were closed. A
+   * predicate that throws for a socket is logged and that socket is left open.
    */
   closeWhere(
     predicate: (ws: WsSocket) => boolean,
@@ -320,7 +321,15 @@ export class WsRegistry {
   ): number {
     let count = 0;
     for (const ws of [...this.#sockets.keys()]) {
-      if (!predicate(ws)) continue;
+      let matches: boolean;
+      try {
+        matches = predicate(ws);
+      } catch (error) {
+        // One bad socket (or a predicate bug) must not stop the revocation of the others.
+        this.#logger.error(`WsRegistry.closeWhere predicate threw for ${ws.data.endpoint}`, error);
+        continue;
+      }
+      if (!matches) continue;
       ws.close(code, reason);
       count++;
     }
