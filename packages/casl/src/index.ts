@@ -1,3 +1,10 @@
+export {
+  type AppAbility,
+  asSubject,
+  createAppAbility,
+  grantRules,
+  intersectRules,
+} from './ability.js';
 export { CaslConfigError } from './errors.js';
 export { type Grant, MAX_SCOPE_LENGTH, parseGrant } from './grant.js';
 export {
