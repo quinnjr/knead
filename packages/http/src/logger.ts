@@ -22,19 +22,7 @@ const SECRET_PAIRS =
 const AUTH_SCHEMES = /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/g;
 
 /** Whitespace, quotes and angle brackets end a URL token. */
-function isStop(code: number): boolean {
-  return (
-    code === 0x20 ||
-    (code >= 0x09 && code <= 0x0d) ||
-    code === 0x22 ||
-    code === 0x27 ||
-    code === 0x3c ||
-    code === 0x3e ||
-    code === 0xa0 ||
-    code === 0x2028 ||
-    code === 0x2029
-  );
-}
+const STOP = /[\s"'<>]/g;
 
 /** `[a-z0-9+.-]`, case-insensitive. */
 function isSchemeChar(code: number): boolean {
@@ -55,10 +43,10 @@ function isSchemeChar(code: number): boolean {
  */
 function redactUrls(text: string): string {
   if (!text.includes('@')) return text;
-  // `scanned` only moves forward (each window ends at or after the previous one's end), and
-  // `lastAt` is the last '@' before it.
-  let scanned = 0;
+  // Each window ends at or after the previous one's end, so `lastAt` (the last '@' before the
+  // current window's end) and `nextAt` only move forward.
   let lastAt = -1;
+  let nextAt = text.indexOf('@');
   let out = '';
   let copied = 0;
   let stop = -1;
@@ -71,12 +59,16 @@ function redactUrls(text: string): string {
     if (length >= 1 && length <= MAX_SCHEME && first >= 0x61 && first <= 0x7a) {
       const start = i + 3;
       if (stop < start) {
-        stop = start;
-        while (stop < text.length && !isStop(text.charCodeAt(stop))) stop++;
+        STOP.lastIndex = start;
+        stop = STOP.exec(text)?.index ?? text.length;
       }
       const end = Math.min(stop, start + USERINFO_WINDOW);
       if (end > start) {
-        for (; scanned < end; scanned++) if (text.charCodeAt(scanned) === 0x40) lastAt = scanned;
+        // nextAt (the first '@' at or after the scanned prefix) only moves forward.
+        while (nextAt !== -1 && nextAt < end) {
+          lastAt = nextAt;
+          nextAt = text.indexOf('@', nextAt + 1);
+        }
         const at = lastAt;
         let exempt = at < start;
         if (!exempt && length <= 5 && /^https?$/i.test(text.slice(b, i))) {

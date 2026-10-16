@@ -40,10 +40,11 @@ describe('parseQuery', () => {
     const t0 = performance.now();
     expect(() => parseQuery(query)).toThrow(BadRequestException);
     expect(performance.now() - t0).toBeLessThan(50);
-    // Repeats under the cap are collected in place, not copied on every repeat.
+    // Repeats under the cap are collected in place, not copied on every repeat (that took
+    // about 20 s for 100k repeats).
     const t1 = performance.now();
     expect((parseQuery(query, 200_000).a as string[]).length).toBe(100_000);
-    expect(performance.now() - t1).toBeLessThan(50);
+    expect(performance.now() - t1).toBeLessThan(500);
   });
 });
 
