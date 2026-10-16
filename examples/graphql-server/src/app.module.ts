@@ -5,7 +5,7 @@ import { RateLimitModule } from '@hpmws/rate-limit';
 import { SecurityHeadersModule } from '@hpmws/security-headers';
 import { AuthModule, AuthService } from './auth/auth.js';
 import { BlogModule } from './blog/blog.module.js';
-import { config } from './config.js';
+import { config, redisPubSubOptions } from './config.js';
 import { HealthController } from './health/health.controller.js';
 
 @Module({
@@ -28,7 +28,8 @@ import { HealthController } from './health/health.controller.js';
           maxComplexity: 1000,
           maxAliases: 30,
           maxQueryLength: 100 * 1024,
-          parseOptions: { maxTokens: 10_000 },
+          maxFields: 1000,
+          parseOptions: { maxTokens: 3000 },
           // HTTP: the bearer token. Over WebSocket this runs on the upgrade request, and the
           // object onConnect returned is merged over it.
           context: (http) => ({
@@ -42,7 +43,9 @@ import { HealthController } from './health/health.controller.js';
             },
             allowedOrigins: config.corsOrigins,
           },
-          pubsub: config.redisUrl ? new RedisPubSub({ url: config.redisUrl }) : new PubSub(),
+          // REDIS_PUBSUB_SIGNING_KEY signs every event, so nothing else on the Redis server
+          // can inject one.
+          pubsub: config.redisUrl ? new RedisPubSub(redisPubSubOptions(process.env)) : new PubSub(),
         };
       },
     }),

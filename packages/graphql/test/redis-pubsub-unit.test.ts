@@ -219,6 +219,59 @@ describe('RedisPubSub hardening', () => {
     for (const p of [sender, receiver, other]) await p.close();
   });
 
+  test('signingKey rotation: sign with the first key, accept any', async () => {
+    const fake = loopback();
+    const oldKey = 'o'.repeat(32);
+    const newKey = 'n'.repeat(32);
+    const logger = new MemoryLogger();
+    const receiver = new RedisPubSub({ client: fake.client, signingKey: [newKey, oldKey], logger });
+    const received: unknown[] = [];
+    receiver.subscribe('t', (payload) => received.push(payload));
+    await until(() => fake.subscribed() === 1);
+    await new RedisPubSub({ client: fake.client, signingKey: oldKey }).publish('t', 1);
+    await new RedisPubSub({ client: fake.client, signingKey: [newKey, oldKey] }).publish('t', 2);
+    await new RedisPubSub({ client: fake.client, signingKey: 'z'.repeat(32) }).publish('t', 3);
+    expect(received).toEqual([1, 2]);
+    // The rotated publisher signs with the first key only: an old-key-only receiver rejects it.
+    const oldOnly = new RedisPubSub({ client: fake.client, signingKey: oldKey, logger });
+    const seen: unknown[] = [];
+    oldOnly.subscribe('u', (payload) => seen.push(payload));
+    await until(() => fake.subscribed() === 2);
+    await new RedisPubSub({ client: fake.client, signingKey: [newKey, oldKey] }).publish('u', 4);
+    expect(seen).toEqual([]);
+    await receiver.close();
+    await oldOnly.close();
+  });
+
+  test('Uint8Array keys are copied at construction', async () => {
+    const fake = loopback();
+    const key = new Uint8Array(32).fill(7);
+    const receiver = new RedisPubSub({
+      client: fake.client,
+      signingKey: key,
+      logger: new MemoryLogger(),
+    });
+    const sender = new RedisPubSub({ client: fake.client, signingKey: Uint8Array.from(key) });
+    key.fill(0); // the caller reuses its buffer
+    const received: unknown[] = [];
+    receiver.subscribe('t', (payload) => received.push(payload));
+    await until(() => fake.subscribed() === 1);
+    await sender.publish('t', 1);
+    expect(received).toEqual([1]);
+    await receiver.close();
+  });
+
+  test('key and maxSignatureAge validation', () => {
+    const client = loopback().client;
+    for (const signingKey of ['short', [], ['k'.repeat(32), 'short'], new Uint8Array(31)]) {
+      expect(() => new RedisPubSub({ client, signingKey })).toThrow(HttpConfigError);
+    }
+    for (const maxSignatureAge of [0, -1, 1.5, 600_001]) {
+      expect(() => new RedisPubSub({ client, maxSignatureAge })).toThrow(HttpConfigError);
+    }
+    expect(() => new RedisPubSub({ client, maxSignatureAge: 600_000 })).not.toThrow();
+  });
+
   test('the signature covers the topic', async () => {
     const fake = loopback();
     const signingKey = 'k'.repeat(32);

@@ -11,6 +11,15 @@ export const config = {
   redisUrl: process.env.REDIS_URL || undefined,
 };
 
+/** RedisPubSub options from the environment: the signing key when one is set. */
+export function redisPubSubOptions(env: Record<string, string | undefined>): {
+  url: string | undefined;
+  signingKey?: string;
+} {
+  const signingKey = env.REDIS_PUBSUB_SIGNING_KEY || undefined;
+  return { url: env.REDIS_URL || undefined, ...(signingKey ? { signingKey } : {}) };
+}
+
 /**
  * Where the server listens: `HOST` (default 127.0.0.1, so a development server is not reachable
  * from the network) and `PORT` (default 3000). Set HOST=0.0.0.0 in a container.

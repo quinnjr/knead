@@ -10,6 +10,35 @@ import {
 import type { PubSubEngine } from '@leaven-graphql/ws';
 import { RedisClient } from 'bun';
 
+/** Key material: a string (its UTF-8 bytes) or bytes. */
+export type RedisPubSubKey = string | Uint8Array;
+
+/** Copies of the keys (so later changes to the caller's buffers have no effect), each >= 32 bytes. */
+function keyList(
+  name: string,
+  value: RedisPubSubKey | readonly RedisPubSubKey[] | undefined,
+): Uint8Array[] | undefined {
+  if (value === undefined) return undefined;
+  const list = typeof value === 'string' || value instanceof Uint8Array ? [value] : [...value];
+  if (list.length === 0)
+    throw new HttpConfigError(`RedisPubSub ${name} must list at least one key.`);
+  return list.map((key) => {
+    const bytes =
+      typeof key === 'string'
+        ? new TextEncoder().encode(key)
+        : key instanceof Uint8Array
+          ? Uint8Array.from(key)
+          : undefined;
+    if (!bytes || bytes.byteLength < 32) {
+      throw new HttpConfigError(`RedisPubSub ${name} keys must be at least 32 bytes.`);
+    }
+    return bytes;
+  });
+}
+
+/** Longest accepted maxSignatureAge: 10 minutes. */
+const MAX_SIGNATURE_AGE = 600_000;
+
 export interface RedisPubSubOptions {
   /**
    * Publisher connection (not closed by close()). The subscriber is always a dedicated duplicate.
@@ -32,10 +61,12 @@ export interface RedisPubSubOptions {
    * (prefix + topic), a millisecond timestamp and the payload. Every instance must use the same
    * key; messages without a valid signature, older than `maxSignatureAge` or dated more than 60s
    * ahead are dropped and logged. Use it when other clients can publish to the Redis server.
-   * A captured message can still be replayed on the same channel inside that window.
+   * A captured message can still be replayed on the same channel inside that window. An array
+   * rotates keys: messages are signed with the first and accepted under any of them. Generate
+   * one with `openssl rand -base64 32` and load it from a secret store or the environment.
    */
-  signingKey?: string | Uint8Array;
-  /** Oldest signed message accepted, in milliseconds. Default 60000. */
+  signingKey?: RedisPubSubKey | readonly RedisPubSubKey[];
+  /** Oldest signed message accepted, in milliseconds: 1 to 600000. Default 60000. */
   maxSignatureAge?: number;
   /**
    * Milliseconds a publish waits for Redis: past it, publish() logs and resolves, and
@@ -86,25 +117,17 @@ export class RedisPubSub implements PubSubEngine {
   #development = process.env.NODE_ENV === 'development';
   #subscriber: Promise<RedisClient> | undefined;
   #closed = false;
-  readonly #signingKey: Uint8Array | undefined;
+  /** Signing keys: the first signs, any verifies. */
+  readonly #signingKeys: Uint8Array[] | undefined;
   readonly #maxSignatureAge: number;
   readonly #publishTimeout: number;
 
   constructor(options: RedisPubSubOptions = {}) {
-    if (options.signingKey !== undefined) {
-      const key =
-        typeof options.signingKey === 'string'
-          ? new TextEncoder().encode(options.signingKey)
-          : options.signingKey;
-      if (key.byteLength < 32) {
-        throw new HttpConfigError('RedisPubSub signingKey must be at least 32 bytes.');
-      }
-      this.#signingKey = key;
-    }
+    this.#signingKeys = keyList('signingKey', options.signingKey);
     const maxAge = options.maxSignatureAge ?? 60_000;
-    if (!Number.isInteger(maxAge) || maxAge < 1) {
+    if (!Number.isInteger(maxAge) || maxAge < 1 || maxAge > MAX_SIGNATURE_AGE) {
       throw new HttpConfigError(
-        `RedisPubSub maxSignatureAge must be a positive integer (ms); got ${String(maxAge)}.`,
+        `RedisPubSub maxSignatureAge must be an integer from 1 to ${MAX_SIGNATURE_AGE} (ms); got ${String(maxAge)}.`,
       );
     }
     this.#maxSignatureAge = maxAge;
@@ -185,9 +208,9 @@ export class RedisPubSub implements PubSubEngine {
   async publishOrThrow(topic: string, payload: unknown): Promise<void> {
     const json = JSON.stringify(payload);
     let message = json;
-    if (this.#signingKey) {
+    if (this.#signingKeys) {
       const ts = String(Date.now());
-      message = `${this.#sign(topic, ts, json)}.${ts}.${json}`;
+      message = `${this.#sign(this.#signingKeys[0]!, topic, ts, json)}.${ts}.${json}`;
     }
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -205,8 +228,8 @@ export class RedisPubSub implements PubSubEngine {
     }
   }
 
-  #sign(topic: string, ts: string, json: string): string {
-    return createHmac('sha256', this.#signingKey!)
+  #sign(key: Uint8Array, topic: string, ts: string, json: string): string {
+    return createHmac('sha256', key)
       .update(`${this.#prefix}${topic}\0${ts}\0${json}`)
       .digest('hex');
   }
@@ -222,8 +245,14 @@ export class RedisPubSub implements PubSubEngine {
     if (age > this.#maxSignatureAge || age < -MAX_FUTURE_SKEW) return undefined;
     const json = message.slice(dot + 1);
     const given = Buffer.from(message.slice(0, SIGNATURE_LENGTH), 'utf8');
-    const expected = Buffer.from(this.#sign(topic, ts, json), 'utf8');
-    return given.length === expected.length && timingSafeEqual(given, expected) ? json : undefined;
+    if (given.length !== SIGNATURE_LENGTH) return undefined;
+    let valid = false;
+    // Every key is tried (no early exit), so the time does not reveal which one matched.
+    for (const key of this.#signingKeys!) {
+      const expected = Buffer.from(this.#sign(key, topic, ts, json), 'utf8');
+      if (timingSafeEqual(given, expected)) valid = true;
+    }
+    return valid ? json : undefined;
   }
 
   async close(): Promise<void> {
@@ -289,7 +318,7 @@ export class RedisPubSub implements PubSubEngine {
       const subscriber = await this.#subscriberClient();
       await subscriber.subscribe(this.#prefix + topic, (message) => {
         let json: string | undefined = message;
-        if (this.#signingKey) {
+        if (this.#signingKeys) {
           json = this.#verified(topic, message);
           if (json === undefined) {
             this.#logger.warn(

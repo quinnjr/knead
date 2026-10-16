@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { AuthService, ROLES, RolesGuard } from '../src/auth/auth.js';
 import { toCommentEvent, toPostEvent } from '../src/blog/blog.events.js';
 import { Comment, Post, PostStatus, reviveComment, revivePost } from '../src/blog/blog.types.js';
-import { listenOptions } from '../src/config.js';
+import { listenOptions, redisPubSubOptions } from '../src/config.js';
 
 describe('demo AuthService', () => {
   test('refuses to start with NODE_ENV=production', () => {
@@ -87,5 +87,16 @@ describe('RolesGuard', () => {
   test('strict: without @Roles() metadata it denies', () => {
     expect(RolesGuard(ctx({}, ['admin']))).toBe(false);
     expect(RolesGuard(ctx({ [ROLES]: [] }, ['admin']))).toBe(false);
+  });
+});
+
+describe('RedisPubSub configuration', () => {
+  test('REDIS_PUBSUB_SIGNING_KEY becomes the signingKey', () => {
+    expect(redisPubSubOptions({ REDIS_URL: 'redis://localhost:6379' })).toEqual({
+      url: 'redis://localhost:6379',
+    });
+    expect(
+      redisPubSubOptions({ REDIS_URL: 'redis://localhost:6379', REDIS_PUBSUB_SIGNING_KEY: 'k' }),
+    ).toEqual({ url: 'redis://localhost:6379', signingKey: 'k' });
   });
 });
