@@ -229,6 +229,15 @@ describe('maxFields (FIELD_LIMIT)', () => {
     expect(spread.errors?.[0]?.extensions?.code).toBe('FIELD_LIMIT');
   });
 
+  test('fields in a fragment that is never spread count too (reviewer repro)', async () => {
+    s = await startGraphQL([M], { parseOptions: { maxTokens: Infinity } });
+    const query = `{ tree { n } } fragment Unused on Tree { ${'n '.repeat(2900)}}`;
+    const started = performance.now();
+    const res = await s.app.graphql(query);
+    expect(performance.now() - started).toBeLessThan(50);
+    expect(res.errors?.[0]?.extensions?.code).toBe('FIELD_LIMIT');
+  });
+
   test('9,300 __typename are rejected quickly and not cached', async () => {
     s = await startGraphQL([M], { parseOptions: { maxTokens: Infinity } });
     const before = await cacheSize();

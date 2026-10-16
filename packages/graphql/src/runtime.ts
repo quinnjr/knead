@@ -398,8 +398,9 @@ export function queryDepth(document: DocumentNode): number {
 }
 
 /**
- * Rejects a document with more than `max` field selections (FIELD_LIMIT), counting every field
- * of every operation with fragments expanded where they are spread (each fragment is counted
+ * Rejects a document with more than `max` field selections (FIELD_LIMIT): both the field nodes
+ * written in all its operations and fragments (spread or not, since validation visits them all)
+ * and the fields of every operation with fragments expanded where they are spread (each fragment is counted
  * once and memoized; a cycle adds nothing, and validation rejects it). Stops as soon as the
  * count passes `max`, and visits at most 100 000 selections.
  */
@@ -436,6 +437,24 @@ export function checkFields(document: DocumentNode, max: number): void {
     }
     return n;
   };
+  // Validation walks every definition, spread or not: the field nodes written in the document
+  // (operations and fragments, unexpanded) are capped too.
+  let written = 0;
+  const stack: SelectionSetNode[] = [];
+  for (const definition of document.definitions) {
+    if (
+      definition.kind === Kind.OPERATION_DEFINITION ||
+      definition.kind === Kind.FRAGMENT_DEFINITION
+    )
+      stack.push(definition.selectionSet);
+  }
+  while (stack.length > 0) {
+    for (const selection of stack.pop()!.selections) {
+      if (selection.kind === Kind.FIELD && ++written > max) throw over();
+      if (selection.kind !== Kind.FRAGMENT_SPREAD && selection.selectionSet)
+        stack.push(selection.selectionSet);
+    }
+  }
   for (const definition of document.definitions) {
     if (definition.kind !== Kind.OPERATION_DEFINITION) continue;
     total += count(definition.selectionSet);
