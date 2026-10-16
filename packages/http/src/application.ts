@@ -168,14 +168,19 @@ function canonicalOrigin(host: string, httpsPort: number): string {
 
 /**
  * 308 redirect to the same URL on the HTTPS listener. With `host` (a canonical `host[:port]`),
- * the request's Host is ignored; a port in `host` overrides `httpsPort`.
+ * the request's Host is ignored; a port in `host` overrides `httpsPort`. Without it, a request
+ * whose Host is not a plain, round-tripping `host[:port]` gets 400.
  * @throws HttpConfigError for a `host` that is not a plain, round-tripping `host[:port]`.
  */
 export function redirectToHttps(req: Request, httpsPort: number, host?: string): Response {
   if (host !== undefined) return redirectTo(req, canonicalOrigin(host, httpsPort));
-  // The Host header did not form a URL, and there is no canonical host to send the client to.
-  if (!URL.canParse(req.url)) return badHost();
-  return redirectTo(req, httpsOrigin(new URL(req.url).hostname, String(httpsPort)));
+  // Without a canonical host the request's Host is used, so it must pass the same strict
+  // host[:port] check as redirectHttp.host; its port is replaced by the HTTPS port.
+  const requested =
+    req.headers.get('host') ?? (URL.canParse(req.url) ? new URL(req.url).host : undefined);
+  const parsed = requested === undefined ? undefined : parseCanonicalHost(requested);
+  if (!parsed) return badHost();
+  return redirectTo(req, httpsOrigin(parsed.hostname, String(httpsPort)));
 }
 
 export class HttpApplication {
@@ -472,6 +477,12 @@ export class HttpApplication {
       throw new HttpConfigError('redirectHttp requires a TCP listener.');
     }
     const host = options.redirectHttp.host;
+    if (host === undefined) {
+      this.logger.warn(
+        'redirectHttp has no host, so redirects follow the Host header the client sent. Set ' +
+          "redirectHttp: { host: 'example.com' } to always redirect to the canonical host.",
+      );
+    }
     const origin = host === undefined ? undefined : canonicalOrigin(host, httpsPort);
     return Bun.serve({
       port: options.redirectHttp.port,

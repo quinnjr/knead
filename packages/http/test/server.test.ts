@@ -192,6 +192,8 @@ describe.skipIf(!hasOpenssl)('TLS', () => {
     const res = await fetch(new URL('/secure?x=1', app.redirectUrl), { redirect: 'manual' });
     expect(res.status).toBe(308);
     expect(res.headers.get('location')).toBe(`https://127.0.0.1:${app.server.port}/secure?x=1`);
+    const warnings = (app.logger as MemoryLogger).entries.filter((e) => e.level === 'warn');
+    expect(warnings.some((e) => e.message.includes('redirectHttp has no host'))).toBe(true);
     await app.close();
   });
 });
