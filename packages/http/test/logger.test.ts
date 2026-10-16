@@ -136,6 +136,10 @@ describe('redactCredentials', () => {
     ['basic user:pw', 'basic ***'],
     ['Invalid basic auth header; a basic mistake', 'Invalid basic auth header; a basic mistake'],
     ['Bearer of bad news', 'Bearer of bad news'],
+    ['basic setup: done', 'basic setup: done'],
+    ['Basic user:pass', 'Basic ***'],
+    // Known limit: short tokens are not credential-shaped enough.
+    ['Bearer abc123', 'Bearer abc123'],
     ['AUTHORIZATION: BASIC dXNlcg==', 'AUTHORIZATION: BASIC ***'],
     // Prefixed and suffixed keys, any case.
     ['?access_token=at1&x=1', '?access_token=***&x=1'],
