@@ -1,7 +1,7 @@
 import { inject, Module } from '@hpmws/core';
 import { CorsModule } from '@hpmws/cors';
 import { GraphQLModule, PubSub, RedisPubSub } from '@hpmws/graphql';
-import { RateLimitModule } from '@hpmws/rate-limit';
+import { RateLimitModule, RedisStore } from '@hpmws/rate-limit';
 import { SecurityHeadersModule } from '@hpmws/security-headers';
 import { AuthModule, AuthService } from './auth/auth.js';
 import { BlogModule } from './blog/blog.module.js';
@@ -15,7 +15,14 @@ import { HealthController } from './health/health.controller.js';
       credentials: true,
       exposedHeaders: ['RateLimit-Limit', 'RateLimit-Remaining', 'RateLimit-Reset', 'Retry-After'],
     }),
-    RateLimitModule.forRoot({ limit: config.rateLimit, window: '1m' }),
+    RateLimitModule.forRoot({
+      limit: config.rateLimit,
+      window: '1m',
+      store:
+        config.redisUrl && config.rateLimitHashSecret
+          ? new RedisStore({ url: config.redisUrl, hashSecret: config.rateLimitHashSecret })
+          : undefined,
+    }),
     SecurityHeadersModule.forRoot(),
     // Playground, introspection and unmasked errors follow NODE_ENV=development.
     GraphQLModule.forRootAsync({

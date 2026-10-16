@@ -6,7 +6,16 @@ import {
   plaintextRedisHost,
 } from '@hpmws/http';
 import { RedisClient } from 'bun';
-import { hashKey } from './keys.js';
+import { hashKey, hashSecretBytes } from './keys.js';
+
+/** Whether the unkeyed-hash warning was logged in this process. */
+let warnedUnkeyed = false;
+
+/** @internal For tests: logs the unkeyed-hash warning again on the next construction. */
+export function resetUnkeyedHashWarning(): void {
+  warnedUnkeyed = false;
+}
+
 import type { Algorithm, ConsumeResult, RateLimitRule, RateLimitStore } from './store.js';
 
 // Both scripts mirror MemoryStore. KEYS[1] = key, ARGV[1] = limit, ARGV[2] = windowMs.
@@ -93,10 +102,17 @@ export interface RedisStoreOptions {
   /** Key prefix. Default 'hpmws:rl:'. */
   prefix?: string;
   /**
-   * Store SHA-256 hashes (32 hex characters) instead of raw keys, so client IPs or API keys are
-   * not readable in Redis and key length is fixed. Default true.
+   * Store hashes (32 hex characters) instead of raw keys, so client IPs or API keys are not
+   * readable in Redis and key length is fixed. Default true. Without `hashSecret` the hash is
+   * plain SHA-256, which does not hide IPs: every IPv4 address can be hashed in seconds.
    */
   hashKeys?: boolean;
+  /**
+   * Secret (at least 32 bytes, the same on every instance sharing the Redis server) that keys
+   * the hashes (HMAC-SHA256), so client IPs cannot be recovered from the Redis keys. Without
+   * it, a one-time warning is logged. Generate one with `openssl rand -base64 32`.
+   */
+  hashSecret?: string | Uint8Array;
   /**
    * Throw at construction when `url` (or REDIS_URL/VALKEY_URL) is a plaintext `redis://` or
    * `valkey://` URL to a non-loopback host. Without it, that only logs a warning. Default false.
@@ -126,6 +142,7 @@ export class RedisStore implements RateLimitStore {
   readonly #owned: boolean;
   readonly #prefix: string;
   readonly #hashKeys: boolean;
+  readonly #hashSecret: Uint8Array | undefined;
 
   readonly #logger: Logger;
   readonly #commandTimeout: number;
@@ -148,6 +165,16 @@ export class RedisStore implements RateLimitStore {
       this.#logger.warn(problem);
     }
     this.#hashKeys = options.hashKeys ?? true;
+    this.#hashSecret =
+      options.hashSecret === undefined ? undefined : hashSecretBytes(options.hashSecret);
+    if (this.#hashKeys && this.#hashSecret === undefined && !warnedUnkeyed) {
+      warnedUnkeyed = true;
+      this.#logger.warn(
+        'RedisStore has no hashSecret, so rate-limit keys are stored as plain SHA-256 hashes ' +
+          'and client IPs are recoverable from the Redis keys. Set hashSecret (32+ bytes, the ' +
+          'same on every instance).',
+      );
+    }
     this.#owned = options.client === undefined;
     this.#client = options.client ?? new RedisClient(options.url);
     this.#prefix = options.prefix ?? 'hpmws:rl:';
@@ -166,7 +193,7 @@ export class RedisStore implements RateLimitStore {
       rule.algorithm === 'token-bucket' ? 'token-bucket' : 'sliding-window';
     const args = [
       '1',
-      `${this.#prefix}${this.#hashKeys ? hashKey(key) : key}:${rule.windowMs}`,
+      `${this.#prefix}${this.#hashKeys ? hashKey(key, this.#hashSecret) : key}:${rule.windowMs}`,
       String(rule.limit),
       String(rule.windowMs),
     ];

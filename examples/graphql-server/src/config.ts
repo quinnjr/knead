@@ -9,6 +9,12 @@ export const config = {
   rateLimit: Number(process.env.RATE_LIMIT ?? 100),
   /** When set, subscriptions use RedisPubSub so several instances share events. */
   redisUrl: process.env.REDIS_URL || undefined,
+  /**
+   * With REDIS_URL, rate limits are shared through RedisStore, keyed by HMAC under this secret
+   * (`openssl rand -base64 32`, the same on every instance) so client IPs cannot be recovered
+   * from the Redis keys. Unset: each instance counts in memory.
+   */
+  rateLimitHashSecret: process.env.RATE_LIMIT_HASH_SECRET || undefined,
 };
 
 /**

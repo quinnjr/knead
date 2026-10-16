@@ -18,6 +18,7 @@ pnpm --filter @hpmws/example-graphql-server start   # production defaults
 | `REDIS_URL` | | Use `RedisPubSub` for subscriptions, so several instances share events |
 | `REDIS_PUBSUB_SIGNING_KEY` | | `RedisPubSub` `signingKey` (generate with `openssl rand -base64 32`): events are signed, and unsigned or forged ones are dropped. Required with `REDIS_URL` under `NODE_ENV=production` (the server refuses to start without it) |
 | `REDIS_PUBSUB_ENCRYPTION_KEY` | | `RedisPubSub` `encryptionKey` (generate with `openssl rand -base64 32`): event payloads are AES-256-GCM encrypted in Redis |
+| `RATE_LIMIT_HASH_SECRET` | | With `REDIS_URL`, share rate limits through `RedisStore`, with keys HMAC-hashed under this secret (`openssl rand -base64 32`, the same on every instance) so client IPs cannot be recovered from Redis |
 | `RATE_LIMIT` | `100` | Requests per client IP per minute (`/health` is exempt) |
 | `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated browser origins for CORS and subscription sockets |
 

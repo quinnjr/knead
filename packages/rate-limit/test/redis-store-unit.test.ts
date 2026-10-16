@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { HttpConfigError, MemoryLogger } from '@hpmws/http';
 import type { RedisClient } from 'bun';
-import { RedisStore } from '../src/index.js';
+import { hashKey, RedisStore } from '../src/index.js';
+import { resetUnkeyedHashWarning } from '../src/redis-store.js';
 
 describe('RedisStore plaintext guardrails', () => {
   test('warns at construction about plaintext redis:// to a non-loopback host', async () => {
@@ -61,5 +62,64 @@ describe('RedisStore commandTimeout', () => {
     for (const commandTimeout of [0, -1, 1.5]) {
       expect(() => new RedisStore({ client: never, commandTimeout })).toThrow(RangeError);
     }
+  });
+});
+
+describe('keyed hashes', () => {
+  const rule = { limit: 5, windowMs: 60_000, algorithm: 'token-bucket' as const };
+  const recording = () => {
+    const keys: string[] = [];
+    const client = {
+      send: async (_command: string, args: string[]) => {
+        keys.push(args[2]!);
+        return [1, 4, Date.now()];
+      },
+    } as unknown as RedisClient;
+    return { client, keys };
+  };
+
+  test('hashKey is HMAC-SHA256 under a secret, plain SHA-256 without', () => {
+    const { createHmac } = require('node:crypto') as typeof import('node:crypto');
+    const secret = 's'.repeat(32);
+    expect(hashKey('global|1.2.3.4', secret)).toBe(
+      createHmac('sha256', secret).update('global|1.2.3.4').digest('hex').slice(0, 32),
+    );
+    expect(hashKey('global|1.2.3.4', secret)).not.toBe(hashKey('global|1.2.3.4'));
+  });
+
+  test('RedisStore with hashSecret stores HMAC keys and does not warn', async () => {
+    resetUnkeyedHashWarning();
+    const logger = new MemoryLogger();
+    const secret = new Uint8Array(32).fill(9);
+    const { client, keys } = recording();
+    const store = new RedisStore({ client, hashSecret: secret, logger });
+    secret.fill(0); // copied at construction
+    await store.consume('global|203.0.113.9', rule);
+    expect(keys[0]).toBe(
+      `hpmws:rl:${hashKey('global|203.0.113.9', new Uint8Array(32).fill(9))}:60000`,
+    );
+    expect(logger.entries).toEqual([]);
+  });
+
+  test('without hashSecret: unkeyed SHA-256 and a one-time warning', async () => {
+    resetUnkeyedHashWarning();
+    const first = new MemoryLogger();
+    const second = new MemoryLogger();
+    const { client, keys } = recording();
+    await new RedisStore({ client, logger: first }).consume('global|203.0.113.9', rule);
+    new RedisStore({ client, logger: second });
+    expect(keys[0]).toBe(`hpmws:rl:${hashKey('global|203.0.113.9')}:60000`);
+    expect(first.entries.filter((e) => e.message.includes('no hashSecret'))).toHaveLength(1);
+    expect(second.entries).toEqual([]);
+    resetUnkeyedHashWarning();
+    const raw = new MemoryLogger();
+    new RedisStore({ client, logger: raw, hashKeys: false });
+    expect(raw.entries).toEqual([]);
+  });
+
+  test('a hashSecret shorter than 32 bytes is rejected', () => {
+    expect(() => new RedisStore({ client: {} as RedisClient, hashSecret: 'short' })).toThrow(
+      RangeError,
+    );
   });
 });

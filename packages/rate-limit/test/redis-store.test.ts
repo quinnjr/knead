@@ -162,9 +162,18 @@ describe.skipIf(!url)('RedisStore', () => {
     const rule: RateLimitRule = { limit: 5, windowMs: 60_000, algorithm: 'token-bucket' };
     await new RedisStore({ client: shared, prefix: own }).consume('global|203.0.113.9', rule);
     await new RedisStore({ client: shared, prefix: own, hashKeys: false }).consume('raw', rule);
+    const secret = 's'.repeat(32);
+    await new RedisStore({ client: shared, prefix: own, hashSecret: secret }).consume(
+      'keyed',
+      rule,
+    );
     const keys = ((await shared!.send('KEYS', [`${own}*`])) as string[]).sort();
     expect(keys).toEqual(
-      [`${own}${hashKey('global|203.0.113.9')}:60000`, `${own}raw:60000`].sort(),
+      [
+        `${own}${hashKey('global|203.0.113.9')}:60000`,
+        `${own}raw:60000`,
+        `${own}${hashKey('keyed', secret)}:60000`,
+      ].sort(),
     );
     await shared!.send('DEL', keys);
   });

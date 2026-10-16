@@ -6,7 +6,11 @@ In production, connect `RedisStore` with `rediss://` (TLS) as a least-privilege 
 
 Windows are capped at one year (`365d`); a longer one is a `RangeError` at decoration or `forRoot()` time.
 
-The default key is the client IP (`ctx.ip`). IPv6 addresses are masked to a /64 (`ipv6Subnet`, an integer from 0 to 128, default 64; 128 keys each address; IPv4-mapped addresses are keyed as IPv4), because one client usually controls a whole /64 and could otherwise rotate addresses to reset its bucket. Both stores hash keys with SHA-256 (32 hex characters) before storing them (`new MemoryStore({ hashKeys: false })` / `new RedisStore({ hashKeys: false })` to keep raw keys), so client IPs and API keys are not readable in memory dumps or Redis.
+The default key is the client IP (`ctx.ip`). IPv6 addresses are masked to a /64 (`ipv6Subnet`, an integer from 0 to 128, default 64; 128 keys each address; IPv4-mapped addresses are keyed as IPv4), because one client usually controls a whole /64 and could otherwise rotate addresses to reset its bucket. Both stores hash keys before storing them (32 hex characters; `hashKeys: false` keeps raw keys). `MemoryStore` uses HMAC-SHA256 under a random per-process secret, so client IPs and API keys cannot be read or recovered from a memory dump. `RedisStore` uses HMAC-SHA256 under `hashSecret` (at least 32 bytes, the same on every instance sharing the Redis server); without it, it falls back to plain SHA-256 and logs a one-time warning, because an unkeyed hash does not hide IPs (every IPv4 address can be hashed in seconds), so anyone who can read the Redis keys can recover the client IPs:
+
+```ts
+new RedisStore({ url: process.env.REDIS_URL, hashSecret: process.env.RATE_LIMIT_HASH_SECRET });
+```
 
 When the key function returns no key (for example `ctx.ip` on a Unix socket, or a custom key read from a missing header), `onMissingKey` decides: `'shared'` (default) counts the request against one anonymous bucket per scope, `'skip'` lets it through unlimited, and `'deny'` rejects it with 403. The first keyless request logs a warning.
 
