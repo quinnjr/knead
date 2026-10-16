@@ -158,7 +158,7 @@ describe('GraphQLModule', () => {
   });
 
   test('emitSchemaFile writes the sorted SDL', async () => {
-    const file = join(tmpdir(), `hpmws-gql-${crypto.randomUUID()}.graphql`);
+    const file = join(tmpdir(), `knead-gql-${crypto.randomUUID()}.graphql`);
     try {
       s = await startGraphQL([BlogModule], { emitSchemaFile: file });
       const written = await Bun.file(file).text();

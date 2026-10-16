@@ -12,7 +12,7 @@ describe('duplicate @knead/core guard', () => {
   });
 
   test('loading the package records its identity on globalThis', () => {
-    expect(CORE_COPY_KEY as symbol).toBe(Symbol.for('hpmws.core'));
+    expect(CORE_COPY_KEY as symbol).toBe(Symbol.for('knead.core'));
     expect(store[CORE_COPY_KEY]).toMatchObject({ url: expect.stringContaining('copy-guard') });
   });
 

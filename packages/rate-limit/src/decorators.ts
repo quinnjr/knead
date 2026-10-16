@@ -9,8 +9,8 @@ export interface RateLimitRouteOptions {
   key?: KeyFn;
 }
 
-export const RATE_LIMIT_META = Symbol('hpmws:rate-limit');
-export const SKIP_RATE_LIMIT_META = Symbol('hpmws:skip-rate-limit');
+export const RATE_LIMIT_META = Symbol('knead:rate-limit');
+export const SKIP_RATE_LIMIT_META = Symbol('knead:skip-rate-limit');
 
 /** What is stored in route metadata: the validated options plus the parsed window. */
 export interface RateLimitRouteMeta extends RateLimitRouteOptions {

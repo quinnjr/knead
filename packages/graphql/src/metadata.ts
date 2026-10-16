@@ -89,9 +89,9 @@ export interface ResolverDefinition {
   type: (() => Class) | undefined;
 }
 
-export const TYPE_DEF = new MetadataKey<TypeDefinition>('hpmws:graphql:type');
-export const FIELDS = new MetadataKey<FieldDefinition[]>('hpmws:graphql:fields');
-export const RESOLVER = new MetadataKey<ResolverDefinition>('hpmws:graphql:resolver');
+export const TYPE_DEF = new MetadataKey<TypeDefinition>('knead:graphql:type');
+export const FIELDS = new MetadataKey<FieldDefinition[]>('knead:graphql:fields');
+export const RESOLVER = new MetadataKey<ResolverDefinition>('knead:graphql:resolver');
 export const RESOLVER_METHODS = new MetadataKey<ResolverMethodDefinition[]>(
-  'hpmws:graphql:resolver-methods',
+  'knead:graphql:resolver-methods',
 );

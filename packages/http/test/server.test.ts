@@ -37,7 +37,7 @@ function makeCert(name: string) {
 }
 
 beforeAll(() => {
-  certDir = mkdtempSync(join(tmpdir(), 'hpmws-tls-'));
+  certDir = mkdtempSync(join(tmpdir(), 'knead-tls-'));
 });
 afterAll(() => {
   Bun.spawnSync(['rm', '-rf', certDir]);

@@ -7,9 +7,9 @@ export interface CoreCopyMarker {
 }
 
 /** @internal */
-export const CORE_COPY_KEY: unique symbol = Symbol.for('hpmws.core');
+export const CORE_COPY_KEY: unique symbol = Symbol.for('knead.core');
 /** @internal */
-export const CORE_COPY_WARNED_KEY: unique symbol = Symbol.for('hpmws.core.duplicateWarned');
+export const CORE_COPY_WARNED_KEY: unique symbol = Symbol.for('knead.core.duplicateWarned');
 
 /** @internal Records this copy, or warns once if a different copy was loaded first. */
 export function registerCoreCopy(marker: CoreCopyMarker): void {
@@ -22,7 +22,7 @@ export function registerCoreCopy(marker: CoreCopyMarker): void {
   if (existing.url === marker.url || store[CORE_COPY_WARNED_KEY]) return;
   store[CORE_COPY_WARNED_KEY] = true;
   console.warn(
-    `[hpmws] Multiple copies of @knead/core are loaded (${existing.url} and ${marker.url}). ` +
+    `[knead] Multiple copies of @knead/core are loaded (${existing.url} and ${marker.url}). ` +
       'Injection tokens, module metadata and inject() will not work across them; ' +
       'make sure every @knead/* package resolves the same @knead/core (it is a peer dependency).',
   );

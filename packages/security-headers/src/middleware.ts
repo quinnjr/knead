@@ -18,7 +18,7 @@ import {
 export const SECURITY_HEADERS_OPTIONS = new InjectionToken<SecurityHeadersOptions>(
   'SECURITY_HEADERS_OPTIONS',
 );
-export const SECURITY_HEADERS_META = Symbol('hpmws:security-headers');
+export const SECURITY_HEADERS_META = Symbol('knead:security-headers');
 
 /** The shortest HSTS max-age that does not log a warning: 180 days. */
 export const MIN_RECOMMENDED_HSTS_MAX_AGE = 15_552_000;

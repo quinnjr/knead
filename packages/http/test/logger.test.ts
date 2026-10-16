@@ -38,7 +38,7 @@ describe('ConsoleLogger credential redaction', () => {
         42,
       );
       expect(out.calls()[0]).toEqual([
-        '[hpmws] connecting to redis://***@db.internal:6379/0',
+        '[knead] connecting to redis://***@db.internal:6379/0',
         'postgres://***@h/db',
         42,
       ]);
@@ -74,7 +74,7 @@ describe('ConsoleLogger credential redaction', () => {
       const meta = { a: 1 };
       new ConsoleLogger().warn('see https://example.com/a@b', error, meta);
       const [message, loggedError, loggedMeta] = out.calls()[0]!;
-      expect(message).toBe('[hpmws] see https://example.com/a@b');
+      expect(message).toBe('[knead] see https://example.com/a@b');
       expect(loggedError).toBe(error);
       expect(loggedMeta).toBe(meta);
     } finally {
@@ -239,7 +239,7 @@ describe('log injection', () => {
     const spy = spyOn(console, 'warn').mockImplementation(() => {});
     try {
       new ConsoleLogger().warn('a\r\nFAKE line\u001b[31m', 'b\nc\u007f');
-      expect(spy.mock.calls[0]).toEqual(['[hpmws] a\\r\\nFAKE line\\x1b[31m', 'b\\nc\\x7f']);
+      expect(spy.mock.calls[0]).toEqual(['[knead] a\\r\\nFAKE line\\x1b[31m', 'b\\nc\\x7f']);
     } finally {
       spy.mockRestore();
     }

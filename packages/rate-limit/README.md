@@ -2,7 +2,7 @@
 
 `RateLimitModule.forRoot({ limit, window })` with sliding-window or token-bucket algorithms, `@RateLimit()` (validated at decoration time) / `@SkipRateLimit()`, standard `RateLimit-*` headers and `Retry-After` computed from the earliest admission time, and `MemoryStore` or `RedisStore` (atomic Lua on `Bun.redis`) for multi-instance deployments. Windows are integer milliseconds (durations are rounded up). `RedisStore` is not compatible with Redis Cluster.
 
-In production, connect `RedisStore` with `rediss://` (TLS) as a least-privilege ACL user limited to the store's keys and the commands it runs, for example `ACL SETUSER ratelimit on >secret resetkeys ~hpmws:rl:* -@all +evalsha +eval +get +incr +pexpire +hmget +hset +time +script|load`. A plaintext `redis://` or `valkey://` URL (from `url`, `REDIS_URL` or `VALKEY_URL`) to a non-loopback host logs a warning at construction; `new RedisStore({ requireTls: true })` throws instead. A caller-supplied `client` bypasses this check, so configure TLS on it yourself.
+In production, connect `RedisStore` with `rediss://` (TLS) as a least-privilege ACL user limited to the store's keys and the commands it runs, for example `ACL SETUSER ratelimit on >secret resetkeys ~knead:rl:* -@all +evalsha +eval +get +incr +pexpire +hmget +hset +time +script|load`. A plaintext `redis://` or `valkey://` URL (from `url`, `REDIS_URL` or `VALKEY_URL`) to a non-loopback host logs a warning at construction; `new RedisStore({ requireTls: true })` throws instead. A caller-supplied `client` bypasses this check, so configure TLS on it yourself.
 
 Windows are capped at one year (`365d`); a longer one is a `RangeError` at decoration or `forRoot()` time.
 

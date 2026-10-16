@@ -16,7 +16,7 @@ import { startGraphQL, until } from './helpers.js';
 const url = process.env.REDIS_URL;
 
 describe.skipIf(!url)('RedisPubSub', () => {
-  const prefix = `hpmws:test:${crypto.randomUUID()}:`;
+  const prefix = `knead:test:${crypto.randomUUID()}:`;
   const admin = url ? new RedisClient(url) : undefined;
   afterAll(() => admin?.close());
 

@@ -96,7 +96,7 @@ describe('keyed hashes', () => {
     secret.fill(0); // copied at construction
     await store.consume('global|203.0.113.9', rule);
     expect(keys[0]).toBe(
-      `hpmws:rl:${hashKey('global|203.0.113.9', new Uint8Array(32).fill(9))}:60000`,
+      `knead:rl:${hashKey('global|203.0.113.9', new Uint8Array(32).fill(9))}:60000`,
     );
     expect(logger.entries).toEqual([]);
   });
@@ -108,7 +108,7 @@ describe('keyed hashes', () => {
     const { client, keys } = recording();
     await new RedisStore({ client, logger: first }).consume('global|203.0.113.9', rule);
     new RedisStore({ client, logger: second });
-    expect(keys[0]).toBe(`hpmws:rl:${hashKey('global|203.0.113.9')}:60000`);
+    expect(keys[0]).toBe(`knead:rl:${hashKey('global|203.0.113.9')}:60000`);
     expect(first.entries.filter((e) => e.message.includes('no hashSecret'))).toHaveLength(1);
     expect(second.entries).toEqual([]);
     resetUnkeyedHashWarning();

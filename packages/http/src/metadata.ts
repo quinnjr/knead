@@ -21,11 +21,11 @@ export interface RouteDefinition {
   options: RouteOptions;
 }
 
-export const CONTROLLER = new MetadataKey<ControllerDefinition>('hpmws:controller');
-export const ROUTES = new MetadataKey<RouteDefinition[]>('hpmws:routes');
-export const GUARDS = new MetadataKey<GuardRef<any>[]>('hpmws:guards');
-export const MIDDLEWARE = new MetadataKey<MiddlewareRef[]>('hpmws:middleware');
-export const FILTERS = new MetadataKey<FilterRef[]>('hpmws:filters');
-export const ROUTE_META = new MetadataKey<Record<PropertyKey, unknown>>('hpmws:route-meta');
-export const CATCH = new MetadataKey<ErrorType[]>('hpmws:catch');
-export const MODULE_MIDDLEWARE = new MetadataKey<MiddlewareRef[]>('hpmws:module-middleware');
+export const CONTROLLER = new MetadataKey<ControllerDefinition>('knead:controller');
+export const ROUTES = new MetadataKey<RouteDefinition[]>('knead:routes');
+export const GUARDS = new MetadataKey<GuardRef<any>[]>('knead:guards');
+export const MIDDLEWARE = new MetadataKey<MiddlewareRef[]>('knead:middleware');
+export const FILTERS = new MetadataKey<FilterRef[]>('knead:filters');
+export const ROUTE_META = new MetadataKey<Record<PropertyKey, unknown>>('knead:route-meta');
+export const CATCH = new MetadataKey<ErrorType[]>('knead:catch');
+export const MODULE_MIDDLEWARE = new MetadataKey<MiddlewareRef[]>('knead:module-middleware');

@@ -415,7 +415,7 @@ export function logValue(value: unknown): string {
  * message and in string meta are escaped, so a logged value cannot start a forged log line.
  */
 export class ConsoleLogger implements Logger {
-  constructor(private readonly prefix = 'hpmws') {}
+  constructor(private readonly prefix = 'knead') {}
 
   debug(message: string, ...meta: unknown[]): void {
     try {
