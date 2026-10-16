@@ -261,6 +261,8 @@ describe('Bun WebSocket limits', () => {
       { backpressureLimit: -1 },
       { idleTimeout: 1.5 },
       { maxConnectionsPerIp: 0 },
+      { ipv6Subnet: 0 },
+      { ipv6Subnet: 129 },
       { maxConnections: Number.NaN },
       { messageRate: { limit: 0, windowMs: 1000 } },
     ]) {
@@ -362,6 +364,34 @@ describe('connection limits', () => {
     for (const data of datas) ws.reserve(data, '10.0.0.1');
     expect(() => ws.reserve({}, '10.0.0.1')).toThrow(TooManyRequestsException);
     ws.reserve({}, '10.0.0.2');
+  });
+
+  test('IPv6 clients are grouped by /64 by default', async () => {
+    const ws = await registry();
+    ws.configure({ maxConnectionsPerIp: 2 });
+    ws.reserve({}, '2001:db8:1:2::1');
+    ws.reserve({}, '2001:db8:1:2::ffff');
+    expect(() => ws.reserve({}, '2001:db8:1:2:aaaa:bbbb:cccc:dddd')).toThrow(
+      TooManyRequestsException,
+    );
+    ws.reserve({}, '2001:db8:1:3::1');
+  });
+
+  test('ipv6Subnet is configurable (128 counts full addresses)', async () => {
+    const ws = await registry();
+    ws.configure({ maxConnectionsPerIp: 1, ipv6Subnet: 128 });
+    ws.reserve({}, '2001:db8::1');
+    ws.reserve({}, '2001:db8::2');
+    expect(() => ws.reserve({}, '2001:db8::1')).toThrow(TooManyRequestsException);
+  });
+
+  test('releasing a grouped slot frees it for the whole subnet', async () => {
+    const ws = await registry();
+    ws.configure({ maxConnectionsPerIp: 1 });
+    const data = {};
+    ws.reserve(data, '2001:db8::1');
+    ws.release(data);
+    ws.reserve({}, '2001:db8::2');
   });
 });
 

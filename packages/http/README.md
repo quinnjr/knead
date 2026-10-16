@@ -59,10 +59,11 @@ WebSockets are limited by default. `listen({ websocket })` sets the server-wide 
 | `backpressureLimit` / `closeOnBackpressureLimit` | 1 MiB / `true` | a reader that falls that far behind is closed |
 | `idleTimeout` | 120 (seconds) | |
 | `maxConnectionsPerIp` | 100 | open sockets per `ctx.ip`; further upgrades get 429 (`false` disables) |
+| `ipv6Subnet` | 64 | IPv6 clients count per /64 (one client usually controls a whole /64); 128 counts full addresses |
 | `maxConnections` | none | open sockets in total; further upgrades get 503 |
 | `messageRate` | `{ limit: 100, windowMs: 10_000 }` | per-socket token bucket; exceeding it closes with 1008 (`false` disables) |
 
-Per endpoint, `register(path, endpoint, { allowedOrigins, messageRate, maxConnectionLifetime })` overrides the message rate and can cap how long a socket lives (`maxConnectionLifetime` in ms; on expiry it is closed with 4408). Behind a proxy, set `trustProxy` so `maxConnectionsPerIp` counts clients rather than the proxy. To revoke sockets, for example when a user signs out, `WsRegistry.closeWhere(predicate, code = 1008, reason = 'Connection revoked')` closes every open socket the predicate matches (it receives the socket; `ws.data.data` is what `upgrade()` returned) and returns how many it closed:
+Per endpoint, `register(path, endpoint, { allowedOrigins, messageRate, maxConnectionLifetime })` overrides the message rate and can cap how long a socket lives (`maxConnectionLifetime` in ms; on expiry it is closed with 4408). Behind a proxy without `trustProxy`, `ctx.ip` is the proxy's address for every client, so `maxConnectionsPerIp` caps all clients together at 100 sockets: set `trustProxy` (hop count or the proxy's CIDRs) so it counts clients, or, if the proxy enforces its own per-client limit, raise `maxConnectionsPerIp` or set it to `false` and rely on `maxConnections`. To revoke sockets, for example when a user signs out, `WsRegistry.closeWhere(predicate, code = 1008, reason = 'Connection revoked')` closes every open socket the predicate matches (it receives the socket; `ws.data.data` is what `upgrade()` returned) and returns how many it closed:
 
 ```ts
 ws.closeWhere((socket) => (socket.data.data as { userId: string }).userId === userId);

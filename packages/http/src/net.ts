@@ -197,3 +197,16 @@ export function resolveSecure(
   if (protos.length === 0) return false;
   return protos[Math.min(index, protos.length - 1)]!.toLowerCase() === 'https';
 }
+
+/**
+ * A client address as a per-client key: IPv4 as is, IPv6 masked to `prefix` bits and written as
+ * `network/prefix` (one IPv6 client usually controls a whole /64). Unparseable input is
+ * returned unchanged.
+ */
+export function maskIp(ip: string, prefix: number): string {
+  const bytes = parseIp(ip);
+  if (!bytes || bytes.length === 4) return ip;
+  const masked = Uint8Array.from(bytes);
+  for (let bit = prefix; bit < 128; bit++) masked[bit >> 3]! &= ~(0x80 >> (bit & 7));
+  return `${formatIp(masked)}/${prefix}`;
+}
