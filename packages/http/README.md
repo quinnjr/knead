@@ -96,4 +96,6 @@ The default `ConsoleLogger` masks credentials before printing, in the message, i
 
 Control characters (CR, LF, ESC and the rest of C0, and DEL) in the message and in string arguments are escaped (`\n`, `\x1b`), so a logged value cannot forge log lines. `redactCredentials()`, `redactValue()` and `logValue()` (caps a client-controlled value at 1024 characters and escapes it, for interpolating into messages) are exported for custom loggers. `MemoryLogger` is for tests only: it keeps entries exactly as logged, unredacted.
 
+hpmws requires Bun 1.4.3 or later (`engines.bun`), which fixes CVE-2026-48618 (TLS hostname matching, including `Bun.RedisClient`), request smuggling through bare-LF chunked bodies, WebSocket frames sent with the upgrade request, `req.url` and headers of aborted requests, and the TLS handshake idle timeout. `listen()` logs a warning once when it runs on an older Bun (`checkBunVersion()`, `compareVersions()` and `MIN_BUN_VERSION` are exported).
+
 `bun add @hpmws/core @hpmws/http` (`@hpmws/core` is a peer dependency). Licensed MIT OR Apache-2.0.

@@ -24,6 +24,7 @@ import {
 } from './net.js';
 import { DEFAULT_MAX_PARAMS, requestUrl } from './request.js';
 import { resolveFilter, resolveGuard, resolveMiddleware } from './resolve.js';
+import { checkBunVersion } from './runtime-version.js';
 import { APP_FILTER, APP_GUARD, APP_MIDDLEWARE, HTTP_DEVELOPMENT } from './tokens.js';
 import type { FilterRef, GlobalMiddleware, GuardRef, MiddlewareRef } from './types.js';
 import { type WsData, WsRegistry, type WsServerOptions } from './ws.js';
@@ -505,6 +506,7 @@ export class HttpApplication {
     this.#redirect = redirect;
     this.#server = server;
     this.logger.info(`Listening on ${server.url}`);
+    checkBunVersion(this.logger);
     const hostname = serveOptions.hostname as string;
     if (typeof options.trustProxy === 'number' && options.trustProxy > 0 && isWildcard(hostname)) {
       this.logger.warn(
