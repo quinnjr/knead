@@ -73,6 +73,26 @@ describe('shared payloads are immutable', () => {
     await b.return?.();
   });
 
+  test('class instances, Dates and Maps are left mutable (they belong to the publisher)', () => {
+    class Entity {
+      title = 'x';
+      tags = ['a'];
+    }
+    const entity = new Entity();
+    const when = new Date(0);
+    const map = new Map([['k', 1]]);
+    const payload = { entity, when, map, plain: { n: 1 } };
+    deepFreeze(payload);
+    expect(Object.isFrozen(payload)).toBe(true);
+    expect(Object.isFrozen(payload.plain)).toBe(true);
+    entity.title = 'changed';
+    entity.tags.push('b');
+    expect(entity).toEqual(Object.assign(new Entity(), { title: 'changed', tags: ['a', 'b'] }));
+    expect(Object.isFrozen(when)).toBe(false);
+    map.set('k', 2);
+    expect(map.get('k')).toBe(2);
+  });
+
   test('deepFreeze handles cycles and skips typed arrays', () => {
     const value: Record<string, unknown> = { bytes: new Uint8Array(4), list: [{ n: 1 }] };
     value.self = value;

@@ -34,17 +34,24 @@ export class EventSourceError extends Error {
 /** Objects already frozen all the way down, so a payload shared by many subscribers is walked once. */
 const deeplyFrozen = new WeakSet<object>();
 
+function isPlain(value: object): boolean {
+  if (Array.isArray(value)) return true;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
 /**
- * Freezes `value` and every object reachable through its own properties (typed arrays and
- * buffers are skipped: they cannot be frozen), and returns it. Event payloads are shared by
- * every subscriber, so one resolver must not be able to change what the others receive.
+ * Freezes `value` and every plain object and array reachable through them, and returns it.
+ * Anything else (class instances, Dates, Maps, Buffers, ORM entities) is left as is and not
+ * walked into: it belongs to the publisher. Event payloads are shared by every subscriber, so
+ * one resolver must not be able to change what the others receive; publish plain DTOs.
  */
 export function deepFreeze<T>(value: T): T {
   const stack: unknown[] = [value];
   while (stack.length > 0) {
     const item = stack.pop();
     if (typeof item !== 'object' || item === null) continue;
-    if (deeplyFrozen.has(item) || ArrayBuffer.isView(item) || item instanceof ArrayBuffer) continue;
+    if (deeplyFrozen.has(item) || !isPlain(item)) continue;
     Object.freeze(item);
     deeplyFrozen.add(item);
     for (const key of Reflect.ownKeys(item)) {
@@ -56,8 +63,8 @@ export function deepFreeze<T>(value: T): T {
 }
 
 /**
- * An async iterator over `topics` on any PubSubEngine. Payloads are deep-frozen when they
- * arrive (deepFreeze), so they are immutable for resolvers. `filter` runs per event; `return()`
+ * An async iterator over `topics` on any PubSubEngine. Payloads' plain objects and arrays are
+ * deep-frozen when they arrive (deepFreeze), so they are immutable for resolvers. `filter` runs per event; `return()`
  * unsubscribes from every topic.
  */
 export function eventIterator<T>(
