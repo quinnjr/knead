@@ -6,8 +6,11 @@ on:
 # Nothing by default; each job asks for exactly what it needs.
 permissions: {}
 
+# One group per tag: GitHub keeps only the newest pending run of a group and cancels the rest,
+# so a shared group could silently drop a queued tag. A re-run of the same tag waits for the
+# one in progress (never cancels it).
 concurrency:
-  group: release
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 env:
