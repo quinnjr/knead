@@ -154,6 +154,23 @@ describe('createSubscriptionEndpoint defences (Leaven stubbed)', () => {
     expect(a.returned).toBe(1);
   });
 
+  test('complete returns the active iterator itself (not only through Leaven)', async () => {
+    const t = setup();
+    const pending = t.subscribe('1');
+    await t.started(1);
+    const iterator = fakeIterator();
+    t.results[0]!.resolve(iterator);
+    await pending;
+    // The stub handler does nothing on complete, so only hpmws's own discard can return it.
+    await t.send({ id: '1', type: 'complete' });
+    expect(iterator.returned).toBe(1);
+    expect(t.endpoint.stats(t.ws)).toEqual({ pending: 0, iterators: 0 });
+  });
+
+  // close() also clears the pending set. That is not observable: close drops the socket's
+  // state (stats() returns undefined), and a subscribe still resolving afterwards is returned
+  // because of the closed flag, whether or not its pending entry was cleared.
+
   test('close returns every tracked iterator', async () => {
     const t = setup();
     const iterators = [fakeIterator(), fakeIterator()];
