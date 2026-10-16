@@ -245,6 +245,30 @@ describe('redirectToHttps hardening', () => {
     );
   });
 
+  test.skipIf(!hasOpenssl)(
+    'without redirectHttp.host, allowedHosts applies to redirects',
+    async () => {
+      @Module({ controllers: [InfoController] })
+      class M {}
+      const app = await start(
+        M,
+        { tls: makeCert('allowed'), redirectHttp: { port: 0 }, allowedHosts: ['app.example'] },
+        { development: false },
+      );
+      const evil = await fetch(new URL('/secure', app.redirectUrl), {
+        redirect: 'manual',
+        headers: { host: 'evil.example' },
+      });
+      expect(evil.status).toBe(421);
+      const good = await fetch(new URL('/secure', app.redirectUrl), {
+        redirect: 'manual',
+        headers: { host: 'app.example' },
+      });
+      expect(good.headers.get('location')).toBe(`https://app.example:${app.server.port}/secure`);
+      await app.close();
+    },
+  );
+
   test.skipIf(!hasOpenssl)('redirectHttp.host is used by the redirect listener', async () => {
     @Module({ controllers: [InfoController] })
     class M {}

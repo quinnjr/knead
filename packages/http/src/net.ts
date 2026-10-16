@@ -220,3 +220,39 @@ export function maskIp(ip: string, prefix: number): string {
   for (let bit = prefix; bit < 128; bit++) masked[bit >> 3]! &= ~(0x80 >> (bit & 7));
   return `${formatIp(masked)}/${prefix}`;
 }
+
+/**
+ * The hostname of a Host header value, lowercased, with its port and a trailing dot removed
+ * (IPv6 literals keep their brackets), or undefined when it is not a plain `host[:port]`.
+ */
+export function hostHeaderName(host: string): string | undefined {
+  const m = /^(\[[0-9a-f:.]+\]|[^:[\]\s/@?#]+)(?::\d*)?$/i.exec(host);
+  if (!m) return undefined;
+  const name = m[1]!.toLowerCase();
+  return name.endsWith('.') ? name.slice(0, -1) : name;
+}
+
+/** Whether a request's Host header names an allowed host. */
+export type HostMatcher = (host: string | null) => boolean;
+
+/**
+ * Compiles `listen({ allowedHosts })`: hostnames (or IP literals, IPv6 with or without
+ * brackets), matched case-insensitively against the Host header's hostname, ports ignored.
+ */
+export function compileAllowedHosts(list: readonly string[]): HostMatcher {
+  const allowed = new Set<string>();
+  for (const entry of list) {
+    const bracketed =
+      typeof entry === 'string' && entry.includes(':') && !entry.startsWith('[') && parseIp(entry)
+        ? `[${entry}]`
+        : entry;
+    const name = typeof bracketed === 'string' ? hostHeaderName(bracketed) : undefined;
+    if (!name) throw new HttpConfigError(`Invalid allowedHosts entry: ${JSON.stringify(entry)}`);
+    allowed.add(name);
+  }
+  return (host) => {
+    if (host === null) return false;
+    const name = hostHeaderName(host);
+    return name !== undefined && allowed.has(name);
+  };
+}

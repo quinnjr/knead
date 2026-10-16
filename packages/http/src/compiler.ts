@@ -7,6 +7,7 @@ import {
   HttpConfigError,
   MethodNotAllowedException,
   NotFoundException,
+  problemResponse,
 } from './exceptions.js';
 import type { Logger } from './logger.js';
 import {
@@ -18,6 +19,7 @@ import {
   ROUTE_META,
   ROUTES,
 } from './metadata.js';
+import type { HostMatcher } from './net.js';
 import { compileMatcher, joinPaths, routeShape } from './path.js';
 import {
   composeMiddleware,
@@ -50,6 +52,8 @@ export interface CompileInput {
   readonly development: boolean;
   readonly net: NetConfig;
   readonly ws: WsRegistry;
+  /** `listen({ allowedHosts })`: requests whose Host is not allowed get 421. */
+  readonly hosts?: HostMatcher | undefined;
 }
 
 export interface CompiledApp {
@@ -126,8 +130,19 @@ function forwardedWarning(net: NetConfig, logger: Logger): (req: Request) => voi
   };
 }
 
+/** The answer to a request whose Host is not in `allowedHosts` (DNS rebinding protection). */
+export function misdirectedResponse(): Response {
+  return problemResponse({
+    type: 'about:blank',
+    title: 'Misdirected Request',
+    status: 421,
+    detail: 'This server does not serve the requested host.',
+  });
+}
+
 export function compileApplication(input: CompileInput): CompiledApp {
-  const { logger, development, net } = input;
+  const { logger, development, net, hosts } = input;
+  const misdirected = (req: Request) => hosts !== undefined && !hosts(req.headers.get('host'));
   const checkForwarded = forwardedWarning(net, logger);
   const globalOnError = createErrorHandler(input.globalFilters, logger, development);
   const routes: CompiledApp['routes'] = {};
@@ -251,6 +266,7 @@ export function compileApplication(input: CompileInput): CompiledApp {
             routes[path] = byMethod;
           }
           byMethod[method] = async (req, server) => {
+            if (misdirected(req)) return misdirectedResponse();
             checkForwarded(req);
             if (ws && isUpgrade(req)) return runUpgrade(path, ws, req, server, net);
             return handle(new RequestContext(req, server, info, net));
@@ -288,6 +304,7 @@ export function compileApplication(input: CompileInput): CompiledApp {
   const fallback = composeMiddleware(input.globalMiddleware, unmatched, globalOnError);
 
   const fetch: BunHandler = async (req, server) => {
+    if (misdirected(req)) return misdirectedResponse();
     checkForwarded(req);
     if (isUpgrade(req)) {
       const pathname = requestUrl(req).pathname;

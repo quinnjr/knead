@@ -6,10 +6,21 @@ import {
   type Token,
 } from '@hpmws/core';
 import type { Serve, Server, TLSOptions } from 'bun';
-import { type CompiledApp, compileApplication, type RouteTableEntry } from './compiler.js';
+import {
+  type CompiledApp,
+  compileApplication,
+  misdirectedResponse,
+  type RouteTableEntry,
+} from './compiler.js';
 import { HttpConfigError } from './exceptions.js';
 import { ConsoleLogger, LOGGER, type Logger } from './logger.js';
-import { compileTrust, parseIp, type TrustProxy } from './net.js';
+import {
+  compileAllowedHosts,
+  compileTrust,
+  type HostMatcher,
+  parseIp,
+  type TrustProxy,
+} from './net.js';
 import { requestUrl } from './request.js';
 import { resolveFilter, resolveGuard, resolveMiddleware } from './resolve.js';
 import { APP_FILTER, APP_GUARD, APP_MIDDLEWARE, HTTP_DEVELOPMENT } from './tokens.js';
@@ -41,6 +52,15 @@ export interface ListenOptions {
    */
   redirectHttp?: { port: number; hostname?: string; host?: string };
   trustProxy?: TrustProxy;
+  /**
+   * Host names this server answers to (DNS rebinding protection): a request whose Host header
+   * names another host gets 421 Misdirected Request, before middleware, routes and WebSocket
+   * upgrades. Hostnames only, case-insensitive; ports are ignored. `false` disables the check.
+   * Default in development: `localhost`, `127.0.0.1`, `[::1]` and the bound hostname (unless it
+   * is `0.0.0.0` or `::`). Default in production: no check, since the public names are not
+   * known; set it to them.
+   */
+  allowedHosts?: readonly string[] | false;
   /**
    * WebSocket limits: 256 KiB messages, 1 MiB backpressure (closing), 120s idle timeout,
    * 100 sockets per IP and 100 messages per 10s per socket by default.
@@ -386,6 +406,7 @@ export class HttpApplication {
     if (options.redirectHttp && options.tls === undefined) {
       throw new HttpConfigError('redirectHttp requires tls.');
     }
+    const hosts = this.#allowedHosts(options);
     const canonicalHost = options.redirectHttp?.host;
     // Validated before anything binds; the origin is computed once the HTTPS port is known.
     if (canonicalHost !== undefined) canonicalOrigin(canonicalHost, 443);
@@ -421,6 +442,7 @@ export class HttpApplication {
       development: this.development,
       net: { trust: compileTrust(options.trustProxy ?? false), tls: options.tls !== undefined },
       ws,
+      hosts,
     });
     // Middleware, guards and filters constructed by the compiler get their init hooks now (and
     // shutdown hooks at close()); a failing hook rejects listen() before anything is bound.
@@ -446,7 +468,7 @@ export class HttpApplication {
     const server = Bun.serve(serveOptions as unknown as Serve.Options<WsData, string>);
     let redirect: Server<undefined> | undefined;
     try {
-      redirect = this.#startRedirect(options, server);
+      redirect = this.#startRedirect(options, server, hosts);
     } catch (error) {
       try {
         await server.stop(true);
@@ -470,7 +492,21 @@ export class HttpApplication {
     return server;
   }
 
-  #startRedirect(options: ListenOptions, server: Server<WsData>): Server<undefined> | undefined {
+  #allowedHosts(options: ListenOptions): HostMatcher | undefined {
+    if (options.allowedHosts === false) return undefined;
+    if (options.allowedHosts !== undefined) return compileAllowedHosts(options.allowedHosts);
+    if (!this.development) return undefined;
+    const bound = options.hostname ?? '0.0.0.0';
+    const defaults = ['localhost', '127.0.0.1', '[::1]'];
+    if (bound !== '0.0.0.0' && bound !== '::' && bound !== '[::]') defaults.push(bound);
+    return compileAllowedHosts(defaults);
+  }
+
+  #startRedirect(
+    options: ListenOptions,
+    server: Server<WsData>,
+    hosts: HostMatcher | undefined,
+  ): Server<undefined> | undefined {
     if (!options.redirectHttp) return undefined;
     const httpsPort = server.port;
     if (httpsPort === undefined) {
@@ -487,8 +523,11 @@ export class HttpApplication {
     return Bun.serve({
       port: options.redirectHttp.port,
       hostname: options.redirectHttp.hostname ?? options.hostname ?? '0.0.0.0',
-      fetch: (req) =>
-        origin === undefined ? redirectToHttps(req, httpsPort) : redirectTo(req, origin),
+      fetch: (req) => {
+        if (origin !== undefined) return redirectTo(req, origin);
+        if (hosts !== undefined && !hosts(req.headers.get('host'))) return misdirectedResponse();
+        return redirectToHttps(req, httpsPort);
+      },
     });
   }
 
