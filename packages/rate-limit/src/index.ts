@@ -7,13 +7,15 @@ export {
   SKIP_RATE_LIMIT_META,
   SkipRateLimit,
 } from './decorators.js';
-export { type Duration, parseDuration } from './duration.js';
+export { type Duration, MAX_DURATION_MS, parseDuration } from './duration.js';
+export { hashKey, maskIp } from './keys.js';
 export { MemoryStore, type MemoryStoreOptions } from './memory-store.js';
 export {
   RATE_LIMIT_OPTIONS,
   RATE_LIMIT_STORE,
   RateLimitMiddleware,
   type RateLimitModuleOptions,
+  validateRateLimitOptions,
 } from './middleware.js';
 export { RateLimitModule } from './module.js';
 export { RedisStore, type RedisStoreOptions } from './redis-store.js';

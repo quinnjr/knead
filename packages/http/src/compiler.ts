@@ -26,6 +26,7 @@ import {
   type Handler,
   runGuards,
 } from './pipeline.js';
+import { requestUrl } from './request.js';
 import { resolveFilter, resolveGuard, resolveMiddleware } from './resolve.js';
 import { toResponse } from './response.js';
 import type { ExceptionFilter, Guard, HttpMethod, Middleware, RouteInfo } from './types.js';
@@ -66,16 +67,27 @@ function isUpgrade(req: Request): boolean {
 function upgradeChain(
   path: string,
   endpoint: WsEndpoint,
+  registry: WsRegistry,
   globalMiddleware: readonly Middleware[],
+  globalGuards: readonly Guard<any>[],
   onError: ErrorHandler,
 ): Handler {
   const terminal: Handler = async (ctx) => {
     try {
+      registry.checkOrigin(path, ctx);
+      // Global guards protect upgrades like any route; ctx.route is null here.
+      await runGuards(globalGuards, ctx);
       const data = await endpoint.upgrade(ctx);
       if (data === false) throw new ForbiddenException('WebSocket upgrade rejected');
-      const accepted = (ctx.server as Server<WsData>).upgrade(ctx.req, {
-        data: { endpoint: path, data },
-      });
+      const socketData: WsData = { endpoint: path, data, ip: ctx.ip };
+      // Synchronous from here to upgrade(): the connection limits cannot be raced.
+      registry.reserve(socketData, ctx.ip);
+      let accepted = false;
+      try {
+        accepted = (ctx.server as Server<WsData>).upgrade(ctx.req, { data: socketData });
+      } finally {
+        if (!accepted) registry.release(socketData);
+      }
       if (!accepted) throw new BadRequestException('WebSocket upgrade failed');
       upgraded.add(ctx);
       return new Response(null, { status: 101 });
@@ -87,18 +99,36 @@ function upgradeChain(
 }
 
 async function runUpgrade(
+  path: string,
   handler: Handler,
   req: Request,
   server: Server<any>,
   net: NetConfig,
 ): Promise<Response | undefined> {
-  const ctx = new RequestContext(req, server, null, net);
+  const ctx = new RequestContext(req, server, null, net, Object.freeze({ path }));
   const res = await handler(ctx);
   return upgraded.has(ctx) ? undefined : res;
 }
 
+const FORWARDED_HEADERS = ['x-forwarded-for', 'x-forwarded-proto', 'x-forwarded-host'] as const;
+
+/** Logs once when X-Forwarded-* arrives while trustProxy is off (likely a misconfigured proxy). */
+function forwardedWarning(net: NetConfig, logger: Logger): (req: Request) => void {
+  let warned = net.trust.kind !== 'none';
+  return (req) => {
+    if (warned || !FORWARDED_HEADERS.some((h) => req.headers.has(h))) return;
+    warned = true;
+    logger.warn(
+      'A request carried X-Forwarded-* headers, but trustProxy is off, so they are ignored: ' +
+        'ctx.ip and ctx.secure come from the socket. Behind a reverse proxy, set ' +
+        'listen({ trustProxy }) to a hop count or the proxy CIDRs.',
+    );
+  };
+}
+
 export function compileApplication(input: CompileInput): CompiledApp {
   const { logger, development, net } = input;
+  const checkForwarded = forwardedWarning(net, logger);
   const globalOnError = createErrorHandler(input.globalFilters, logger, development);
   const routes: CompiledApp['routes'] = {};
   const table: RouteTableEntry[] = [];
@@ -108,7 +138,17 @@ export function compileApplication(input: CompileInput): CompiledApp {
 
   const wsHandlers = new Map<string, Handler>();
   for (const [path, endpoint] of input.ws.entries()) {
-    wsHandlers.set(path, upgradeChain(path, endpoint, input.globalMiddleware, globalOnError));
+    wsHandlers.set(
+      path,
+      upgradeChain(
+        path,
+        endpoint,
+        input.ws,
+        input.globalMiddleware,
+        input.globalGuards,
+        globalOnError,
+      ),
+    );
   }
 
   for (const mod of input.modules) {
@@ -147,6 +187,9 @@ export function compileApplication(input: CompileInput): CompiledApp {
         const fn = instance[name];
         if (typeof fn !== 'function') throw new HttpConfigError(`${label} is not a method.`);
         const path = joinPaths(def.prefix, route.path);
+        if (path.split('*').length > 2) {
+          throw new HttpConfigError(`Route ${path} has more than one "*" wildcard (${label}).`);
+        }
         const shape = routeShape(path);
         const known = shapes.get(shape);
         if (known !== undefined && known !== path) {
@@ -208,7 +251,8 @@ export function compileApplication(input: CompileInput): CompiledApp {
             routes[path] = byMethod;
           }
           byMethod[method] = async (req, server) => {
-            if (ws && isUpgrade(req)) return runUpgrade(ws, req, server, net);
+            checkForwarded(req);
+            if (ws && isUpgrade(req)) return runUpgrade(path, ws, req, server, net);
             return handle(new RequestContext(req, server, info, net));
           };
           const entry = allowed.get(path) ?? {
@@ -225,7 +269,7 @@ export function compileApplication(input: CompileInput): CompiledApp {
 
   const unmatched: Handler = async (ctx) => {
     try {
-      const pathname = new URL(ctx.req.url).pathname;
+      const pathname = requestUrl(ctx.req).pathname;
       const methods = new Set<string>();
       for (const { matcher, methods: m } of allowed.values()) {
         if (matcher.test(pathname)) for (const x of m) methods.add(x);
@@ -244,9 +288,11 @@ export function compileApplication(input: CompileInput): CompiledApp {
   const fallback = composeMiddleware(input.globalMiddleware, unmatched, globalOnError);
 
   const fetch: BunHandler = async (req, server) => {
+    checkForwarded(req);
     if (isUpgrade(req)) {
-      const ws = wsHandlers.get(new URL(req.url).pathname);
-      if (ws) return runUpgrade(ws, req, server, net);
+      const pathname = requestUrl(req).pathname;
+      const ws = wsHandlers.get(pathname);
+      if (ws) return runUpgrade(pathname, ws, req, server, net);
     }
     return fallback(new RequestContext(req, server, null, net));
   };

@@ -3,9 +3,14 @@ import { type PresetName, sanitize } from '../src/index.js';
 import { XSS_PAYLOADS } from './fixtures/xss-payloads.js';
 
 const DANGEROUS_TAG =
-  /<\s*\/?\s*(script|iframe|object|embed|svg|math|style|meta|link|base|form|input|details|body|noscript)\b/i;
+  /<\s*\/?\s*(script|iframe|object|embed|svg|math|style|meta|link|base|form|input|details|body|noscript|xmp|noembed|noframes|plaintext|title|frame|frameset|applet|portal)\b/i;
 const EVENT_HANDLER = /\son[a-z]+\s*=/i;
-const DANGEROUS_URL = /(href|src)\s*=\s*["']?\s*(javascript|vbscript|data):/i;
+const URL_ATTR = '(href|src|cite|action|background|poster|data|formaction|ping)';
+const DANGEROUS_URL = new RegExp(
+  `${URL_ATTR}\\s*=\\s*["']?\\s*(javascript|vbscript|data|file|ftp|blob):`,
+  'i',
+);
+const CLOBBERING = /\s(id|name)\s*=/i;
 const PROTOCOL_RELATIVE = /(href|src)\s*=\s*["']?\s*\/\//i;
 const STYLE_ATTR = /\sstyle\s*=/i;
 
@@ -22,6 +27,7 @@ describe.each(['strict', 'basic', 'rich'] as PresetName[])(
         expect(tag).not.toMatch(DANGEROUS_URL);
         expect(tag).not.toMatch(PROTOCOL_RELATIVE);
         expect(tag).not.toMatch(STYLE_ATTR);
+        expect(tag).not.toMatch(CLOBBERING);
       }
     });
   },
@@ -37,7 +43,8 @@ describe('assertion helpers are not vacuous', () => {
           EVENT_HANDLER.test(tag) ||
           DANGEROUS_URL.test(tag) ||
           PROTOCOL_RELATIVE.test(tag) ||
-          STYLE_ATTR.test(tag),
+          STYLE_ATTR.test(tag) ||
+          CLOBBERING.test(tag),
       );
     });
     expect(flagged.length / XSS_PAYLOADS.length).toBeGreaterThanOrEqual(0.8);

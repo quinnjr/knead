@@ -9,6 +9,7 @@ A NestJS-style framework for [Bun](https://bun.sh): standard TC39 decorators, `i
 | `@hpmws/cors` | CORS with preflight handling |
 | `@hpmws/rate-limit` | Sliding-window / token-bucket limits, memory and Redis stores |
 | `@hpmws/security-headers` | CSP (with nonces), HSTS and friends |
+| `@hpmws/graphql` | Code-first GraphQL on Leaven: typed decorators, DataLoader, subscriptions |
 | `@hpmws/sanitize` | Opt-in allowlist HTML sanitization as a Standard Schema |
 | `@hpmws/testing` | `Test.createModule`, overrides, real ephemeral servers |
 
@@ -43,14 +44,19 @@ await app.listen({ port: 3000 });
 
 Global middleware runs highest priority first: security headers (1100) wrap CORS (1000), which wraps rate limiting (900), so every response, including preflights and 429s, gets security headers.
 
-See `examples/rest-api` for CORS, rate limiting, security headers, guards and validation working together.
+Examples (private workspace packages, not published):
+
+| Example | Shows |
+| --- | --- |
+| [`examples/rest-api`](examples/rest-api) | CORS, rate limiting, security headers, guards, validation and a GraphQL endpoint working together |
+| [`examples/graphql-server`](examples/graphql-server) | A GraphQL blog using every package: interfaces, unions, enums, a custom scalar, DataLoaders, auth guards and roles, subscriptions on in-memory or Redis pub/sub, plus a REST route and an end-to-end smoke test (`pnpm --filter @hpmws/example-graphql-server smoke`) |
 
 ## Development
 
 ```bash
 pnpm install
 pnpm lint && pnpm typecheck && pnpm build && pnpm test
-REDIS_URL=redis://localhost:6379 pnpm test   # include RedisStore tests
+REDIS_URL=redis://localhost:6379 pnpm test   # include RedisStore and RedisPubSub tests
 ```
 
 Work follows git-flow: feature branches from `develop`, squash-merged by pull request. To release:

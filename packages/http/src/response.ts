@@ -27,9 +27,13 @@ function binary(body: Bun.BodyInit, status: number, headers: Headers, type?: str
   return new Response(body, { status, headers });
 }
 
-/** Maps a handler's return value to a Response (see spec §4.3). */
+/**
+ * Maps a handler's return value to a Response (see spec §4.3). Every response built here carries
+ * `x-content-type-options: nosniff`; a Response returned by the handler is passed through as is.
+ */
 export function toResponse(value: unknown, status: number | undefined, headers: Headers): Response {
   if (value instanceof Response) return withHeaders(value, headers, false);
+  headers.set('x-content-type-options', 'nosniff');
   if (value === undefined) return new Response(null, { status: status ?? 204, headers });
   const code = status ?? 200;
   if (typeof value === 'string') {
@@ -48,6 +52,5 @@ export function toResponse(value: unknown, status: number | undefined, headers: 
   if (json === undefined)
     throw new TypeError('Handler returned a value that cannot be serialized as JSON');
   if (!headers.has('content-type')) headers.set('content-type', 'application/json; charset=utf-8');
-  headers.set('x-content-type-options', 'nosniff');
   return new Response(json, { status: code, headers });
 }

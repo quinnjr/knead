@@ -1,13 +1,15 @@
 import type { BunRequest, Server } from 'bun';
 import { type CompiledTrust, resolveClientIp, resolveSecure } from './net.js';
-import { headersToObject, parseBody, parseQuery } from './request.js';
-import type { Ctx, ResponseDraft, RouteInfo } from './types.js';
+import { headersToObject, parseBody, parseQuery, requestUrl } from './request.js';
+import type { Ctx, ResponseDraft, RouteInfo, UpgradeInfo } from './types.js';
 
 export interface NetConfig {
   trust: CompiledTrust;
   /** True when the listener terminates TLS itself. */
   tls: boolean;
 }
+
+const EMPTY_META: Readonly<Record<PropertyKey, unknown>> = Object.freeze({});
 
 export class RequestContext implements Ctx<any> {
   params: any;
@@ -26,12 +28,17 @@ export class RequestContext implements Ctx<any> {
     readonly server: Server<any>,
     readonly route: RouteInfo | null,
     private readonly net: NetConfig,
+    readonly upgrade: UpgradeInfo | null = null,
   ) {
     this.params = (req as BunRequest).params ?? {};
   }
 
+  get meta(): Readonly<Record<PropertyKey, unknown>> {
+    return this.route?.meta ?? EMPTY_META;
+  }
+
   get query(): any {
-    this.#query ??= parseQuery(new URL(this.req.url).searchParams);
+    this.#query ??= parseQuery(requestUrl(this.req).searchParams);
     return this.#query;
   }
   set query(value: any) {
@@ -67,6 +74,11 @@ export class RequestContext implements Ctx<any> {
       this.net.trust,
     );
     return this.#secure;
+  }
+
+  /** @internal After body validation, ctx.json() resolves to the validated value. */
+  setValidatedBody(value: unknown): void {
+    this.#body = Promise.resolve(value);
   }
 
   json<T = unknown>(): Promise<T> {

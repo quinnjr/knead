@@ -32,3 +32,4 @@ jobs:
       - run: pnpm build
       - run: pnpm check:pack
       - run: pnpm test
+      - run: pnpm --filter @hpmws/example-graphql-server smoke

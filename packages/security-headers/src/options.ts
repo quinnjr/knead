@@ -17,8 +17,11 @@ export interface CspOptions {
 }
 
 export interface HstsOptions {
+  /** Seconds; a non-negative integer. Default 31536000 (one year). */
   maxAge?: number;
+  /** Default true. */
   includeSubDomains?: boolean;
+  /** Requires `includeSubDomains` and a `maxAge` of at least 31536000. */
   preload?: boolean;
 }
 
@@ -32,6 +35,10 @@ export interface SecurityHeadersOptions {
   crossOriginResourcePolicy?: string | false;
   xFrameOptions?: 'DENY' | 'SAMEORIGIN' | false;
   xDnsPrefetchControl?: 'on' | 'off' | false;
+  /** Default `camera=(), microphone=(), geolocation=(), interest-cohort=()`. */
+  permissionsPolicy?: string | false;
+  /** Default `none` (no Flash/PDF cross-domain policy files). */
+  xPermittedCrossDomainPolicies?: 'none' | 'master-only' | 'by-content-type' | 'all' | false;
 }
 
 export const DEFAULT_CSP_DIRECTIVES: CspDirectives = {
@@ -52,6 +59,8 @@ export const DEFAULT_OPTIONS: SecurityHeadersOptions = {
   crossOriginResourcePolicy: 'same-origin',
   xFrameOptions: 'DENY',
   xDnsPrefetchControl: 'off',
+  permissionsPolicy: 'camera=(), microphone=(), geolocation=(), interest-cohort=()',
+  xPermittedCrossDomainPolicies: 'none',
 };
 
 function mergeCsp(
@@ -89,8 +98,43 @@ export function mergeOptions(
 const DIRECTIVE_NAME = /^[a-z][a-z0-9-]*$/;
 const FORBIDDEN_TOKEN = /[;,\r\n]/;
 
-/** Rejects CSP config that could inject extra directives or header lines. */
+const ONE_YEAR = 31_536_000;
+
+function validateHsts(hsts: HstsOptions | false | undefined): void {
+  if (hsts === false || hsts === undefined) return;
+  const maxAge = hsts.maxAge ?? ONE_YEAR;
+  if (typeof maxAge !== 'number' || !Number.isInteger(maxAge) || maxAge < 0) {
+    throw new HttpConfigError(
+      `HSTS maxAge must be a non-negative integer (seconds), got ${String(hsts.maxAge)}`,
+    );
+  }
+  if (hsts.preload) {
+    if (hsts.includeSubDomains === false) {
+      throw new HttpConfigError('HSTS preload requires includeSubDomains.');
+    }
+    if (maxAge < ONE_YEAR) {
+      throw new HttpConfigError(
+        `HSTS preload requires maxAge >= ${ONE_YEAR} (one year), got ${maxAge}`,
+      );
+    }
+  }
+}
+
+/**
+ * Rejects CSP config that could inject extra directives or header lines, invalid HSTS (a
+ * non-integer or negative maxAge, or preload without includeSubDomains and a one-year maxAge) and
+ * header values containing line breaks.
+ */
 export function validateSecurityHeadersOptions(options: SecurityHeadersOptions): void {
+  validateHsts(options.strictTransportSecurity);
+  const policy = options.permissionsPolicy;
+  if (
+    policy !== undefined &&
+    policy !== false &&
+    (typeof policy !== 'string' || /[\r\n]/.test(policy))
+  ) {
+    throw new HttpConfigError(`Invalid Permissions-Policy: ${JSON.stringify(policy)}`);
+  }
   const csp = options.contentSecurityPolicy;
   if (csp === false || csp === undefined || !csp.directives) return;
   for (const [name, value] of Object.entries(csp.directives)) {

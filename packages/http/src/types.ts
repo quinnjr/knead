@@ -19,6 +19,11 @@ export interface RouteInfo {
   readonly meta: Readonly<Record<PropertyKey, unknown>>;
 }
 
+export interface UpgradeInfo {
+  /** The WsRegistry endpoint path being upgraded to. */
+  readonly path: string;
+}
+
 export interface ResponseDraft {
   status: number | undefined;
   readonly headers: Headers;
@@ -41,12 +46,22 @@ export interface Ctx<I extends CtxInput = {}> {
   readonly ip: string | undefined;
   /** TLS listener, or a trusted proxy reported `X-Forwarded-Proto: https`. */
   readonly secure: boolean;
-  /** Matched route; `null` for unmatched requests handled by the fallback. */
+  /** Matched route; `null` for unmatched requests handled by the fallback and for upgrades. */
   readonly route: RouteInfo | null;
+  /**
+   * The matched route's metadata (`ctx.route?.meta`), or an empty frozen object. GraphQL resolver
+   * contexts expose the same `meta`, so a guard reading `ctx.meta` works on routes and resolvers.
+   */
+  readonly meta: Readonly<Record<PropertyKey, unknown>>;
+  /** Set on WebSocket upgrade requests to a registered endpoint; `null` otherwise. */
+  readonly upgrade: UpgradeInfo | null;
   readonly state: CtxState & Record<PropertyKey, unknown>;
   readonly res: ResponseDraft;
   readonly server: Server<any>;
-  /** Parses the body by Content-Type (memoized). */
+  /**
+   * Parses the body by Content-Type (memoized). On a route with a `body` schema, resolves to the
+   * validated (schema output) value once validation has passed.
+   */
   json<T = unknown>(): Promise<T>;
 }
 
@@ -66,6 +81,7 @@ export interface Middleware {
 export type MiddlewareFn = (ctx: Ctx, next: Next) => Response | Promise<Response>;
 export type MiddlewareRef = Type<Middleware> | Middleware | MiddlewareFn;
 
+/** A guard passes only when it returns (or resolves to) exactly `true`. */
 export interface Guard<C = Ctx> {
   canActivate(ctx: C): boolean | Promise<boolean>;
 }

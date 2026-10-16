@@ -3,6 +3,11 @@
   "version": "0.0.0",
   "description": "CORS module for the hpmws framework",
   "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/quinnjr/high-performance-modular-web-server.git",
+    "directory": "packages/cors"
+  },
   "type": "module",
   "exports": {
     ".": "./src/index.ts"

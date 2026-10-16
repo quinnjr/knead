@@ -1,6 +1,6 @@
 import type { ModuleImport } from './decorators.js';
-import { ContainerState, type ModuleInjector } from './injector.js';
-import { buildModuleGraph, type ModuleRef } from './modules.js';
+import { ContainerState, ModuleInjector } from './injector.js';
+import { buildModuleGraph, MODULES, type ModuleRef } from './modules.js';
 import type { Provider } from './providers.js';
 import type { Token } from './tokens.js';
 
@@ -30,6 +30,17 @@ export class ApplicationContext {
   ): Promise<ApplicationContext> {
     const state = new ContainerState(options.overrides);
     const graph = buildModuleGraph(root, options.globalModules ?? [], state);
+    // MODULES is visible from every module: a synthetic global injector owns and exports it.
+    const own = new ModuleInjector('ApplicationContext', state);
+    own.addProvider({
+      kind: 'value',
+      token: MODULES,
+      value: Object.freeze([...graph.modules]),
+      scope: 'singleton',
+      multi: false,
+    });
+    own.exported.set(MODULES, own);
+    state.globals = [...state.globals, own];
 
     // Phase A: settle every singleton factory (async ones are awaited, dependents retried).
     for (const m of graph.modules) {

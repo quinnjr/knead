@@ -8,7 +8,11 @@ export type CorsOrigin =
   | ((origin: string, ctx: Ctx) => boolean | Promise<boolean>);
 
 export interface CorsOptions {
-  /** `'*'`, an exact origin, a list, a RegExp, or a predicate. */
+  /**
+   * `'*'`, an exact origin, a list, a RegExp, or a predicate. A RegExp must be anchored
+   * (`^…$`, or it matches anywhere: `/app\.example/` accepts `https://app.example.evil`) and
+   * linear (no nested quantifiers such as `(a+)+`, which backtrack catastrophically).
+   */
   origin: CorsOrigin;
   /** Default: GET, HEAD, PUT, PATCH, POST, DELETE. */
   methods?: readonly string[];

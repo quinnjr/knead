@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { RedisClient } from 'bun';
-import { MemoryStore, type RateLimitRule, RedisStore } from '../src/index.js';
+import { hashKey, MemoryStore, type RateLimitRule, RedisStore } from '../src/index.js';
 
 const url = process.env.REDIS_URL;
 
@@ -73,7 +73,8 @@ describe.skipIf(!url)('RedisStore', () => {
     expect.assertions(5);
     const w = 2_000;
     const rule: RateLimitRule = { limit: 10, windowMs: w, algorithm: 'sliding-window' };
-    const store = new RedisStore({ client: shared, prefix });
+    // Raw keys: the test seeds the previous window's counter directly.
+    const store = new RedisStore({ client: shared, prefix, hashKeys: false });
     for (let attempt = 0; attempt < 3; attempt++) {
       const t0 = await redisNow();
       const ws = Math.floor(t0 / w) * w;
@@ -154,6 +155,18 @@ describe.skipIf(!url)('RedisStore', () => {
     expect(results.filter((r) => r.allowed)).toHaveLength(10);
     await a.close();
     await b.close();
+  });
+
+  test('keys are hashed by default', async () => {
+    const own = `hpmws:test:${crypto.randomUUID()}:`;
+    const rule: RateLimitRule = { limit: 5, windowMs: 60_000, algorithm: 'token-bucket' };
+    await new RedisStore({ client: shared, prefix: own }).consume('global|203.0.113.9', rule);
+    await new RedisStore({ client: shared, prefix: own, hashKeys: false }).consume('raw', rule);
+    const keys = ((await shared!.send('KEYS', [`${own}*`])) as string[]).sort();
+    expect(keys).toEqual(
+      [`${own}${hashKey('global|203.0.113.9')}:60000`, `${own}raw:60000`].sort(),
+    );
+    await shared!.send('DEL', keys);
   });
 
   test('close() leaves injected clients open', async () => {

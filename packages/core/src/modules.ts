@@ -9,7 +9,7 @@ import { ModuleDefinitionError } from './errors.js';
 import { type ContainerState, ModuleInjector } from './injector.js';
 import { getOwnMetadata } from './metadata.js';
 import { normalizeProvider } from './providers.js';
-import { type Token, type Type, tokenName } from './tokens.js';
+import { InjectionToken, type Token, type Type, tokenName } from './tokens.js';
 
 export interface ModuleRef {
   readonly name: string;
@@ -18,6 +18,9 @@ export interface ModuleRef {
   readonly controllers: readonly Type[];
   readonly global: boolean;
 }
+
+/** Every module of the application in initialization order; injectable from any provider. */
+export const MODULES = new InjectionToken<readonly ModuleRef[]>('MODULES');
 
 interface Definition {
   metatype: Type;

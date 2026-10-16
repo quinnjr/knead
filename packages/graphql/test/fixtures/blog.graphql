@@ -1,0 +1,50 @@
+input CreatePostInput {
+  tags: [String!]
+  title: String!
+}
+
+type Mutation {
+  createPost(input: CreatePostInput!): Post!
+}
+
+"""
+Anything with an id
+"""
+interface Node {
+  id: ID!
+}
+
+type Post implements Node {
+  author: User!
+  id: ID!
+  tags: [String!]!
+  title: String!
+}
+
+type Query {
+  post(id: ID!): Post
+  posts(after: ID, first: Int! = 10): [Post!]!
+  search(term: String!): [SearchResult!]!
+  user(id: ID!): User!
+}
+
+"""
+What a user may do
+"""
+enum Role {
+  ADMIN
+  READER
+}
+
+union SearchResult = Post | User
+
+type User implements Node {
+  """
+  Free text
+  """
+  bio: String
+  id: ID!
+  name: String!
+  posts: [Post!]!
+  role: Role!
+}

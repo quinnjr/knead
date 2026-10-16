@@ -57,9 +57,41 @@ export function parseIp(ip: string): Uint8Array | undefined {
   return MAPPED_PREFIX.every((b, i) => v6[i] === b) ? v6.slice(12) : v6;
 }
 
+/** Dotted IPv4 for 4 bytes; RFC 5952 IPv6 (lowercase, longest zero run compressed) for 16. */
+export function formatIp(bytes: Uint8Array): string {
+  if (bytes.length === 4) return bytes.join('.');
+  const groups: number[] = [];
+  for (let i = 0; i < 16; i += 2) groups.push((bytes[i]! << 8) | bytes[i + 1]!);
+  let bestStart = -1;
+  let bestLength = 1;
+  for (let i = 0; i < 8; ) {
+    if (groups[i] !== 0) {
+      i++;
+      continue;
+    }
+    let j = i;
+    while (j < 8 && groups[j] === 0) j++;
+    if (j - i > bestLength) {
+      bestStart = i;
+      bestLength = j - i;
+    }
+    i = j;
+  }
+  const hex = groups.map((g) => g.toString(16));
+  if (bestStart === -1) return hex.join(':');
+  const head = hex.slice(0, bestStart).join(':');
+  const tail = hex.slice(bestStart + bestLength).join(':');
+  return `${head}::${tail}`;
+}
+
+/**
+ * Canonical text form of an address, from its parsed bytes: IPv4-mapped IPv6 (dotted or hex)
+ * becomes IPv4, IPv6 is lowercased and compressed, zone ids are dropped. Unparseable input is
+ * returned unchanged.
+ */
 export function normalizeIp(ip: string): string {
-  const m = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(ip);
-  return m ? m[1]! : ip;
+  const bytes = parseIp(ip);
+  return bytes ? formatIp(bytes) : ip;
 }
 
 export function cidrMatcher(list: readonly string[]): (ip: string) => boolean {
@@ -124,8 +156,11 @@ export function resolveClientIp(
   if (trust.kind === 'none' || !forwardedFor) return normalizeIp(remote);
   const chain = [remote, ...splitList(forwardedFor)];
   // Hop-count mode: the peer is trusted by definition (the operator declared N proxies in front).
-  if (trust.kind === 'hops')
-    return normalizeIp(validAtOrBefore(chain, Math.min(trust.hops, chain.length - 1)));
+  // A header with fewer entries than hops did not pass through every proxy: ignore it.
+  if (trust.kind === 'hops') {
+    if (chain.length - 1 < trust.hops) return normalizeIp(remote);
+    return normalizeIp(validAtOrBefore(chain, trust.hops));
+  }
   let selected = chain.length - 1;
   for (const [i, address] of chain.entries()) {
     if (!trust.isTrusted(address)) {
@@ -145,9 +180,11 @@ export function resolveSecure(
 ): boolean {
   if (tls) return true;
   if (remote === undefined || !forwardedProto || trust.kind === 'none') return false;
+  const protos = splitList(forwardedProto);
   let index: number;
   if (trust.kind === 'hops') {
-    // Hop-count mode: the peer is trusted by definition.
+    // Hop-count mode: the peer is trusted by definition. Fewer entries than hops: ignore the header.
+    if (protos.length < trust.hops) return false;
     index = trust.hops - 1;
   } else {
     if (!trust.isTrusted(remote)) return false;
@@ -157,7 +194,29 @@ export function resolveSecure(
     index = trusted - 1;
   }
   // Index 0 is the value appended by the nearest proxy; the left-most values are client-controlled.
-  const protos = splitList(forwardedProto);
   if (protos.length === 0) return false;
   return protos[Math.min(index, protos.length - 1)]!.toLowerCase() === 'https';
+}
+
+/** Whether `prefix` is a valid IPv6 prefix length: an integer from 0 to 128. */
+export function isIpv6Prefix(prefix: unknown): prefix is number {
+  return typeof prefix === 'number' && Number.isInteger(prefix) && prefix >= 0 && prefix <= 128;
+}
+
+/**
+ * A client address as a per-client key: IPv4 (including IPv4-mapped IPv6, returned in its IPv4
+ * form) as is, IPv6 masked to `prefix` bits and written as `network/prefix` (one IPv6 client
+ * usually controls a whole /64). The prefix applies to IPv6 only. Unparseable input is returned
+ * unchanged. Throws a RangeError unless `prefix` is an integer from 0 to 128.
+ */
+export function maskIp(ip: string, prefix: number): string {
+  if (!isIpv6Prefix(prefix)) {
+    throw new RangeError(`IPv6 prefix must be an integer from 0 to 128, got ${String(prefix)}.`);
+  }
+  const bytes = parseIp(ip);
+  if (!bytes) return ip;
+  if (bytes.length === 4) return formatIp(bytes);
+  const masked = Uint8Array.from(bytes);
+  for (let bit = prefix; bit < 128; bit++) masked[bit >> 3]! &= ~(0x80 >> (bit & 7));
+  return `${formatIp(masked)}/${prefix}`;
 }

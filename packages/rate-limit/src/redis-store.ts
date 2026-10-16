@@ -1,4 +1,5 @@
 import { RedisClient } from 'bun';
+import { hashKey } from './keys.js';
 import type { Algorithm, ConsumeResult, RateLimitRule, RateLimitStore } from './store.js';
 
 // Both scripts mirror MemoryStore. KEYS[1] = key, ARGV[1] = limit, ARGV[2] = windowMs.
@@ -81,6 +82,11 @@ export interface RedisStoreOptions {
   url?: string;
   /** Key prefix. Default 'hpmws:rl:'. */
   prefix?: string;
+  /**
+   * Store SHA-256 hashes (32 hex characters) instead of raw keys, so client IPs or API keys are
+   * not readable in Redis and key length is fixed. Default true.
+   */
+  hashKeys?: boolean;
 }
 
 /**
@@ -95,8 +101,10 @@ export class RedisStore implements RateLimitStore {
   readonly #client: RedisClient;
   readonly #owned: boolean;
   readonly #prefix: string;
+  readonly #hashKeys: boolean;
 
   constructor(options: RedisStoreOptions = {}) {
+    this.#hashKeys = options.hashKeys ?? true;
     this.#owned = options.client === undefined;
     this.#client = options.client ?? new RedisClient(options.url);
     this.#prefix = options.prefix ?? 'hpmws:rl:';
@@ -115,7 +123,7 @@ export class RedisStore implements RateLimitStore {
       rule.algorithm === 'token-bucket' ? 'token-bucket' : 'sliding-window';
     const args = [
       '1',
-      `${this.#prefix}${key}:${rule.windowMs}`,
+      `${this.#prefix}${this.#hashKeys ? hashKey(key) : key}:${rule.windowMs}`,
       String(rule.limit),
       String(rule.windowMs),
     ];

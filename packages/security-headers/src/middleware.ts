@@ -28,7 +28,14 @@ export function SecurityHeaders(options: SecurityHeadersOptions) {
 }
 
 export class SecurityHeadersMiddleware implements Middleware {
-  readonly #options = mergeOptions(DEFAULT_OPTIONS, inject(SECURITY_HEADERS_OPTIONS));
+  readonly #options = SecurityHeadersMiddleware.#validated(
+    mergeOptions(DEFAULT_OPTIONS, inject(SECURITY_HEADERS_OPTIONS)),
+  );
+
+  static #validated(options: SecurityHeadersOptions): SecurityHeadersOptions {
+    validateSecurityHeadersOptions(options);
+    return options;
+  }
   readonly #cache = new WeakMap<object, SecurityHeadersOptions>();
 
   async use(ctx: Ctx, next: Next): Promise<Response> {
