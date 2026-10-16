@@ -21,7 +21,7 @@ const RolesGuard = (ctx: Ctx) => {
 };
 ```
 
-Route schemas (`params`, `query`, `headers`, `body`; any Standard Schema) replace the matching `ctx` field with the schema output, and once a `body` schema has passed, `ctx.json()` resolves to the validated value too, so unvalidated fields cannot slip in through it. Failures are a 400 listing every issue with its `source` and `path`; issues from the `headers` source always carry the generic message `Invalid header value`, so header values (tokens, cookies) are never echoed back.
+Route schemas (`params`, `query`, `headers`, `body`; any Standard Schema) replace the matching `ctx` field with the schema output, and once a `body` schema has passed, `ctx.json()` resolves to the validated value too, so unvalidated fields cannot slip in through it. Failures are a 400 listing every issue with its `source` and `path`; issues from the `headers` source always carry the generic message `Invalid header value`, so header values (tokens, cookies) are never echoed back. Many schema libraries quote the offending input in their messages; `listen({ validation: { redactIssueMessages: true } })` replaces body and query issue messages with `Invalid value` too, keeping `source` and `path`.
 
 Responses the framework builds from a handler's return value (JSON, text, `Blob`, bytes, streams, `204`), problem responses and redirects carry `x-content-type-options: nosniff`; a `Response` returned by a handler is sent as is. A `Blob` keeps its own `type`, so when serving user-uploaded files, force a download instead of letting the browser render them in your origin:
 

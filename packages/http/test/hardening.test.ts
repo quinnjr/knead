@@ -271,3 +271,36 @@ describe('listen({ maxParams })', () => {
     }
   });
 });
+
+describe('listen({ validation: { redactIssueMessages } })', () => {
+  const echo = {
+    '~standard': {
+      version: 1 as const,
+      vendor: 'test',
+      validate: (value: unknown) => ({
+        issues: [{ message: `bad ${JSON.stringify(value)}`, path: ['name'] }],
+      }),
+    },
+  };
+  @Controller('/v')
+  class V {
+    @Post('/', { body: echo }) create() {
+      return 'ok';
+    }
+  }
+  @Module({ controllers: [V] })
+  class VModule {}
+
+  test('the 400 does not echo the body', async () => {
+    app = await start(VModule, { validation: { redactIssueMessages: true } });
+    const res = await fetch(new URL('/v', app.url), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{"name":"s3cret"}',
+    });
+    expect(res.status).toBe(400);
+    const text = await res.text();
+    expect(text).not.toContain('s3cret');
+    expect(text).toContain('Invalid value');
+  });
+});

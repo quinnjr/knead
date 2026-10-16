@@ -34,7 +34,12 @@ export { withHeaders } from './response.js';
 export { checkBunVersion, compareVersions, MIN_BUN_VERSION } from './runtime-version.js';
 export * from './tokens.js';
 export type * from './types.js';
-export { ValidationException, type ValidationIssue, type ValidationSource } from './validation.js';
+export {
+  ValidationException,
+  type ValidationIssue,
+  type ValidationOptions,
+  type ValidationSource,
+} from './validation.js';
 export {
   originAllowed,
   WS_DEFAULTS,

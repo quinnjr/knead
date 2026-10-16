@@ -32,7 +32,7 @@ import { requestUrl } from './request.js';
 import { resolveFilter, resolveGuard, resolveMiddleware } from './resolve.js';
 import { toResponse } from './response.js';
 import type { ExceptionFilter, Guard, HttpMethod, Middleware, RouteInfo } from './types.js';
-import { validateRequest } from './validation.js';
+import { type ValidationOptions, validateRequest } from './validation.js';
 import type { WsData, WsEndpoint, WsRegistry } from './ws.js';
 
 export type BunHandler = (req: Request, server: Server<any>) => Promise<Response | undefined>;
@@ -52,6 +52,7 @@ export interface CompileInput {
   readonly development: boolean;
   readonly net: NetConfig;
   readonly ws: WsRegistry;
+  readonly validation?: ValidationOptions | undefined;
   /** `listen({ allowedHosts })`: requests whose Host is not allowed get 421. */
   readonly hosts?: HostMatcher | undefined;
 }
@@ -251,7 +252,7 @@ export function compileApplication(input: CompileInput): CompiledApp {
           const terminal: Handler = async (ctx) => {
             try {
               await runGuards(guards, ctx);
-              await validateRequest(ctx, route.options);
+              await validateRequest(ctx, route.options, input.validation);
               const result = await (fn as (c: unknown) => unknown).call(instance, ctx);
               return toResponse(result, ctx.res.status ?? route.options.status, ctx.res.headers);
             } catch (error) {

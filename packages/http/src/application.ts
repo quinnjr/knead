@@ -27,6 +27,7 @@ import { resolveFilter, resolveGuard, resolveMiddleware } from './resolve.js';
 import { checkBunVersion } from './runtime-version.js';
 import { APP_FILTER, APP_GUARD, APP_MIDDLEWARE, HTTP_DEVELOPMENT } from './tokens.js';
 import type { FilterRef, GlobalMiddleware, GuardRef, MiddlewareRef } from './types.js';
+import type { ValidationOptions } from './validation.js';
 import { type WsData, WsRegistry, type WsServerOptions } from './ws.js';
 
 /** Default `maxRequestBodySize`: 1 MiB. */
@@ -73,6 +74,8 @@ export interface ListenOptions {
    * parsed per request. Default 1000.
    */
   maxParams?: number;
+  /** Request validation: `redactIssueMessages` makes body and query issue messages generic. */
+  validation?: ValidationOptions;
   /** Largest accepted request body in bytes; larger bodies get 413. Default 1 MiB. */
   maxRequestBodySize?: number;
   idleTimeout?: number;
@@ -466,6 +469,7 @@ export class HttpApplication {
       },
       ws,
       hosts,
+      validation: options.validation,
     });
     // Middleware, guards and filters constructed by the compiler get their init hooks now (and
     // shutdown hooks at close()); a failing hook rejects listen() before anything is bound.
