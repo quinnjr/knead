@@ -9,20 +9,27 @@ export interface Logger {
 
 export const LOGGER = new InjectionToken<Logger>('LOGGER');
 
-/** `scheme://` and the rest of the URL token (whitespace, quotes and angle brackets end it). */
-const URL_CREDENTIALS = /\b([a-z][a-z0-9+.-]*:\/\/)([^\s"'<>]*@[^\s"'<>]*)/gi;
+/**
+ * `scheme://` and up to 1024 characters of the URL token (whitespace, quotes and angle brackets
+ * end it). The lookbehind lets a scheme start only where no scheme character precedes it, and both
+ * scans are capped, so the work is linear in the input length.
+ */
+const URL_CREDENTIALS = /(?<![a-z0-9+.-])([a-z][a-z0-9+.-]{0,31}:\/\/)([^\s"'<>]{1,1024})/gi;
 /** A token starting `host[:port]/`: an `@` after it is in the path, not in the userinfo. */
 const HOST_THEN_PATH = /^[^:/@]+(?::\d*)?\//;
 
 /**
  * Replaces URL credentials with `***`: `redis://user:pass@host` becomes `redis://***@host`. The
- * userinfo runs to the LAST `@` of the URL, since passwords often contain unencoded `@` or `/`,
- * unless the URL starts with `host[:port]/` (then the `@` is in its path).
+ * userinfo runs to the LAST `@` within the first 1024 characters of the URL, since passwords
+ * often contain unencoded `@` or `/`, unless the URL starts with `host[:port]/` (then the `@` is
+ * in its path). Passwords with spaces or quotes cannot appear unencoded in a valid
+ * URL and are not recognized; neither is userinfo longer than 1024 characters.
  */
 export function redactCredentials(text: string): string {
   return text.replace(URL_CREDENTIALS, (match, scheme: string, rest: string) => {
-    if (HOST_THEN_PATH.test(rest)) return match;
-    return `${scheme}***${rest.slice(rest.lastIndexOf('@'))}`;
+    const at = rest.lastIndexOf('@');
+    if (at < 0 || HOST_THEN_PATH.test(rest)) return match;
+    return `${scheme}***${rest.slice(at)}`;
   });
 }
 

@@ -102,3 +102,20 @@ describe('redactCredentials', () => {
     expect(redactCredentials(input)).toBe(expected);
   });
 });
+
+describe('redactCredentials performance', () => {
+  const MB = 1024 * 1024;
+  test.each([
+    ['a://'.repeat(MB / 4)],
+    ['a.'.repeat(MB / 2)],
+    [`${'a-'.repeat(MB / 2)}://`],
+    [`${'a'.repeat(MB)}://x`],
+    [`redis://${'u'.repeat(MB)}@h`],
+    [`x://${'@'.repeat(MB)}`],
+  ])('pathological input %#: 1 MB in well under 50 ms', (input) => {
+    redactCredentials(input.slice(0, 1000)); // warm up the regex
+    const started = performance.now();
+    redactCredentials(input);
+    expect(performance.now() - started).toBeLessThan(50);
+  });
+});
