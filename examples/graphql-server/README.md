@@ -1,0 +1,102 @@
+# hpmws GraphQL server example
+
+A small blog (authors, posts and comments, kept in memory and seeded at startup) served over GraphQL with every hpmws package working together: code-first types, DataLoader-batched field resolvers, valibot argument validation, bearer-token auth with resolver guards and role metadata, subscriptions over `graphql-transport-ws` (in memory or on Redis), CORS, rate limiting, security headers and HTML sanitization, plus a plain REST `GET /health` route next to `/graphql`. Private; not published.
+
+## Run
+
+```bash
+pnpm install
+pnpm --filter @hpmws/example-graphql-server dev     # NODE_ENV=development, watches src/
+pnpm --filter @hpmws/example-graphql-server start   # production defaults
+```
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `PORT` | `3000` | Listening port |
+| `NODE_ENV` | | `development` turns on the playground, introspection and unmasked errors, and writes `schema.graphql` |
+| `REDIS_URL` | | Use `RedisPubSub` for subscriptions, so several instances share events |
+| `RATE_LIMIT` | `100` | Requests per client IP per minute (`/health` is exempt) |
+| `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated browser origins for CORS and subscription sockets |
+
+In development, open <http://localhost:3000/graphql> in a browser for the playground. Development runs also write the schema SDL to `schema.graphql` (gitignored).
+
+Demo bearer tokens (hard-coded and public, demo only):
+
+| Token | User | Roles |
+| --- | --- | --- |
+| `ada-token` | Ada Lovelace (`a1`) | `admin` |
+| `grace-token` | Grace Hopper (`a2`) | none |
+
+## Queries
+
+```bash
+# Plain REST
+curl localhost:3000/health
+
+# Published posts with their authors (one batched author lookup for the whole list)
+curl localhost:3000/graphql -H 'content-type: application/json' \
+  -d '{"query":"{ posts(status: PUBLISHED, first: 10) { id title publishedAt author { name } } }"}'
+
+# DateTime argument, union search and the Node interface
+curl localhost:3000/graphql -H 'content-type: application/json' \
+  -d '{"query":"{ posts(since: \"2026-03-01T00:00:00Z\") { title createdAt } search(term: \"an\") { __typename ... on Post { title } ... on Author { name } } node(id: \"a2\") { __typename id } }"}'
+
+# GET runs queries only, and needs a CSRF header
+curl -G localhost:3000/graphql -H 'x-graphql-request: 1' --data-urlencode 'query={ authors { name } }'
+```
+
+## Mutations
+
+Every mutation needs a token (`UNAUTHENTICATED` otherwise). `deletePost` is admin-only (`FORBIDDEN` for `grace-token`).
+
+```bash
+curl localhost:3000/graphql -H 'content-type: application/json' -H 'authorization: Bearer grace-token' \
+  -d '{"query":"mutation($i: CreatePostInput!) { createPost(input: $i) { id title body status } }",
+       "variables":{"i":{"title":"Compilers","body":"<p>Hi</p><script>alert(1)</script>","publish":true}}}'
+
+curl localhost:3000/graphql -H 'content-type: application/json' -H 'authorization: Bearer grace-token' \
+  -d '{"query":"mutation { addComment(postId: \"p1\", body: \"<em>Great</em>\") { id body } }"}'
+
+curl localhost:3000/graphql -H 'content-type: application/json' -H 'authorization: Bearer ada-token' \
+  -d '{"query":"mutation { deletePost(id: \"p4\") }"}'
+```
+
+`createPost` input is validated with valibot (a 3-character title fails with `BAD_USER_INPUT` and `extensions.issues`), and post and comment bodies are sanitized with `@hpmws/sanitize`.
+
+## Subscriptions
+
+`postPublished(authorId: ID)` and `commentAdded(postId: ID!)` run over a `graphql-transport-ws` WebSocket on `/graphql`. Browsers cannot send an `Authorization` header on a WebSocket, so the token goes in `connectionParams`; a missing or unknown token closes the socket with `4403`.
+
+In the playground (development), set the connection params to `{ "token": "grace-token" }` and run:
+
+```graphql
+subscription {
+  postPublished(authorId: "a2") { title author { name } }
+}
+```
+
+Then publish a post as Grace with the `createPost` curl above (with `"publish": true`). Posts by other authors are filtered out.
+
+From a terminal, with [`websocat`](https://github.com/vi/websocat):
+
+```bash
+websocat -n --protocol graphql-transport-ws ws://localhost:3000/graphql
+{"type":"connection_init","payload":{"token":"grace-token"}}
+{"id":"1","type":"subscribe","payload":{"query":"subscription { commentAdded(postId: \"p1\") { body author { name } } }"}}
+```
+
+Run the `addComment` curl above in another terminal to see the event. To share events between instances, start each with `REDIS_URL=redis://localhost:6379`.
+
+## Test
+
+```bash
+pnpm --filter @hpmws/example-graphql-server test    # @hpmws/testing: app.graphql / app.graphqlSubscribe
+pnpm --filter @hpmws/example-graphql-server smoke   # starts the real server and checks it over the network
+REDIS_URL=redis://localhost:6379 pnpm --filter @hpmws/example-graphql-server smoke   # with RedisPubSub
+```
+
+The smoke test (`scripts/smoke.ts`) spawns `bun src/main.ts` on a free port with `NODE_ENV=development` and `RATE_LIMIT=40`. It checks `/health`, queries, authenticated mutations, the playground and its CSP, security headers, a CORS preflight, a subscription event triggered by a mutation over HTTP, a 429 after the rate limit, and a 403 for a cross-origin WebSocket upgrade. It prints a `PASS`/`FAIL` line per check and exits nonzero on any failure.
+
+## Notes
+
+The CORS origin `http://localhost:5173` is a placeholder for a local front-end; set `CORS_ORIGINS` to your real origin(s). Behind a reverse proxy, configure `app.listen({ trustProxy })` so rate limiting sees client IPs.
