@@ -7,3 +7,8 @@ export const APP_MIDDLEWARE = new InjectionToken<GlobalMiddleware[]>('APP_MIDDLE
 export const APP_GUARD = new InjectionToken<GuardRef[]>('APP_GUARD');
 /** Multi-provider: exception filters applied after route and controller filters. */
 export const APP_FILTER = new InjectionToken<FilterRef[]>('APP_FILTER');
+/**
+ * The application's resolved development flag (`HpmwsFactory.create(root, { development })`,
+ * default `NODE_ENV === 'development'`), injectable from any module.
+ */
+export const HTTP_DEVELOPMENT = new InjectionToken<boolean>('HTTP_DEVELOPMENT');

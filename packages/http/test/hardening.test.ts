@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { Module } from '@hpmws/core';
+import { inject, Module } from '@hpmws/core';
 import type { HttpApplication } from '../src/application.js';
 import { Controller, createRouteDecorator, Get, Post, UseGuards } from '../src/decorators.js';
 import {
@@ -8,6 +8,7 @@ import {
   ServiceUnavailableException,
 } from '../src/exceptions.js';
 import type { MemoryLogger } from '../src/logger.js';
+import { HTTP_DEVELOPMENT } from '../src/tokens.js';
 import type { Ctx } from '../src/types.js';
 import { makeCtx, start } from './helpers.js';
 
@@ -191,5 +192,42 @@ describe('route wildcards', () => {
     class M {}
     app = await start(M);
     expect((await fetch(new URL('/files/a/b', app.url))).status).toBe(200);
+  });
+});
+
+describe('development mode', () => {
+  class Reader {
+    readonly development = inject(HTTP_DEVELOPMENT);
+  }
+  @Module({ providers: [Reader], exports: [Reader] })
+  class M {}
+
+  test('HTTP_DEVELOPMENT exposes the resolved development flag to every module', async () => {
+    app = await start(M, {}, { development: true });
+    expect(app.get(HTTP_DEVELOPMENT)).toBe(true);
+    expect(app.get(Reader).development).toBe(true);
+    await app.close();
+    app = await start(M, {}, { development: false });
+    expect(app.get(Reader).development).toBe(false);
+  });
+
+  const devWarnings = (a: HttpApplication) =>
+    (a.logger as MemoryLogger).entries.filter(
+      (e) => e.level === 'warn' && e.message.includes('development'),
+    );
+
+  test('listening on a non-loopback hostname in development logs a warning', async () => {
+    app = await start(M, { hostname: '0.0.0.0' }, { development: true });
+    expect(devWarnings(app)).toHaveLength(1);
+  });
+
+  test('loopback hostnames, or production, do not warn', async () => {
+    for (const hostname of ['127.0.0.1', 'localhost', '::1']) {
+      app = await start(M, { hostname }, { development: true });
+      expect(devWarnings(app)).toEqual([]);
+      await app.close();
+    }
+    app = await start(M, { hostname: '0.0.0.0' }, { development: false });
+    expect(devWarnings(app)).toEqual([]);
   });
 });

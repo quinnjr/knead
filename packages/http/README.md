@@ -37,6 +37,8 @@ Errors are RFC 9457 `application/problem+json`. Outside development (`HpmwsFacto
 
 `ctx.ip` and `ctx.secure` come from the socket unless `listen({ trustProxy })` says which proxies to believe: a hop count (the number of proxies in front of the app) or a list of proxy CIDRs. In hop mode an `X-Forwarded-For` or `X-Forwarded-Proto` header with fewer entries than hops did not pass through every proxy and is ignored (the IP falls back to the socket peer and `secure` to the listener's TLS state). `ctx.ip` is canonical: IPv4-mapped IPv6 (`::ffff:7f00:1`) becomes `127.0.0.1` and IPv6 is lowercased and compressed (RFC 5952), so one client always gets one key; `normalizeIp()`, `parseIp()` and `formatIp()` are exported. When `trustProxy` is off and a request arrives with `X-Forwarded-*` headers, one warning is logged, since that usually means a proxy was left unconfigured.
 
+Development mode (`HpmwsFactory.create(root, { development })`, default `NODE_ENV === 'development'`) exposes error details, so `listen()` logs a warning when it is on and the bound hostname is not loopback (the default `0.0.0.0` included). The resolved flag is injectable anywhere as `inject(HTTP_DEVELOPMENT)`.
+
 Request bodies are capped at 1 MiB by default; larger bodies are answered with 413. Raise or lower the cap with `listen({ maxRequestBodySize })` (bytes).
 
 The `redirectHttp` listener answers with a `308` (`cache-control: no-store`) to the same path on the HTTPS listener. By default the Location host comes from the request's `Host` header; set `redirectHttp: { port: 80, host: 'example.com' }` to always redirect to a canonical host (`host` may carry a port, `example.com:8443`, which overrides the HTTPS listener's port). `host` must be a plain `host[:port]`, or `listen()` rejects.

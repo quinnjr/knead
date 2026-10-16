@@ -9,9 +9,9 @@ import type { Serve, Server, TLSOptions } from 'bun';
 import { type CompiledApp, compileApplication, type RouteTableEntry } from './compiler.js';
 import { HttpConfigError } from './exceptions.js';
 import { ConsoleLogger, LOGGER, type Logger } from './logger.js';
-import { compileTrust, type TrustProxy } from './net.js';
+import { compileTrust, parseIp, type TrustProxy } from './net.js';
 import { resolveFilter, resolveGuard, resolveMiddleware } from './resolve.js';
-import { APP_FILTER, APP_GUARD, APP_MIDDLEWARE } from './tokens.js';
+import { APP_FILTER, APP_GUARD, APP_MIDDLEWARE, HTTP_DEVELOPMENT } from './tokens.js';
 import type { FilterRef, GlobalMiddleware, GuardRef, MiddlewareRef } from './types.js';
 import { type WsData, WsRegistry } from './ws.js';
 
@@ -57,19 +57,31 @@ export class HpmwsFactory {
     root: ModuleImport,
     options: CreateApplicationOptions = {},
   ): Promise<HttpApplication> {
+    const development = options.development ?? process.env.NODE_ENV === 'development';
     const core = {
       module: HttpCoreModule,
       global: true,
-      providers: [{ provide: LOGGER, useValue: options.logger ?? new ConsoleLogger() }, WsRegistry],
-      exports: [LOGGER, WsRegistry],
+      providers: [
+        { provide: LOGGER, useValue: options.logger ?? new ConsoleLogger() },
+        { provide: HTTP_DEVELOPMENT, useValue: development },
+        WsRegistry,
+      ],
+      exports: [LOGGER, HTTP_DEVELOPMENT, WsRegistry],
     };
     const context = await ApplicationContext.create(root, {
       overrides: options.overrides,
       globalModules: [core],
     });
-    const development = options.development ?? process.env.NODE_ENV === 'development';
     return new HttpApplication(context, context.get(LOGGER), development);
   }
+}
+
+function isLoopback(hostname: string): boolean {
+  const host = hostname.replace(/^\[(.*)\]$/, '$1').toLowerCase();
+  if (host === 'localhost' || host.endsWith('.localhost')) return true;
+  const bytes = parseIp(host);
+  if (bytes?.length === 4) return bytes[0] === 127;
+  return bytes?.every((b, i) => b === (i === 15 ? 1 : 0)) === true;
 }
 
 /** A host name or IP literal with an optional port, and nothing else. */
@@ -380,6 +392,12 @@ export class HttpApplication {
     this.#redirect = redirect;
     this.#server = server;
     this.logger.info(`Listening on ${server.url}`);
+    if (this.development && !isLoopback(serveOptions.hostname as string)) {
+      this.logger.warn(
+        `Running in development mode on ${serveOptions.hostname}, which is reachable from other ` +
+          'hosts: development exposes error details. Bind to 127.0.0.1, or set development: false.',
+      );
+    }
     return server;
   }
 
