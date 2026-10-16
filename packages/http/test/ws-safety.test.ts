@@ -695,6 +695,22 @@ describe('closeWhere re-application at open (fail closed)', () => {
     }
   });
 
+  test('an evicted predicate that reads only ws.data is evaluated; one reading more fails closed', async () => {
+    const dataOnly = await pending();
+    dataOnly.ws.configure({ maxPendingRevocations: 1 });
+    dataOnly.ws.closeWhere((s) => (s.data.data as { user: string }).user === 'nobody');
+    dataOnly.ws.closeWhere(() => false); // evicts the first: evaluated, no match
+    await dataOnly.ws.handler().open?.(dataOnly.socket);
+    expect(dataOnly.socket.close).not.toHaveBeenCalled();
+
+    const nosy = await pending();
+    nosy.ws.configure({ maxPendingRevocations: 1 });
+    nosy.ws.closeWhere((s) => s.remoteAddress === '10.0.0.1');
+    nosy.ws.closeWhere(() => false); // evicts it: it read remoteAddress, so not evaluated
+    await nosy.ws.handler().open?.(nosy.socket);
+    expect(nosy.socket.close).toHaveBeenCalledWith(1008, 'Revocation state unavailable');
+  });
+
   test('20k beginUpgrade and closeWhere calls stay under 100 ms', async () => {
     const ws = await registry();
     const started = performance.now();

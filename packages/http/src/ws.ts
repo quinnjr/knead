@@ -449,7 +449,9 @@ export class WsRegistry {
 
   /**
    * Closes every open socket for which `predicate` returns true (for example, all sockets of a
-   * signed-out user, found through `ws.data.data`), and returns how many were closed. Sockets
+   * signed-out user, found through `ws.data.data`), and returns how many were closed. Predicates
+   * should read only `ws.data`: for a socket still upgrading they may be evaluated against a
+   * stand-in that has nothing else, and one that reads more makes that socket fail closed. Sockets
    * whose upgrade is still in progress are checked when they open (the predicate is kept for up
    * to 30s, at most `maxPendingRevocations`). A predicate that throws for a socket is logged and
    * that socket is left open.
@@ -549,12 +551,25 @@ export class WsRegistry {
     for (const [key, entry] of this.#withData) {
       // Only an upgrade that was accounted for up to now stays accounted for.
       if (entry.checkedThrough < this.#lostPrevious) continue;
-      entry.checkedThrough = Math.max(entry.checkedThrough, revocation.seq);
-      if (entry.revoked || entry.seq >= revocation.seq) continue;
-      // Predicates read the socket's data (ws.data); the socket itself does not exist yet.
-      if (this.#matches(revocation, { data: key } as WsSocket)) {
-        entry.revoked = { code: revocation.code, reason: revocation.reason };
+      if (entry.revoked || entry.seq >= revocation.seq) {
+        entry.checkedThrough = Math.max(entry.checkedThrough, revocation.seq);
+        continue;
       }
+      // The socket does not exist yet: the predicate gets a stand-in that has only `data`. A
+      // predicate that reads anything else was not really evaluated, so this upgrade is not
+      // marked checked and fails closed at open.
+      let evaluated = true;
+      const standIn = new Proxy({} as WsSocket, {
+        get: (_target, prop) => {
+          if (prop === 'data') return key;
+          evaluated = false;
+          return undefined;
+        },
+      });
+      const matched = this.#matches(revocation, standIn);
+      if (!evaluated) continue;
+      entry.checkedThrough = Math.max(entry.checkedThrough, revocation.seq);
+      if (matched) entry.revoked = { code: revocation.code, reason: revocation.reason };
     }
   }
 
