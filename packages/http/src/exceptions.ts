@@ -9,6 +9,7 @@ export const STATUS_TITLES: Readonly<Record<number, string>> = {
   409: 'Conflict',
   413: 'Content Too Large',
   415: 'Unsupported Media Type',
+  421: 'Misdirected Request',
   422: 'Unprocessable Content',
   429: 'Too Many Requests',
   500: 'Internal Server Error',

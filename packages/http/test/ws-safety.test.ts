@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { afterEach, describe, expect, mock, setSystemTime, test } from 'bun:test';
 import { ApplicationContext, inject, Module, type OnModuleInit } from '@hpmws/core';
 import type { HttpApplication, ListenOptions } from '../src/application.js';
 import { HttpConfigError, TooManyRequestsException } from '../src/exceptions.js';
-import { originAllowed } from '../src/index.js';
+import { APP_GUARD, originAllowed } from '../src/index.js';
 import { LOGGER, MemoryLogger } from '../src/logger.js';
 import {
   type WsData,
@@ -274,6 +274,7 @@ describe('Bun WebSocket limits', () => {
       { idleTimeout: 1.5 },
       { maxConnectionsPerIp: 0 },
       { ipv6Subnet: -1 },
+      { ipv6Subnet: 0 },
       { ipv6Subnet: 129 },
       { ipv6Subnet: 1.5 },
       { maxConnections: Number.NaN },
@@ -397,13 +398,6 @@ describe('connection limits', () => {
     expect(() => ws.reserve({}, '::ffff:1.2.3.4')).toThrow(TooManyRequestsException);
   });
 
-  test('ipv6Subnet 0 groups every IPv6 client together', async () => {
-    const ws = await registry();
-    ws.configure({ maxConnectionsPerIp: 1, ipv6Subnet: 0 });
-    ws.reserve({}, '2001:db8::1');
-    expect(() => ws.reserve({}, 'fd00::1')).toThrow(TooManyRequestsException);
-  });
-
   test('ipv6Subnet is configurable (128 counts full addresses)', async () => {
     const ws = await registry();
     ws.configure({ maxConnectionsPerIp: 1, ipv6Subnet: 128 });
@@ -476,5 +470,313 @@ describe('closeWhere', () => {
     expect(
       logger.entries.some((e) => e.level === 'error' && e.message.includes('closeWhere')),
     ).toBe(true);
+  });
+});
+
+describe('WebSocket handler errors are logged as summaries in production', () => {
+  test('a throwing message handler logs Name: message, redacted, without the error object', async () => {
+    app = await startWith({
+      '/boom': {
+        endpoint: {
+          message() {
+            throw Object.assign(new Error('dial redis://u:pw@h\nFAKE'), { secret: 's' });
+          },
+        },
+      },
+    });
+    const socket = await connect(app, '/boom');
+    socket.send('x');
+    const logger = app.logger as MemoryLogger;
+    for (let i = 0; i < 100 && !logger.entries.some((e) => e.level === 'error'); i++) {
+      await Bun.sleep(5);
+    }
+    socket.close();
+    const entry = logger.entries.find((e) => e.level === 'error')!;
+    expect(entry.message).toContain('WebSocket message handler for /boom threw');
+    expect(entry.message).toContain('Error: dial redis://***@h\\nFAKE');
+    expect(entry.meta).toEqual([]);
+  });
+});
+
+describe('closeWhere and upgrades in progress', () => {
+  test('a revocation issued during an async global guard closes the socket when it opens', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered!: () => void;
+    const inGuard = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    class Gateway implements OnModuleInit {
+      readonly ws = inject(WsRegistry);
+      onModuleInit() {
+        this.ws.register('/live', { upgrade: () => ({ user: 'eve' }) });
+      }
+    }
+    @Module({
+      providers: [
+        Gateway,
+        {
+          provide: APP_GUARD,
+          multi: true,
+          useValue: async () => {
+            entered();
+            await gate;
+            return true;
+          },
+        },
+      ],
+    })
+    class M {}
+    app = await start(M);
+    const registry = app.get(WsRegistry);
+    const socket = new WebSocket(new URL('/live', app.url).toString().replace('http', 'ws'));
+    const code = new Promise<number>((resolve) => {
+      socket.onclose = (e) => resolve(e.code);
+    });
+    await inGuard;
+    expect(registry.closeWhere((ws) => (ws.data.data as { user: string }).user === 'eve')).toBe(0);
+    release();
+    expect(await code).toBe(1008);
+  });
+
+  test('a revocation between server.upgrade() and open is applied at open', async () => {
+    const ws = await registry();
+    const ctx = {};
+    const data: WsData = { endpoint: '/x', data: { user: 'eve' } };
+    ws.beginUpgrade(ctx);
+    ws.reserve(data, '1.2.3.4', ctx);
+    expect(ws.closeWhere((s) => (s.data.data as { user: string }).user === 'eve')).toBe(0);
+    const socket = { data, close: mock(() => {}) } as unknown as WsSocket & {
+      close: ReturnType<typeof mock>;
+    };
+    await ws.handler().open?.(socket);
+    expect(socket.close).toHaveBeenCalledWith(1008, 'Connection revoked');
+  });
+
+  test('revocations from before an upgrade began, or not matching, leave it open', async () => {
+    const ws = await registry();
+    const early = {};
+    ws.beginUpgrade(early); // keeps an upgrade in progress so predicates are recorded
+    ws.closeWhere(() => true); // issued before the next upgrade starts
+    const ctx = {};
+    const data: WsData = { endpoint: '/x', data: { user: 'ada' } };
+    ws.beginUpgrade(ctx);
+    ws.reserve(data, '1.2.3.5', ctx);
+    ws.closeWhere((s) => (s.data.data as { user: string }).user === 'eve');
+    const socket = { data, close: mock(() => {}) } as unknown as WsSocket & {
+      close: ReturnType<typeof mock>;
+    };
+    await ws.handler().open?.(socket);
+    expect(socket.close).not.toHaveBeenCalled();
+  });
+});
+
+describe('closeWhere re-application at open (fail closed)', () => {
+  const pending = async () => {
+    const ws = await registry();
+    const opened: unknown[] = [];
+    ws.register('/x', { upgrade: () => ({}), open: (s) => void opened.push(s) });
+    const ctx = {};
+    const data: WsData = { endpoint: '/x', data: { user: 'eve' } };
+    ws.beginUpgrade(ctx);
+    ws.reserve(data, '1.2.3.4', ctx);
+    const socket = { data, close: mock(() => {}) } as unknown as WsSocket & {
+      close: ReturnType<typeof mock>;
+    };
+    return { ws, opened, socket };
+  };
+
+  test('a matching revocation closes the socket before the endpoint sees open', async () => {
+    const { ws, opened, socket } = await pending();
+    ws.closeWhere(() => true);
+    await ws.handler().open?.(socket);
+    expect(socket.close).toHaveBeenCalledWith(1008, 'Connection revoked');
+    expect(opened).toEqual([]);
+  });
+
+  const eve = (s: WsSocket) => (s.data.data as { user: string }).user === 'eve';
+
+  test('20k unrelated closeWhere calls do not close a legitimate upgrade; a matching one does', async () => {
+    const legit = await pending();
+    (legit.socket.data as { data: { user: string } }).data.user = 'ada';
+    for (let i = 0; i < 20_000; i++) legit.ws.closeWhere(() => false);
+    await legit.ws.handler().open?.(legit.socket);
+    expect(legit.socket.close).not.toHaveBeenCalled();
+    expect(legit.opened).toHaveLength(1);
+    // A matching predicate pushed out by 20k others was checked when it was evicted.
+    const revoked = await pending();
+    revoked.ws.closeWhere(eve, 4001, 'gone');
+    for (let i = 0; i < 20_000; i++) revoked.ws.closeWhere(() => false);
+    await revoked.ws.handler().open?.(revoked.socket);
+    expect(revoked.socket.close).toHaveBeenCalledWith(4001, 'gone');
+    expect(revoked.opened).toEqual([]);
+  });
+
+  test('an upgrade still in its guards when a predicate was lost fails closed', async () => {
+    const ws = await registry();
+    ws.configure({ maxPendingRevocations: 10 });
+    ws.register('/x', { upgrade: () => ({}) });
+    const ctx = {};
+    ws.beginUpgrade(ctx); // in its guards: no socket data to check a lost predicate against
+    for (let i = 0; i < 11; i++) ws.closeWhere(() => false);
+    const data: WsData = { endpoint: '/x', data: { user: 'ada' } };
+    ws.reserve(data, '1.2.3.4', ctx);
+    const socket = { data, close: mock(() => {}) } as unknown as WsSocket & {
+      close: ReturnType<typeof mock>;
+    };
+    await ws.handler().open?.(socket);
+    expect(socket.close).toHaveBeenCalledWith(1008, 'Revocation state unavailable');
+  });
+
+  test('expired predicates are checked against upgrades with socket data first', async () => {
+    const kept = await pending();
+    (kept.socket.data as { data: { user: string } }).data.user = 'ada';
+    kept.ws.closeWhere(eve);
+    const revoked = await pending();
+    revoked.ws.closeWhere(eve);
+    setSystemTime(new Date(Date.now() + 31_000));
+    try {
+      await kept.ws.handler().open?.(kept.socket);
+      expect(kept.socket.close).not.toHaveBeenCalled();
+      await revoked.ws.handler().open?.(revoked.socket);
+      expect(revoked.socket.close).toHaveBeenCalledWith(1008, 'Connection revoked');
+    } finally {
+      setSystemTime();
+    }
+  });
+
+  test('a slow upgrade (over 30s) fails closed only if it missed a revocation', async () => {
+    const slow = await pending();
+    (slow.socket.data as { data: { user: string } }).data.user = 'ada';
+    setSystemTime(new Date(Date.now() + 31_000));
+    try {
+      expect(slow.ws.upgradesInProgress).toBe(0);
+      await slow.ws.handler().open?.(slow.socket);
+      expect(slow.socket.close).not.toHaveBeenCalled();
+    } finally {
+      setSystemTime();
+    }
+    const missed = await pending();
+    setSystemTime(new Date(Date.now() + 31_000));
+    try {
+      expect(missed.ws.upgradesInProgress).toBe(0);
+      // Nothing counts as pending any more, so this predicate is not kept for it.
+      missed.ws.closeWhere(() => false);
+      await missed.ws.handler().open?.(missed.socket);
+      expect(missed.socket.close).toHaveBeenCalledWith(1008, 'Revocation state unavailable');
+    } finally {
+      setSystemTime();
+    }
+  });
+
+  test("an older kept predicate expiring never lowers a newer upgrade's checked mark", async () => {
+    const ws = await registry();
+    ws.register('/x', { upgrade: () => ({}) });
+    const first = {};
+    ws.beginUpgrade(first);
+    ws.closeWhere(() => false); // kept for the first upgrade
+    ws.endUpgrade(first);
+    ws.closeWhere(() => false); // nothing pending: #lostSeq moves forward
+    const ctx = {};
+    const data: WsData = { endpoint: '/x', data: { user: 'ada' } };
+    ws.beginUpgrade(ctx);
+    ws.reserve(data, '1.2.3.4', ctx);
+    const socket = { data, close: mock(() => {}) } as unknown as WsSocket & {
+      close: ReturnType<typeof mock>;
+    };
+    setSystemTime(new Date(Date.now() + 31_000));
+    try {
+      await ws.handler().open?.(socket);
+      expect(socket.close).not.toHaveBeenCalled();
+    } finally {
+      setSystemTime();
+    }
+  });
+
+  test('an evicted predicate that reads only ws.data is evaluated; one reading more fails closed', async () => {
+    const dataOnly = await pending();
+    dataOnly.ws.configure({ maxPendingRevocations: 1 });
+    dataOnly.ws.closeWhere((s) => (s.data.data as { user: string }).user === 'nobody');
+    dataOnly.ws.closeWhere(() => false); // evicts the first: evaluated, no match
+    await dataOnly.ws.handler().open?.(dataOnly.socket);
+    expect(dataOnly.socket.close).not.toHaveBeenCalled();
+
+    const nosy = await pending();
+    nosy.ws.configure({ maxPendingRevocations: 1 });
+    nosy.ws.closeWhere((s) => s.remoteAddress === '10.0.0.1');
+    nosy.ws.closeWhere(() => false); // evicts it: it read remoteAddress, so not evaluated
+    await nosy.ws.handler().open?.(nosy.socket);
+    expect(nosy.socket.close).toHaveBeenCalledWith(1008, 'Revocation state unavailable');
+  });
+
+  test('an idle registry drops its kept predicates (closeWhere with nothing pending, or a close)', async () => {
+    const ws = await registry();
+    ws.register('/x', { upgrade: () => ({}) });
+    const ctx = {};
+    ws.beginUpgrade(ctx);
+    ws.closeWhere(() => false);
+    expect(ws.keptRevocations).toBe(1);
+    ws.endUpgrade(ctx);
+    ws.closeWhere(() => false); // nothing pending
+    expect(ws.keptRevocations).toBe(0);
+
+    const other = {};
+    ws.beginUpgrade(other);
+    ws.closeWhere(() => false);
+    ws.endUpgrade(other);
+    expect(ws.keptRevocations).toBe(1);
+    const socket = {
+      data: { endpoint: '/x', data: null },
+      close: mock(() => {}),
+    } as unknown as WsSocket;
+    await ws.handler().close?.(socket, 1000, '');
+    expect(ws.keptRevocations).toBe(0);
+  });
+
+  test('20k beginUpgrade and closeWhere calls stay under 100 ms', async () => {
+    const ws = await registry();
+    const started = performance.now();
+    for (let i = 0; i < 20_000; i++) {
+      ws.beginUpgrade({});
+      ws.closeWhere(() => false);
+    }
+    expect(performance.now() - started).toBeLessThan(100);
+  });
+
+  test('maxPendingRevocations is validated', async () => {
+    const ws = await registry();
+    for (const maxPendingRevocations of [0, -1, 1.5]) {
+      expect(() => ws.configure({ maxPendingRevocations })).toThrow(HttpConfigError);
+    }
+  });
+
+  test('upgrades that never open stop counting: failed, and timed out', async () => {
+    let allow = false;
+    class Gateway implements OnModuleInit {
+      readonly ws = inject(WsRegistry);
+      onModuleInit() {
+        this.ws.register('/live', { upgrade: () => ({}) });
+      }
+    }
+    @Module({
+      providers: [Gateway, { provide: APP_GUARD, multi: true, useValue: () => allow }],
+    })
+    class M {}
+    app = await start(M);
+    const registryOf = app.get(WsRegistry);
+    expect(await upgradeStatus(app, '/live')).toContain('403');
+    expect(registryOf.upgradesInProgress).toBe(0);
+    allow = true;
+    // An upgrade that was reserved but never opened (aborted) is dropped after its TTL.
+    registryOf.beginUpgrade({});
+    expect(registryOf.upgradesInProgress).toBe(1);
+    setSystemTime(new Date(Date.now() + 31_000));
+    try {
+      expect(registryOf.upgradesInProgress).toBe(0);
+    } finally {
+      setSystemTime();
+    }
   });
 });

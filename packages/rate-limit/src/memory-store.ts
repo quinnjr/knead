@@ -1,4 +1,8 @@
 import { hashKey } from './keys.js';
+
+/** The per-process secret MemoryStore hashes keys under: it never leaves the process. */
+const PROCESS_SECRET = crypto.getRandomValues(new Uint8Array(32));
+
 import type { ConsumeResult, RateLimitRule, RateLimitStore } from './store.js';
 
 export interface MemoryStoreOptions {
@@ -12,8 +16,9 @@ export interface MemoryStoreOptions {
   /** Expired-entry sweep interval; 0 disables the timer. Default 60 000. */
   sweepIntervalMs?: number;
   /**
-   * Store SHA-256 hashes (32 hex characters) instead of raw keys, so client IPs or API keys are
-   * not kept in memory and long keys cost a fixed size. Default true.
+   * Store keyed hashes (HMAC-SHA256 under a random per-process secret, 32 hex characters)
+   * instead of raw keys, so client IPs or API keys cannot be read or recovered from a memory
+   * dump and long keys cost a fixed size. Default true.
    */
   hashKeys?: boolean;
 }
@@ -68,7 +73,7 @@ export class MemoryStore implements RateLimitStore {
         `Rate limit window must be a positive integer (ms), got ${String(rule.windowMs)}.`,
       );
     }
-    const stored = this.#hashKeys ? hashKey(key) : key;
+    const stored = this.#hashKeys ? hashKey(key, PROCESS_SECRET) : key;
     return rule.algorithm === 'token-bucket'
       ? this.#bucket(stored, rule)
       : this.#sliding(stored, rule);

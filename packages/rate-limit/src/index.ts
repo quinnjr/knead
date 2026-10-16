@@ -13,6 +13,8 @@ export { MemoryStore, type MemoryStoreOptions } from './memory-store.js';
 export {
   RATE_LIMIT_OPTIONS,
   RATE_LIMIT_STORE,
+  RateLimiter,
+  RateLimitGuard,
   RateLimitMiddleware,
   type RateLimitModuleOptions,
   validateRateLimitOptions,

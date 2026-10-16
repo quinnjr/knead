@@ -168,3 +168,35 @@ describe('http WebSocket limits apply to the subscription endpoint', () => {
     expect(raw.messages.some((m) => m.id === '1')).toBe(false);
   });
 });
+
+describe("Leaven's handler and a deferred revocation in onConnect", () => {
+  test('onConnect closing the socket and returning false sends no connection_ack', async () => {
+    const { WebSocketHandler } = await import('@leaven-graphql/ws');
+    const { buildSchema } = await import('graphql');
+    const sent: string[] = [];
+    const closes: number[] = [];
+    const socket = {
+      data: undefined as unknown,
+      send: (message: string) => {
+        sent.push(message);
+        return message.length;
+      },
+      close: (code: number) => {
+        closes.push(code);
+      },
+    };
+    const handler = new WebSocketHandler({
+      schema: buildSchema('type Query { a: Int } type Subscription { t: Int }'),
+      keepAliveInterval: 0,
+      // What hpmws's onConnect does when a deferred closeWhere matches.
+      onConnect: async (s) => {
+        (s as unknown as typeof socket).close(4001);
+        return false;
+      },
+    });
+    handler.handleOpen(socket as never);
+    await handler.handleMessage(socket as never, JSON.stringify({ type: 'connection_init' }));
+    expect(sent.some((m) => JSON.parse(m).type === 'connection_ack')).toBe(false);
+    expect(closes[0]).toBe(4001);
+  });
+});

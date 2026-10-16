@@ -7,6 +7,8 @@ export interface NetConfig {
   trust: CompiledTrust;
   /** True when the listener terminates TLS itself. */
   tls: boolean;
+  /** Most query, urlencoded or multipart parameters accepted. Default 1000. */
+  maxParams?: number;
 }
 
 const EMPTY_META: Readonly<Record<PropertyKey, unknown>> = Object.freeze({});
@@ -38,7 +40,7 @@ export class RequestContext implements Ctx<any> {
   }
 
   get query(): any {
-    this.#query ??= parseQuery(requestUrl(this.req).searchParams);
+    this.#query ??= parseQuery(requestUrl(this.req).search, this.net.maxParams);
     return this.#query;
   }
   set query(value: any) {
@@ -82,7 +84,7 @@ export class RequestContext implements Ctx<any> {
   }
 
   json<T = unknown>(): Promise<T> {
-    this.#body ??= parseBody(this.req);
+    this.#body ??= parseBody(this.req, this.net.maxParams);
     return this.#body as Promise<T>;
   }
 

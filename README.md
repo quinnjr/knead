@@ -13,7 +13,7 @@ A NestJS-style framework for [Bun](https://bun.sh): standard TC39 decorators, `i
 | `@hpmws/sanitize` | Opt-in allowlist HTML sanitization as a Standard Schema |
 | `@hpmws/testing` | `Test.createModule`, overrides, real ephemeral servers |
 
-Requires Bun ≥ 1.4. No `experimentalDecorators`, no `reflect-metadata`.
+Requires Bun ≥ 1.4.3 (it fixes CVE-2026-48618 and request-smuggling bugs; `listen()` warns on older versions). No `experimentalDecorators`, no `reflect-metadata`.
 
 ```ts
 import { Module, inject } from '@hpmws/core';

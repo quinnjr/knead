@@ -59,7 +59,8 @@ export class OperationContext {
 
   constructor(
     readonly http: Ctx,
-    readonly user: Readonly<Record<PropertyKey, unknown>>,
+    /** The user context; subscriptions.refreshContext may replace it before a recheck. */
+    public user: Readonly<Record<PropertyKey, unknown>>,
     readonly allowedOperations: readonly OperationKind[],
   ) {}
 

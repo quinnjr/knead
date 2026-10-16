@@ -99,8 +99,13 @@ export function cidrMatcher(list: readonly string[]): (ip: string) => boolean {
     const [address, bits] = entry.split('/');
     const bytes = parseIp(address ?? '');
     if (!bytes) throw new HttpConfigError(`Invalid trustProxy entry: ${entry}`);
-    const prefix = bits === undefined ? bytes.length * 8 : Number(bits);
-    if (!Number.isInteger(prefix) || prefix < 0 || prefix > bytes.length * 8) {
+    // An IPv4-mapped entry (`::ffff:10.0.0.0/104`) parses to IPv4 bytes; its prefix counts the
+    // 96 bits of the mapped prefix, so it becomes an IPv4 /(prefix - 96).
+    const mapped = bytes.length === 4 && address!.includes(':');
+    const width = mapped ? 128 : bytes.length * 8;
+    const written = bits === undefined ? width : Number(bits);
+    const prefix = mapped ? written - 96 : written;
+    if (!Number.isInteger(written) || written > width || prefix < 0) {
       throw new HttpConfigError(`Invalid trustProxy entry: ${entry}`);
     }
     return { bytes, prefix };
@@ -219,4 +224,71 @@ export function maskIp(ip: string, prefix: number): string {
   const masked = Uint8Array.from(bytes);
   for (let bit = prefix; bit < 128; bit++) masked[bit >> 3]! &= ~(0x80 >> (bit & 7));
   return `${formatIp(masked)}/${prefix}`;
+}
+
+/**
+ * The hostname of a Host header value, lowercased, with its port and a trailing dot removed
+ * (IPv6 literals keep their brackets), or undefined when it is not a plain `host[:port]`.
+ */
+export function hostHeaderName(host: string): string | undefined {
+  const m = /^(\[[0-9a-f:.]+\]|[^:[\]\s/@?#]+)(?::\d*)?$/i.exec(host);
+  if (!m) return undefined;
+  const name = m[1]!.toLowerCase();
+  return name.endsWith('.') ? name.slice(0, -1) : name;
+}
+
+/** Whether a request's Host header names an allowed host. */
+export type HostMatcher = (host: string | null) => boolean;
+
+/**
+ * Compiles `listen({ allowedHosts })`: hostnames (or IP literals, IPv6 with or without
+ * brackets), matched case-insensitively against the Host header's hostname, ports ignored.
+ */
+export function compileAllowedHosts(list: readonly string[]): HostMatcher {
+  const allowed = new Set<string>();
+  for (const entry of list) {
+    const bracketed =
+      typeof entry === 'string' && entry.includes(':') && !entry.startsWith('[') && parseIp(entry)
+        ? `[${entry}]`
+        : entry;
+    const name = typeof bracketed === 'string' ? hostHeaderName(bracketed) : undefined;
+    if (!name) throw new HttpConfigError(`Invalid allowedHosts entry: ${JSON.stringify(entry)}`);
+    allowed.add(name);
+  }
+  return (host) => {
+    if (host === null) return false;
+    const name = hostHeaderName(host);
+    return name !== undefined && allowed.has(name);
+  };
+}
+
+/** Whether a URL hostname is loopback: `localhost`, `localhost.`, 127.0.0.0/8 or ::1 (also mapped). */
+export function isLoopbackHostname(hostname: string): boolean {
+  const host = hostname.replace(/^\[(.*)\]$/, '$1').toLowerCase();
+  if (host === 'localhost' || host === 'localhost.') return true;
+  const bytes = parseIp(host);
+  if (bytes?.length === 4) return bytes[0] === 127;
+  return bytes?.every((b, i) => b === (i === 15 ? 1 : 0)) === true;
+}
+
+/**
+ * The `host[:port]` of a plaintext Redis/Valkey URL (`redis://`, `valkey://`) to a host that is
+ * not loopback, or undefined: TLS URLs (`rediss://`, `valkeys://`), Unix sockets, loopback hosts
+ * and unparseable URLs are not plaintext remote connections.
+ */
+export function plaintextRedisHost(url: string | undefined): string | undefined {
+  if (url === undefined || url === '') return undefined;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return undefined;
+  }
+  if (parsed.protocol !== 'redis:' && parsed.protocol !== 'valkey:') return undefined;
+  return isLoopbackHostname(parsed.hostname) ? undefined : parsed.host;
+}
+
+/** The URL Bun.redis connects to without an explicit one: REDIS_URL, VALKEY_URL or localhost. */
+export function defaultRedisUrl(): string | undefined {
+  return process.env.REDIS_URL || process.env.VALKEY_URL || undefined;
 }
