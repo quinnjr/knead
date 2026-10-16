@@ -91,6 +91,12 @@ describe('release.yml publish step', () => {
     ['1.0.0-1', 'next'],
     ['1.0.0-0.3', 'next'],
     ['1.0.0-2beta.1', 'next'],
+    ['1.0.0-x', 'next'],
+    ['1.0.0-X.1', 'next'],
+    ['1.0.0-v1', 'next'],
+    ['1.0.0-V2.beta', 'next'],
+    ['1.0.0-xyz.1', 'xyz'],
+    ['1.0.0-vnext.1', 'vnext'],
   ])('prerelease %s publishes to dist-tag %s', (version, distTag) => {
     const r = publish(`v${version}`, [['@hpmws/core', version]]);
     expect(r.exitCode).toBe(0);
