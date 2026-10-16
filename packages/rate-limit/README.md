@@ -2,7 +2,17 @@
 
 `RateLimitModule.forRoot({ limit, window })` with sliding-window or token-bucket algorithms, `@RateLimit()` (validated at decoration time) / `@SkipRateLimit()`, standard `RateLimit-*` headers and `Retry-After` computed from the earliest admission time, and `MemoryStore` or `RedisStore` (atomic Lua on `Bun.redis`) for multi-instance deployments. Windows are integer milliseconds (durations are rounded up). `RedisStore` is not compatible with Redis Cluster.
 
-The default key is the client IP (`ctx.ip`). Behind a reverse proxy or load balancer, configure `app.listen({ trustProxy })` (a hop count or a list of proxy CIDRs) so `ctx.ip` comes from the forwarded headers; otherwise every client shares the proxy's address and therefore one bucket. WebSocket upgrade requests count against the same per-IP bucket (CORS rejects disallowed origins before rate limiting runs). Browsers on other origins can only read the `RateLimit-*` and `Retry-After` headers if CORS exposes them:
+Windows are capped at one year (`365d`); a longer one is a `RangeError` at decoration or `forRoot()` time.
+
+The default key is the client IP (`ctx.ip`). IPv6 addresses are masked to a /64 (`ipv6Subnet`, an integer from 0 to 128, default 64; 128 keys each address; IPv4-mapped addresses are keyed as IPv4), because one client usually controls a whole /64 and could otherwise rotate addresses to reset its bucket. Both stores hash keys with SHA-256 (32 hex characters) before storing them (`new MemoryStore({ hashKeys: false })` / `new RedisStore({ hashKeys: false })` to keep raw keys), so client IPs and API keys are not readable in memory dumps or Redis.
+
+When the key function returns no key (for example `ctx.ip` on a Unix socket, or a custom key read from a missing header), `onMissingKey` decides: `'shared'` (default) counts the request against one anonymous bucket per scope, `'skip'` lets it through unlimited, and `'deny'` rejects it with 403. The first keyless request logs a warning.
+
+Behind a reverse proxy or load balancer, configure `app.listen({ trustProxy })` (a hop count or a list of proxy CIDRs) so `ctx.ip` comes from `X-Forwarded-For`; otherwise every client shares the proxy's address and therefore one bucket. With a hop count, set it to exactly the number of proxies in front of the app: a request whose `X-Forwarded-For` has fewer entries than that is keyed by the socket peer (the proxy), not by a client-supplied value. Never trust more hops than you have, or clients can pick their own key. WebSocket upgrade requests count against the same per-IP bucket (CORS rejects disallowed origins before rate limiting runs).
+
+Each `@RateLimit()` route has its own counter, keyed by its method and path. A handler reachable through several routes (several decorators, `@All()`, or the same controller mounted under two prefixes) therefore gets one budget per alias, multiplying the effective limit; put the limit on a single route, or lower it accordingly. `onStoreError` (default `'allow'`, fail open with a warning) decides what happens when the store throws: use `'deny'` (503) when the limit protects authentication (login, password reset, OTP checks), where failing open would let an attacker brute-force during a Redis outage.
+
+Browsers on other origins can only read the `RateLimit-*` and `Retry-After` headers if CORS exposes them:
 
 ```ts
 CorsModule.forRoot({

@@ -104,7 +104,39 @@ describe('validateRequest', () => {
     }).catch((e) => e);
     expect(error.issues).toEqual([
       { source: 'params', message: 'id is required', path: ['id'] },
-      { source: 'headers', message: 'x-key is required', path: ['x-key'] },
+      { source: 'headers', message: 'Invalid header value', path: ['x-key'] },
     ]);
+  });
+
+  test('header issue messages are generic, so header values never echo back', async () => {
+    const echoing: StandardSchemaV1 = {
+      '~standard': {
+        version: 1,
+        vendor: 'test',
+        validate: (value) => ({
+          issues: [
+            {
+              message: `bad token ${(value as Record<string, string>).authorization}`,
+              path: ['authorization'],
+            },
+          ],
+        }),
+      },
+    };
+    const ctx = makeCtx(
+      new Request('http://localhost/', { headers: { authorization: 'Bearer secret' } }),
+    );
+    const error = await validateRequest(ctx, { headers: echoing }).catch((e) => e);
+    expect(JSON.stringify(error.toProblem('/'))).not.toContain('secret');
+    expect(error.issues).toEqual([
+      { source: 'headers', message: 'Invalid header value', path: ['authorization'] },
+    ]);
+  });
+
+  test('after the body validates, ctx.json() resolves to the validated value', async () => {
+    const ctx = makeCtx(jsonPost('/', '{"name":"Ada","admin":true}'));
+    await validateRequest(ctx, { body: requireStrings(['name']) });
+    expect(ctx.body).toEqual({ name: 'Ada' });
+    expect(await ctx.json()).toEqual({ name: 'Ada' });
   });
 });

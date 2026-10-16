@@ -13,6 +13,15 @@ function collect<V>(entries: Iterable<[string, V]>): Fields<V> {
   return out;
 }
 
+/**
+ * The request URL. Bun gives a request whose Host header does not form a valid URL (for
+ * example `Host: a b`) a relative `req.url`; that is resolved against a placeholder origin
+ * (`http://host.invalid`) instead of throwing.
+ */
+export function requestUrl(req: Request): URL {
+  return URL.canParse(req.url) ? new URL(req.url) : new URL(req.url, 'http://host.invalid');
+}
+
 export function parseQuery(params: URLSearchParams): Record<string, string | string[]> {
   return collect(params);
 }

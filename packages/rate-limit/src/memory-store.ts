@@ -1,3 +1,4 @@
+import { hashKey } from './keys.js';
 import type { ConsumeResult, RateLimitRule, RateLimitStore } from './store.js';
 
 export interface MemoryStoreOptions {
@@ -10,6 +11,11 @@ export interface MemoryStoreOptions {
   maxKeys?: number;
   /** Expired-entry sweep interval; 0 disables the timer. Default 60 000. */
   sweepIntervalMs?: number;
+  /**
+   * Store SHA-256 hashes (32 hex characters) instead of raw keys, so client IPs or API keys are
+   * not kept in memory and long keys cost a fixed size. Default true.
+   */
+  hashKeys?: boolean;
 }
 
 interface SlidingState {
@@ -32,9 +38,11 @@ export class MemoryStore implements RateLimitStore {
   readonly #now: () => number;
   readonly #maxKeys: number;
   readonly #timer: ReturnType<typeof setInterval> | undefined;
+  readonly #hashKeys: boolean;
 
   constructor(options: MemoryStoreOptions = {}) {
     this.#now = options.now ?? Date.now;
+    this.#hashKeys = options.hashKeys ?? true;
     const maxKeys = options.maxKeys ?? 10_000;
     if (!Number.isInteger(maxKeys) || maxKeys < 1) {
       throw new RangeError(`maxKeys must be an integer >= 1, got ${String(maxKeys)}.`);
@@ -60,7 +68,10 @@ export class MemoryStore implements RateLimitStore {
         `Rate limit window must be a positive integer (ms), got ${String(rule.windowMs)}.`,
       );
     }
-    return rule.algorithm === 'token-bucket' ? this.#bucket(key, rule) : this.#sliding(key, rule);
+    const stored = this.#hashKeys ? hashKey(key) : key;
+    return rule.algorithm === 'token-bucket'
+      ? this.#bucket(stored, rule)
+      : this.#sliding(stored, rule);
   }
 
   sweep(): void {

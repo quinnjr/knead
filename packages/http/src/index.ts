@@ -11,9 +11,27 @@ export * from './decorators.js';
 export * from './exceptions.js';
 export * from './logger.js';
 export * from './metadata.js';
-export type { TrustProxy } from './net.js';
+export {
+  formatIp,
+  isIpv6Prefix,
+  maskIp,
+  normalizeIp,
+  parseIp,
+  type TrustProxy,
+} from './net.js';
+export { requestUrl } from './request.js';
 export { withHeaders } from './response.js';
 export * from './tokens.js';
 export type * from './types.js';
 export { ValidationException, type ValidationIssue, type ValidationSource } from './validation.js';
-export { type WsData, type WsEndpoint, WsRegistry, type WsSocket } from './ws.js';
+export {
+  originAllowed,
+  WS_DEFAULTS,
+  type WsData,
+  type WsEndpoint,
+  type WsEndpointOptions,
+  type WsMessageRate,
+  WsRegistry,
+  type WsServerOptions,
+  type WsSocket,
+} from './ws.js';

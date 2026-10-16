@@ -21,6 +21,15 @@ declare module '@hpmws/http' {
  * stored hashed and revocable).
  */
 export class AuthService {
+  constructor() {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'The demo AuthService accepts hard-coded, public demo tokens and refuses to start with ' +
+          'NODE_ENV=production. Replace it with real authentication before deploying.',
+      );
+    }
+  }
+
   readonly #tokens = new Map<string, User>([
     ['admin-token', { id: 'u1', name: 'Admin', roles: ['admin'] }],
     ['user-token', { id: 'u2', name: 'Regular', roles: [] }],
@@ -47,11 +56,17 @@ export class AuthGuard implements Guard {
 
 export const Roles = createRouteDecorator<string[]>('roles');
 
+/**
+ * Reads @Roles() through `ctx.meta` and passes only an authenticated user holding one of them.
+ * Everything else is a 403, including a route that uses the guard without @Roles(): a missing
+ * annotation fails closed.
+ */
 export class RolesGuard implements Guard {
   canActivate(ctx: Ctx): boolean {
-    const required = ctx.route?.meta.roles as string[] | undefined;
-    if (!required?.length) return true;
-    return required.some((role) => ctx.state.user?.roles.includes(role));
+    const required = ctx.meta.roles;
+    const user = ctx.state.user;
+    if (!Array.isArray(required) || required.length === 0 || !user) return false;
+    return required.some((role) => user.roles.includes(role));
   }
 }
 

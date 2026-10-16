@@ -35,8 +35,13 @@ export async function validateRequest(
     const result = await schema['~standard'].validate(input);
     if (result.issues) {
       for (const issue of result.issues) {
-        issues.push({ source, message: issue.message, path: (issue.path ?? []).map(segment) });
+        // Header schemas tend to echo the offending value (tokens, cookies) into their messages.
+        const message = source === 'headers' ? 'Invalid header value' : issue.message;
+        issues.push({ source, message, path: (issue.path ?? []).map(segment) });
       }
+    } else if (source === 'body') {
+      ctx.body = result.value;
+      ctx.setValidatedBody(result.value);
     } else {
       (ctx as unknown as Record<ValidationSource, unknown>)[source] = result.value;
     }

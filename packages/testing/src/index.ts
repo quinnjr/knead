@@ -10,6 +10,22 @@ import {
   MemoryLogger,
   type Middleware,
 } from '@hpmws/http';
+import {
+  type GraphQLRequestOptions,
+  type GraphQLResult,
+  type GraphQLSubscribeOptions,
+  type GraphQLSubscription,
+  subscribe,
+} from './graphql.js';
+
+export type {
+  GraphQLErrorJson,
+  GraphQLPayload,
+  GraphQLRequestOptions,
+  GraphQLResult,
+  GraphQLSubscribeOptions,
+  GraphQLSubscription,
+} from './graphql.js';
 
 export interface OverrideBy<T> {
   useValue(value: T): TestingModuleBuilder;
@@ -129,6 +145,32 @@ export class TestApp {
       if (!headers.has('content-type')) headers.set('content-type', 'application/json');
     }
     return fetch(url, { method, headers, body, ...(init.tls ? { tls: init.tls } : {}) });
+  }
+
+  /** POSTs a GraphQL operation as JSON and returns the parsed body plus status and headers. */
+  async graphql<TData = Record<string, unknown>>(
+    query: string,
+    options: GraphQLRequestOptions = {},
+  ): Promise<GraphQLResult<TData>> {
+    const res = await this.request('POST', options.path ?? '/graphql', {
+      headers: options.headers,
+      json: { query, variables: options.variables, operationName: options.operationName },
+    });
+    const body = (await res.json()) as Omit<GraphQLResult<TData>, 'status' | 'headers'>;
+    return { ...body, status: res.status, headers: res.headers };
+  }
+
+  /**
+   * Opens a graphql-transport-ws connection and subscribes. Resolves after connection_ack; the
+   * server may still be registering the subscription, so wait for it before publishing.
+   */
+  graphqlSubscribe<TData = Record<string, unknown>>(
+    query: string,
+    options: GraphQLSubscribeOptions = {},
+  ): Promise<GraphQLSubscription<TData>> {
+    const url = new URL(options.path ?? '/graphql', this.url);
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+    return subscribe<TData>(url, query, options);
   }
 
   close(): Promise<void> {

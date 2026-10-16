@@ -179,7 +179,7 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
-  examples/rest-api:
+  examples/graphql-server:
     dependencies:
       '@hpmws/core':
         specifier: workspace:^
@@ -187,6 +187,9 @@ importers:
       '@hpmws/cors':
         specifier: workspace:^
         version: link:../../packages/cors
+      '@hpmws/graphql':
+        specifier: workspace:^
+        version: link:../../packages/graphql
       '@hpmws/http':
         specifier: workspace:^
         version: link:../../packages/http
@@ -199,6 +202,43 @@ importers:
       '@hpmws/security-headers':
         specifier: workspace:^
         version: link:../../packages/security-headers
+      graphql:
+        specifier: ^16.14.2
+        version: 16.14.2
+      valibot:
+        specifier: ^1.5.0
+        version: 1.5.0(typescript@7.0.2)
+    devDependencies:
+      '@hpmws/testing':
+        specifier: workspace:^
+        version: link:../../packages/testing
+
+  examples/rest-api:
+    dependencies:
+      '@hpmws/core':
+        specifier: workspace:^
+        version: link:../../packages/core
+      '@hpmws/cors':
+        specifier: workspace:^
+        version: link:../../packages/cors
+      '@hpmws/graphql':
+        specifier: workspace:^
+        version: link:../../packages/graphql
+      '@hpmws/http':
+        specifier: workspace:^
+        version: link:../../packages/http
+      '@hpmws/rate-limit':
+        specifier: workspace:^
+        version: link:../../packages/rate-limit
+      '@hpmws/sanitize':
+        specifier: workspace:^
+        version: link:../../packages/sanitize
+      '@hpmws/security-headers':
+        specifier: workspace:^
+        version: link:../../packages/security-headers
+      graphql:
+        specifier: ^16.14.2
+        version: 16.14.2
       valibot:
         specifier: ^1.5.0
         version: 1.5.0(typescript@7.0.2)
@@ -220,6 +260,46 @@ importers:
       '@hpmws/testing':
         specifier: workspace:^
         version: link:../testing
+
+  packages/graphql:
+    dependencies:
+      '@leaven-graphql/core':
+        specifier: 0.2.2
+        version: 0.2.2(graphql@16.14.2)
+      '@leaven-graphql/errors':
+        specifier: 0.2.1
+        version: 0.2.1(graphql@16.14.2)
+      '@leaven-graphql/playground':
+        specifier: 0.2.2
+        version: 0.2.2
+      '@leaven-graphql/ws':
+        specifier: 0.2.2
+        version: 0.2.2(graphql@16.14.2)
+      '@standard-schema/spec':
+        specifier: ^1.1.0
+        version: 1.1.0
+      dataloader:
+        specifier: ^2.2.3
+        version: 2.2.3
+    devDependencies:
+      '@hpmws/core':
+        specifier: workspace:^
+        version: link:../core
+      '@hpmws/http':
+        specifier: workspace:^
+        version: link:../http
+      '@hpmws/rate-limit':
+        specifier: workspace:^
+        version: link:../rate-limit
+      '@hpmws/security-headers':
+        specifier: workspace:^
+        version: link:../security-headers
+      '@hpmws/testing':
+        specifier: workspace:^
+        version: link:../testing
+      graphql:
+        specifier: ^16.14.2
+        version: 16.14.2
 
   packages/http:
     dependencies:
@@ -414,6 +494,27 @@ packages:
     resolution: {integrity: sha512-dlT1m5e/0yUL0kRNcQn7yGLVThkgbB0Ga/1AmfDDC/8ik6AIiSf2QLQO2zPYvefsHP0aFgxO93cVLCCfDp7kzQ==}
     engines: {node: '>= 20.12.0'}
 
+  '@leaven-graphql/context@0.2.1':
+    resolution: {integrity: sha512-QUyIFbMS8s7BAWj56eN+AumuRkQ+gS7JBZ6RNk1iS6S1zBGmFnw1bzwqxc0x4pu1KRSVGUX3P1wbXEe9DOcDdg==}
+
+  '@leaven-graphql/core@0.2.2':
+    resolution: {integrity: sha512-S6qlfCh0S//OU2FuYNG3Fv9ST8awtFlXQHnv69bZP1uqVH2mfb8nlfT4ZHpz6vmkIx5c22jm1nF3nvVPPNYdyQ==}
+    peerDependencies:
+      graphql: ^16.0.0
+
+  '@leaven-graphql/errors@0.2.1':
+    resolution: {integrity: sha512-zummXnp/JHr/2rnfVcghFfRZjUSAOZDeuGgu6KhrWHGuHDsxW8CgfOf8g5a5grJOr0BVkdDrBkA0PNpuVv9xMA==}
+    peerDependencies:
+      graphql: ^16.0.0
+
+  '@leaven-graphql/playground@0.2.2':
+    resolution: {integrity: sha512-1cEIxqpMX7KpTWcsg9dfh+t0cJocwAcw+ZcFXqJsSBtTkTel60qZAJmKfIymlZOhdXhJIhWKlF0F9LPDLzBpIQ==}
+
+  '@leaven-graphql/ws@0.2.2':
+    resolution: {integrity: sha512-X8IpHXSgMs6jwffGYQgskvrgmhu2UeW1v0S/Naer/aSxr4NAVtgblIV7GcMHqQXWcQuA4byqJZvPwjjLP4KWyg==}
+    peerDependencies:
+      graphql: ^16.0.0
+
   '@manypkg/find-root@3.1.0':
     resolution: {integrity: sha512-BcSqCyKhBVZ5YkSzOiheMCV41kqAFptW6xGqYSTjkVTl9XQpr+pqHhwgGCOHQtjDCv7Is6EFyA14Sm5GVbVABA==}
     engines: {node: '>=20.0.0'}
@@ -569,6 +670,9 @@ packages:
     resolution: {integrity: sha512-LMDU/U2yA4IPIY8KT0NsNPWEYZvAMkbgyspxJ6btJaYV+WMDOHAZCmB0lsTObiHaRS1V/ztKAl7+TSkTqXyeoA==}
     engines: {node: '>=20.19.0'}
 
+  dataloader@2.2.3:
+    resolution: {integrity: sha512-y2krtASINtPFS1rSDjacrFgn1dcUuoREVabwlOGOe4SdxenREqwjwjElAdwvbGM7kgZz9a3KVicWR7vcz8rnzA==}
+
   dayjs@1.11.23:
     resolution: {integrity: sha512-QDTCU0M0MxR3hQfnlDJfwekQiaanm1ubOD231u73WBckQ/fsamwRLiE2GBz6D3a/xF1NgfiDLJjXBa1hYOYTtQ==}
 
@@ -613,6 +717,10 @@ packages:
     peerDependenciesMeta:
       picomatch:
         optional: true
+
+  graphql@16.14.2:
+    resolution: {integrity: sha512-Chq1s4CY7jmh8gO2qvLIJyfCDIN+EHLFW/9iShnp1z8FjBQMoodWP1kDC36VAMXXIvAjj4ARa7ntfAV2BrjsbA==}
+    engines: {node: ^12.22.0 || ^14.16.0 || ^16.0.0 || >=17.0.0}
 
   htmlparser2@12.0.0:
     resolution: {integrity: sha512-Tz7u1i95/g2x2jz81+x0FBVhBhY5aRTvD3tXXdFaljuNdzDLJ8UGNRrTcj2cgQvAg3iW/h77Fz15nLW0L0CrZw==}
@@ -868,6 +976,26 @@ snapshots:
       fast-wrap-ansi: 0.2.2
       sisteransi: 1.0.5
 
+  '@leaven-graphql/context@0.2.1': {}
+
+  '@leaven-graphql/core@0.2.2(graphql@16.14.2)':
+    dependencies:
+      '@leaven-graphql/errors': 0.2.1(graphql@16.14.2)
+      graphql: 16.14.2
+
+  '@leaven-graphql/errors@0.2.1(graphql@16.14.2)':
+    dependencies:
+      graphql: 16.14.2
+
+  '@leaven-graphql/playground@0.2.2': {}
+
+  '@leaven-graphql/ws@0.2.2(graphql@16.14.2)':
+    dependencies:
+      '@leaven-graphql/context': 0.2.1
+      '@leaven-graphql/core': 0.2.2(graphql@16.14.2)
+      '@leaven-graphql/errors': 0.2.1(graphql@16.14.2)
+      graphql: 16.14.2
+
   '@manypkg/find-root@3.1.0':
     dependencies:
       '@manypkg/tools': 2.1.2
@@ -966,6 +1094,8 @@ snapshots:
 
   cac@7.1.0: {}
 
+  dataloader@2.2.3: {}
+
   dayjs@1.11.23: {}
 
   dom-serializer@3.1.1:
@@ -1003,6 +1133,8 @@ snapshots:
   fdir@6.5.0(picomatch@4.0.7):
     optionalDependencies:
       picomatch: 4.0.7
+
+  graphql@16.14.2: {}
 
   htmlparser2@12.0.0:
     dependencies:

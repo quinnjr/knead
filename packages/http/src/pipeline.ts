@@ -8,6 +8,7 @@ import {
 } from './exceptions.js';
 import type { Logger } from './logger.js';
 import { CATCH } from './metadata.js';
+import { requestUrl } from './request.js';
 import type { ExceptionFilter, Guard, Middleware } from './types.js';
 
 export type Handler = (ctx: RequestContext) => Promise<Response>;
@@ -49,9 +50,10 @@ export function composeMiddleware(
   return (ctx) => dispatch(0, ctx);
 }
 
+/** A guard passes only when it returns (or resolves to) exactly `true`; anything else is 403. */
 export async function runGuards(guards: readonly Guard<any>[], ctx: RequestContext): Promise<void> {
   for (const guard of guards) {
-    if (!(await guard.canActivate(ctx))) throw new ForbiddenException();
+    if ((await guard.canActivate(ctx)) !== true) throw new ForbiddenException();
   }
 }
 
@@ -66,11 +68,15 @@ export function defaultErrorResponse(
   logger: Logger,
   development: boolean,
 ): Response {
-  const instance = new URL(ctx.req.url).pathname;
+  const instance = requestUrl(ctx.req).pathname;
   if (error instanceof HttpException) {
-    if (error.status >= 500)
-      logger.error(`${error.status} on ${ctx.req.method} ${instance}`, error);
-    return problemResponse(error.toProblem(instance), error.headers);
+    if (error.status < 500) return problemResponse(error.toProblem(instance), error.headers);
+    logger.error(`${error.status} on ${ctx.req.method} ${instance}`, error);
+    // Outside development a 5xx carries no detail or extensions: they tend to leak internals.
+    const problem: ProblemDetails = development
+      ? error.toProblem(instance)
+      : { type: error.type, title: error.title, status: error.status, instance };
+    return problemResponse(problem, error.headers);
   }
   logger.error(`Unhandled error on ${ctx.req.method} ${instance}`, error);
   const problem: ProblemDetails = {

@@ -37,4 +37,21 @@ export const XSS_PAYLOADS: readonly string[] = [
   '<noscript><p title="</noscript><img src=x onerror=alert(1)>">',
   '<a href="//evil.example/steal">protocol-relative</a>',
   '<p onclick="alert(1)">click</p>',
+  // Raw-text and legacy elements whose contents parsers treat differently (mXSS).
+  '<xmp><img src=x onerror=alert(1)></xmp>',
+  '<noembed><img src=x onerror=alert(1)></noembed>',
+  '<noframes><img src=x onerror=alert(1)></noframes>',
+  '<plaintext><img src=x onerror=alert(1)>',
+  '<title><img src=x onerror=alert(1)></title>',
+  '<frameset><frame src="javascript:alert(1)"></frameset>',
+  '<frame src="javascript:alert(1)">',
+  '<applet code="evil.class" codebase="https://evil.example/"></applet>',
+  '<portal src="https://evil.example/"></portal>',
+  // URL attributes beyond href/src.
+  '<blockquote cite="javascript:alert(1)">q</blockquote>',
+  '<a href="ftp://evil.example/x">ftp</a>',
+  '<a href="file:///etc/passwd">file</a>',
+  '<img src="blob:https://evil.example/x">',
+  // DOM clobbering.
+  '<a id="cookie" name="cookie" href="https://example.com">c</a>',
 ];
