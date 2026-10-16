@@ -6,22 +6,39 @@ on:
 # Nothing by default; each job asks for exactly what it needs.
 permissions: {}
 
+# One group per tag: GitHub keeps only the newest pending run of a group and cancels the rest,
+# so a shared group could silently drop a queued tag. A re-run of the same tag waits for the
+# one in progress (never cancels it).
 concurrency:
-  group: release
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 env:
   NODE_VERSION: 24.21.0
-  BUN_VERSION: 1.4.2
+  BUN_VERSION: 1.4.3
+  # `bun --revision` of the official BUN_VERSION release, checked after setup-bun.
+  BUN_REVISION: 1.4.3+c6da4a4d3
 
 jobs:
   # Runs every repo script (install, lint, tests, build, pack) with a read-only token and no
-  # OIDC access. Its only output is the tarballs and SBOMs it uploads.
+  # OIDC access. Its only output is the tarballs, their SHA256SUMS and the SBOMs it uploads.
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
+    outputs:
+      # Digest of SHA256SUMS, passed to the publish job outside the artifact store.
+      sums-sha256: ${{ steps.sums.outputs.sha256 }}
+    # Same Redis as ci.yml, so the RedisStore and RedisPubSub suites run on the build that ships.
+    services:
+      redis:
+        image: redis@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499 # redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      REDIS_URL: redis://localhost:6379
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -36,20 +53,43 @@ jobs:
             echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) is not on main; refusing to release"
             exit 1
           fi
+      # Installs the version in package.json `packageManager`. The action ignores the +sha512
+      # suffix (corepack verifies it), so check at least that the expected version arrived.
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - name: Check pnpm version
+        run: |
+          want="$(jq -r .packageManager package.json | sed -E 's/^pnpm@([^+]+).*/\1/')"
+          if [ "$(pnpm --version)" != "$want" ]; then
+            echo "::error::pnpm is $(pnpm --version), expected $want"; exit 1
+          fi
       # No dependency cache: a poisoned cache must not reach a release build.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          # Explicit, so a bump to setup-node v5+ cannot silently turn on automatic caching.
+          # Release deliberately has no cache. Set explicitly, so a bump to setup-node v5+
+          # cannot silently turn on its automatic package-manager cache.
           package-manager-cache: false
           node-version: ${{ env.NODE_VERSION }}
+      - name: Check Node version
+        run: |
+          if [ "$(node --version)" != "v$NODE_VERSION" ]; then
+            echo "::error::node is $(node --version), expected v$NODE_VERSION"; exit 1
+          fi
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: ${{ env.BUN_VERSION }}
-      # Imports only node: builtins, so it runs before any dependency is installed.
+      - name: Check Bun revision
+        run: |
+          if [ "$(bun --revision)" != "$BUN_REVISION" ]; then
+            echo "::error::bun is $(bun --revision), expected $BUN_REVISION"; exit 1
+          fi
+      # Imports only node: builtins, so it runs before any dependency is installed. Also requires
+      # the tagged commit (GITHUB_SHA) to be origin/main's HEAD and the tag's version to equal the
+      # version there, so only the tip of main can be released.
       - name: Gate on tag matching package versions
         run: bun scripts/release.ts gate "$GITHUB_REF_NAME"
       - run: pnpm install --frozen-lockfile
+      # Not --prod: the dev toolchain builds the published artifact, so it is audited too.
+      - run: pnpm audit --audit-level=high
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
@@ -58,14 +98,28 @@ jobs:
       - run: pnpm check:pack
       - name: Pack publishable packages
         run: bun scripts/release.ts pack "$RUNNER_TEMP/npm-tarballs"
+      - name: Write SHA256SUMS
+        id: sums
+        working-directory: ${{ runner.temp }}/npm-tarballs
+        run: |
+          set -euo pipefail
+          sha256sum -- *.tgz > SHA256SUMS
+          cat SHA256SUMS
+          echo "sha256=$(sha256sum SHA256SUMS | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      # Production SBOMs describe what consumers install; toolchain SBOMs (every workspace
+      # project including the root, dev dependencies included) describe what built it.
       - name: Generate CycloneDX SBOMs
         run: |
           pnpm --filter './packages/*' sbom --sbom-format cyclonedx --prod --split \
             --out "$RUNNER_TEMP/sbom/%s-%v.cdx.json"
+          pnpm -r --include-workspace-root sbom --sbom-format cyclonedx --split \
+            --out "$RUNNER_TEMP/sbom/toolchain-%s-%v.cdx.json"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: npm-tarballs
-          path: ${{ runner.temp }}/npm-tarballs/*.tgz
+          path: |
+            ${{ runner.temp }}/npm-tarballs/*.tgz
+            ${{ runner.temp }}/npm-tarballs/SHA256SUMS
           if-no-files-found: error
           retention-days: 7
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -76,7 +130,7 @@ jobs:
           retention-days: 90
 
   # Holds the OIDC permission, so it runs no repo code: no checkout, no install, no scripts.
-  # It only publishes the tarballs the build job produced.
+  # It only publishes the tarballs the build job produced, after verifying them.
   publish:
     needs: build
     runs-on: ubuntu-latest
@@ -87,9 +141,15 @@ jobs:
     steps:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          # Explicit, so a bump to setup-node v5+ cannot silently turn on automatic caching.
+          # Release deliberately has no cache. Set explicitly, so a bump to setup-node v5+
+          # cannot silently turn on its automatic package-manager cache.
           package-manager-cache: false
           node-version: ${{ env.NODE_VERSION }}
+      - name: Check Node version
+        run: |
+          if [ "$(node --version)" != "v$NODE_VERSION" ]; then
+            echo "::error::node is $(node --version), expected v$NODE_VERSION"; exit 1
+          fi
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: npm-tarballs
@@ -107,48 +167,374 @@ jobs:
       # trusted publisher configured on npmjs.com (repo quinnjr/high-performance-modular-web-server,
       # workflow release.yml). Provenance is attached automatically only while the repo is public.
       #
+      # Every tarball is verified before any is published: SHA256SUMS must match the digest the
+      # build job reported and every tarball; each tarball holds exactly one package/package.json
+      # and only the files a package ships; npm's own parsers (node-tar, pacote) read exactly what
+      # GNU tar reads; the name is in ALLOWED_PACKAGES (exact match); and the manifest has no
+      # publishConfig.registry, lifecycle scripts or bundled dependencies.
+      #
       # Changesets fixed mode gives every package the tag's version. Versions already on npm are
       # skipped, so a partly failed release can simply be re-run.
       - name: Publish tarballs
         working-directory: ${{ runner.temp }}/npm-tarballs
+        env:
+          SUMS_SHA256: ${{ needs.build.outputs.sums-sha256 }}
+          # Exactly the publishable workspace packages (scripts/release.test.ts checks this).
+          ALLOWED_PACKAGES: >-
+            @hpmws/core
+            @hpmws/cors
+            @hpmws/graphql
+            @hpmws/http
+            @hpmws/rate-limit
+            @hpmws/sanitize
+            @hpmws/security-headers
+            @hpmws/testing
+          # Per package, the only names allowed in dependencies, optionalDependencies and
+          # peerDependencies (scripts/release.test.ts keeps this equal to the workspace manifests).
+          ALLOWED_DEPENDENCIES: |
+            @hpmws/core:
+            @hpmws/cors: @hpmws/core @hpmws/http
+            @hpmws/graphql: @hpmws/core @hpmws/http @leaven-graphql/core @leaven-graphql/errors @leaven-graphql/playground @leaven-graphql/ws @standard-schema/spec dataloader graphql
+            @hpmws/http: @hpmws/core @standard-schema/spec
+            @hpmws/rate-limit: @hpmws/core @hpmws/http
+            @hpmws/sanitize: @standard-schema/spec sanitize-html
+            @hpmws/security-headers: @hpmws/core @hpmws/http
+            @hpmws/testing: @hpmws/core @hpmws/http
         run: |
           set -euo pipefail
+          registry=https://registry.npmjs.org/
           want="${GITHUB_REF_NAME#v}"
+          errlog="$RUNNER_TEMP/npm-stderr.log"
+          fail() { echo "::error::$*"; exit 1; }
+          artifact="$PWD"
+          # npm runs from an empty directory (with absolute tarball paths), so no project .npmrc
+          # can reach it, and both the default and the package's scoped registry are passed
+          # explicitly. The scope comes from the package name.
+          npm_cwd="$(mktemp -d "$RUNNER_TEMP/npm-cwd.XXXXXX")"
+          npm_for() {
+            local name="$1" scope_args=()
+            shift
+            if [[ "$name" == @*/* ]]; then scope_args=("--${name%%/*}:registry=$registry"); fi
+            (cd "$npm_cwd" && npm "$@" "--registry=$registry" "${scope_args[@]}" --loglevel=notice)
+          }
+          read -r -d '' -a allowed <<<"$ALLOWED_PACKAGES" || true
+          is_allowed() {
+            local n
+            for n in "${allowed[@]}"; do [ "$n" = "$1" ] && return 0; done
+            return 1
+          }
+          # True when stable version $1 (X.Y.Z) is greater than semver $2.
+          version_gt() {
+            local a1 a2 a3 b1 b2 b3 b_core="${2%%+*}" b_pre=
+            if [[ "$b_core" == *-* ]]; then b_pre="${b_core#*-}"; b_core="${b_core%%-*}"; fi
+            IFS=. read -r a1 a2 a3 <<<"$1"
+            IFS=. read -r b1 b2 b3 <<<"$b_core"
+            if ((10#$a1 != 10#$b1)); then ((10#$a1 > 10#$b1)); return; fi
+            if ((10#$a2 != 10#$b2)); then ((10#$a2 > 10#$b2)); return; fi
+            if ((10#$a3 != 10#$b3)); then ((10#$a3 > 10#$b3)); return; fi
+            [ -n "$b_pre" ]
+          }
+          semver='[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?'
+
+          # 1. SHA256SUMS: matches the build job's digest, is well formed, lists exactly the
+          #    tarballs present, and every checksum matches.
+          [ -n "${SUMS_SHA256:-}" ] || fail "the build job reported no SHA256SUMS digest"
+          [ -f SHA256SUMS ] || fail "SHA256SUMS is missing"
+          # The artifact directory holds exactly SHA256SUMS and the tarballs: nothing else (such as
+          # a planted .npmrc) and no hidden files.
+          while IFS= read -r -d '' entry; do
+            entry="${entry#./}"
+            if [ "$entry" = SHA256SUMS ]; then continue; fi
+            if [[ "$entry" == .* || "$entry" != *.tgz || -L "$entry" || ! -f "$entry" ]]; then
+              fail "unexpected file in the artifact: $entry"
+            fi
+          done < <(find . -mindepth 1 -maxdepth 1 -print0)
+          [ "$(sha256sum SHA256SUMS | cut -d' ' -f1)" = "$SUMS_SHA256" ] \
+            || fail "SHA256SUMS does not match the digest reported by the build job"
+          if grep -Evq '^[0-9a-f]{64}  [A-Za-z0-9][A-Za-z0-9._-]*\.tgz$' SHA256SUMS; then
+            fail "SHA256SUMS has a malformed line"
+          fi
           shopt -s nullglob
           tarballs=(*.tgz)
-          if [ "${#tarballs[@]}" -eq 0 ]; then echo "::error::no tarballs to publish"; exit 1; fi
-          # Validate every tarball before publishing any of them.
+          [ "${#tarballs[@]}" -gt 0 ] || fail "no tarballs to publish"
+          [ "$(cut -c67- SHA256SUMS | sort)" = "$(printf '%s\n' "${tarballs[@]}" | sort)" ] \
+            || fail "the tarballs present differ from those listed in SHA256SUMS"
+          sha256sum --check --strict --quiet SHA256SUMS || fail "a tarball does not match SHA256SUMS"
+
+          # 2. Validate every tarball before publishing any of them.
+          #
+          # npm publish reads the tarball with node-tar and pacote, not GNU tar, and the two can
+          # disagree (PAX GNU.sparse.name renames an entry for GNU tar only). So every tarball is
+          # also parsed with the node-tar and pacote bundled with this job's npm, plus a raw header
+          # walk that rejects anything the parsers might resolve differently: PAX records other
+          # than path (which must equal the header name) and timestamps/owners, GNU sparse
+          # records, entry types other than file and directory, and data after the end marker.
+          # The manifest every later check reads is pacote's, and it must equal GNU tar's.
+          npm_root="$(cd "$npm_cwd" && npm root -g)"
+          for m in tar pacote; do
+            [ -f "$npm_root/npm/node_modules/$m/package.json" ] || fail "npm's bundled $m was not found under $npm_root"
+          done
+          work="$(mktemp -d "$RUNNER_TEMP/verify.XXXXXX")"
+          verify="$work/npm-verify.cjs"
+          cat > "$verify" <<'JS'
+          'use strict';
+          // node npm-verify.cjs <work-dir> <tgz>...; NPM_ROOT = `npm root -g`. For each tarball, reads
+          // <work>/<tgz>.names and <work>/<tgz>.gnu.json (GNU tar's view) and writes pacote's manifest
+          // to <work>/<tgz>.json.
+          const fs = require('node:fs');
+          const os = require('node:os');
+          const path = require('node:path');
+          const zlib = require('node:zlib');
+          const [work, ...tarballs] = process.argv.slice(2);
+          let tgz;
+          const die = (m) => {
+            console.error(`::error::${tgz}: ${m}`);
+            process.exit(1);
+          };
+          const npmModule = (m) => require(path.join(process.env.NPM_ROOT, 'npm', 'node_modules', m));
+          async function verify(file) {
+            tgz = file;
+            let raw;
+            try {
+              raw = zlib.gunzipSync(fs.readFileSync(tgz), { maxOutputLength: 64 * 1024 * 1024 });
+            } catch (e) {
+              die(`cannot be decompressed within 64 MiB: ${e.message}`);
+            }
+            const field = (h, start, len) => {
+              const b = h.subarray(start, start + len);
+              const end = b.indexOf(0);
+              return b.subarray(0, end < 0 ? len : end).toString('utf8');
+            };
+            const PAX_KEYS = new Set(['path', 'mtime', 'atime', 'ctime', 'uid', 'gid', 'uname', 'gname']);
+            const parsePax = (data) => {
+              const records = {};
+              let rest = data.toString('utf8');
+              while (rest.length > 0) {
+                const m = /^(\d+) /.exec(rest);
+                if (!m) die('malformed PAX header');
+                const len = Number(m[1]);
+                const record = rest.slice(m[0].length, len);
+                if (Buffer.byteLength(rest.slice(0, len)) !== len || !record.endsWith('\n'))
+                  die('malformed PAX record');
+                rest = rest.slice(len);
+                const eq = record.indexOf('=');
+                const key = record.slice(0, eq);
+                if (eq < 1) die('malformed PAX record');
+                if (key.startsWith('GNU.sparse')) die(`has a GNU sparse PAX record (${key})`);
+                if (!PAX_KEYS.has(key)) die(`PAX key ${key} is not allowed`);
+                records[key] = record.slice(eq + 1, -1);
+              }
+              return records;
+            };
+            const rawNames = [];
+            let off = 0;
+            let pax = null;
+            let ended = false;
+            while (off + 512 <= raw.length) {
+              const h = raw.subarray(off, off + 512);
+              if (h.every((b) => b === 0)) {
+                ended = true;
+                off += 512;
+                break;
+              }
+              let sum = 0;
+              for (let i = 0; i < 512; i++) sum += i >= 148 && i < 156 ? 32 : h[i];
+              if (Number.parseInt(field(h, 148, 8).trim(), 8) !== sum) die(`bad header checksum at ${off}`);
+              const sizeField = field(h, 124, 12).trim();
+              if (h[124] & 0x80 || !/^[0-7]*$/.test(sizeField)) die(`bad size field at ${off}`);
+              const size = Number.parseInt(sizeField || '0', 8);
+              const type = h[156] === 0 ? '0' : String.fromCharCode(h[156]);
+              const magic = h.subarray(257, 263).toString('latin1');
+              if (magic !== 'ustar\0' && magic !== 'ustar ') die('is not a ustar archive');
+              const prefix = magic === 'ustar\0' ? field(h, 345, 155) : '';
+              const name = prefix ? `${prefix}/${field(h, 0, 100)}` : field(h, 0, 100);
+              const data = raw.subarray(off + 512, off + 512 + size);
+              if (data.length !== size) die(`entry ${name} is truncated`);
+              off += 512 + Math.ceil(size / 512) * 512;
+              if (type === 'x') {
+                if (pax) die('has two PAX headers in a row');
+                pax = parsePax(data);
+                continue;
+              }
+              if (type === 'S') die(`entry ${name} is a GNU sparse file`);
+              if (type !== '0' && type !== '5') die(`entry ${name} has unsupported type ${type}`);
+              if (pax && pax.path !== undefined && pax.path !== name)
+                die(`PAX path ${pax.path} differs from header name ${name}`);
+              pax = null;
+              rawNames.push(name);
+            }
+            if (!ended) die('has no end-of-archive marker');
+            if (pax) die('ends with a dangling PAX header');
+            if (raw.subarray(off).some((b) => b !== 0)) die('has data after the end-of-archive marker');
+            const nodeNames = [];
+            try {
+              npmModule('tar').t({
+                file: tgz,
+                sync: true,
+                strict: true,
+                onReadEntry: (e) => nodeNames.push(e.path),
+              });
+            } catch (e) {
+              die(`node-tar cannot list it: ${e.message}`);
+            }
+            const gnuNames = fs.readFileSync(path.join(work, `${tgz}.names`), 'utf8').split('\n').filter(Boolean);
+            const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+            if (!same(gnuNames, nodeNames)) die('node-tar and GNU tar list different entries');
+            if (!same(gnuNames, rawNames)) die('the raw headers and GNU tar list different entries');
+            let gnuManifest;
+            try {
+              gnuManifest = JSON.stringify(JSON.parse(fs.readFileSync(path.join(work, `${tgz}.gnu.json`), 'utf8')));
+            } catch {
+              die('has an invalid package.json');
+            }
+            const cache = fs.mkdtempSync(path.join(os.tmpdir(), 'pacote-'));
+            const m = await npmModule('pacote')
+              // The options npm publish itself passes, so this is the manifest it would publish.
+              .manifest(path.resolve(tgz), { cache, fullMetadata: true, fullReadJson: true })
+              .catch((e) => die(`pacote cannot read it: ${e.message}`));
+            // pacote adds the resolution fields, and with fullReadJson derives readme,
+            // readmeFilename, bugs and homepage; everything else must match byte for byte.
+            const { _id, _integrity, _resolved, _from, ...manifest } = m;
+            const { readme, readmeFilename, bugs, homepage, ...compared } = manifest;
+            const omit = ['readme', 'readmeFilename', 'bugs', 'homepage'];
+            const gnu = JSON.parse(gnuManifest);
+            for (const k of omit) delete gnu[k];
+            if (JSON.stringify(compared) !== JSON.stringify(gnu))
+              die('npm reads a different package.json than GNU tar');
+            fs.writeFileSync(path.join(work, `${tgz}.json`), JSON.stringify(manifest));
+          }
+          (async () => {
+            for (const file of tarballs) await verify(file);
+          })().catch((e) => die(e.message));
+          JS
+          seg='[A-Za-z0-9_@+-][A-Za-z0-9._@+-]*'
+          entry_re="^(- package/(package\.json|README\.md|LICENSE-MIT|LICENSE-APACHE|dist/($seg/)*$seg)|d package/(dist/($seg/)*)?)$"
+          max_tgz=$((10 * 1024 * 1024))
+          max_unpacked=$((64 * 1024 * 1024))
+          max_manifest=$((1024 * 1024))
           for tgz in "${tarballs[@]}"; do
-            manifest="$(tar -xzOf "$tgz" package/package.json)"
+            # Size limits before anything parses the archive, so a gzip bomb cannot exhaust the job.
+            [ "$(stat -c %s "$tgz")" -le "$max_tgz" ] || fail "$tgz is larger than 10 MiB"
+            unpacked="$(set +o pipefail; gzip -dc <"$tgz" 2>/dev/null | head -c "$((max_unpacked + 1))" | wc -c)"
+            [ "$unpacked" -le "$max_unpacked" ] || fail "$tgz unpacks to more than 64 MiB"
+            names="$(tar -tzf "$tgz")" || fail "$tgz is not a readable tarball"
+            types="$(tar -tvzf "$tgz" | cut -c1)"
+            [ "$(wc -l <<<"$names")" = "$(wc -l <<<"$types")" ] || fail "$tgz has an unreadable listing"
+            listing="$(paste -d' ' <(printf '%s\n' "$types") <(printf '%s\n' "$names"))"
+            if dup="$(sort <<<"$names" | uniq -d | grep .)"; then
+              fail "$tgz has duplicate entries: $dup"
+            fi
+            if bad="$(grep -Ev "$entry_re" <<<"$listing")"; then
+              fail "$tgz has unexpected entries: $bad"
+            fi
+            grep -qx -- '- package/package.json' <<<"$listing" || fail "$tgz has no package/package.json"
+            printf '%s\n' "$names" > "$work/$tgz.names"
+            { tar -xzOf "$tgz" package/package.json || true; } | head -c "$((max_manifest + 1))" > "$work/$tgz.gnu.json"
+            [ "$(stat -c %s "$work/$tgz.gnu.json")" -le "$max_manifest" ] || fail "$tgz: package.json is larger than 1 MiB"
+          done
+          NPM_ROOT="$npm_root" node "$verify" "$work" "${tarballs[@]}" || fail "the npm parser cross-check failed"
+          seen=()
+          for tgz in "${tarballs[@]}"; do
+            manifest="$(cat "$work/$tgz.json")"
+            jq -e 'type == "object" and (.name | type) == "string" and (.version | type) == "string"' \
+              >/dev/null <<<"$manifest" || fail "$tgz has an invalid package.json"
             name="$(jq -r .name <<<"$manifest")"
             version="$(jq -r .version <<<"$manifest")"
-            if [[ "$name" != @hpmws/* ]]; then
-              echo "::error::$tgz contains unexpected package $name"; exit 1
+            is_allowed "$name" || fail "$tgz contains unexpected package $name"
+            [ "$version" = "$want" ] || fail "$name is at $version but the tag is $GITHUB_REF_NAME"
+            expected="${name#@}"; expected="${expected//\//-}-$version.tgz"
+            [ "$tgz" = "$expected" ] || fail "$tgz holds $name@$version (expected file $expected)"
+            seen+=("$name")
+            if jq -e '(.publishConfig // {}) | type != "object" or (keys - ["access"] | length > 0)' \
+              >/dev/null <<<"$manifest"; then
+              fail "$name: publishConfig may only set access (no registry or other overrides)"
             fi
-            if [ "$version" != "$want" ]; then
-              echo "::error::$name is at $version but the tag is $GITHUB_REF_NAME"; exit 1
+            if jq -e '(.scripts // {}) | type != "object" or (keys | any(test("^(pre|post)|install|publish|prepare|pack|^dependencies$"; "i")))' \
+              >/dev/null <<<"$manifest"; then
+              fail "$name: package.json has lifecycle scripts"
+            fi
+            if jq -e 'has("bundleDependencies") or has("bundledDependencies")' >/dev/null <<<"$manifest"; then
+              fail "$name: package.json has bundled dependencies"
+            fi
+            # No package ships executables, so no bin shims (or the directories/man that create them).
+            if jq -e 'has("bin") or has("directories") or has("man")' >/dev/null <<<"$manifest"; then
+              fail "$name: package.json may not declare bin, directories or man"
+            fi
+            bad_dep="$(jq -r --arg allow "$ALLOWED_DEPENDENCIES" '
+              .name as $name
+              | ($allow | split("\n") | map(select(startswith($name + ":")))) as $lines
+              | (if ($lines | length) == 1
+                 then $lines[0] | ltrimstr($name + ":") | split(" ") | map(select(length > 0))
+                 else [] end) as $ok
+              | [.dependencies, .optionalDependencies, .peerDependencies
+                 | if . == null then empty elif type == "object" then keys[] else "<not an object>" end]
+              | map(select(. as $d | $ok | index([$d]) | not)) | first // empty' <<<"$manifest")"
+            [ -z "$bad_dep" ] || fail "$name: dependency $bad_dep is not allowed (see ALLOWED_DEPENDENCIES)"
+          done
+
+          # Every allowed package exactly once: a partial set would leave a half-published release.
+          missing=()
+          for n in "${allowed[@]}"; do
+            count="$(printf '%s\n' "${seen[@]}" | grep -cxF -- "$n" || true)"
+            if [ "$count" -eq 0 ]; then missing+=("$n"); fi
+            [ "$count" -le 1 ] || fail "$n appears $count times in the artifact"
+          done
+          [ "${#missing[@]}" -eq 0 ] || fail "packages missing from the artifact: ${missing[*]}"
+          [ "${#seen[@]}" -eq "${#allowed[@]}" ] || fail "expected ${#allowed[@]} packages, found ${#seen[@]}"
+
+          # Preflight: every package must already exist on npm. A brand-new package has no trusted
+          # publisher yet, so its OIDC publish would fail after the others went out.
+          for n in "${allowed[@]}"; do
+            if ! npm_for "$n" view "$n" name >/dev/null 2>"$errlog"; then
+              if grep -q E404 "$errlog"; then
+                fail "$n is not on npm yet. Publish it once by hand and register the trusted publisher with pnpm trust:npm (see Releasing in README.md), then re-run this workflow"
+              fi
+              cat "$errlog"; fail "could not query npm for $n"
             fi
           done
-          errlog="$RUNNER_TEMP/npm-stderr.log"
+
+          # 3. Publish.
           for tgz in "${tarballs[@]}"; do
-            manifest="$(tar -xzOf "$tgz" package/package.json)"
+            manifest="$(cat "$work/$tgz.json")"
             name="$(jq -r .name <<<"$manifest")"
             version="$(jq -r .version <<<"$manifest")"
-            if published="$(npm view "$name@$version" version 2>"$errlog")"; then
+            if published="$(npm_for "$name" view "$name@$version" version 2>"$errlog")"; then
               if [ -n "$published" ]; then echo "skip $name@$version (already on npm)"; continue; fi
             elif ! grep -q E404 "$errlog"; then
-              cat "$errlog"; echo "::error::could not query npm for $name@$version"; exit 1
+              cat "$errlog"; fail "could not query npm for $name@$version"
             fi
-            # Prereleases use their identifier (1.0.0-rc.1 -> rc). npm rejects a dist-tag that is
-            # also a valid semver range, so identifiers that start with a digit (1.0.0-0),
-            # a v plus digit (1.0.0-v1) or are just x/X fall back to next.
             case "$version" in
-              *-*) pre="${version#*-}"; dist_tag="${pre%%.*}" ;;
-              *) dist_tag=latest ;;
+              # Prereleases use their identifier (1.0.0-rc.1 -> rc). npm rejects a dist-tag that is
+              # also a valid semver range, so identifiers that start with a digit (1.0.0-0),
+              # a v plus digit (1.0.0-v1) or are just x/X fall back to next.
+              *-*)
+                pre="${version#*-}"; dist_tag="${pre%%.*}"
+                if [[ "$dist_tag" =~ ^([vV]?[0-9].*|[xX])$ ]]; then dist_tag=next; fi
+                ;;
+              # A stable version takes latest only when it is newer than the current latest;
+              # an older line (a backport) gets v<major>.<minor>-latest instead.
+              *)
+                if current="$(npm_for "$name" view "$name" dist-tags.latest 2>"$errlog")"; then
+                  :
+                elif grep -q E404 "$errlog"; then
+                  current=
+                else
+                  cat "$errlog"; fail "could not query the latest dist-tag of $name"
+                fi
+                if [ -z "$current" ]; then
+                  dist_tag=latest
+                elif ! [[ "$current" =~ ^$semver$ ]]; then
+                  fail "$name has an unexpected latest dist-tag: $current"
+                elif version_gt "$version" "$current"; then
+                  dist_tag=latest
+                else
+                  IFS=. read -r major minor _ <<<"$version"
+                  dist_tag="v$major.$minor-latest"
+                fi
+                ;;
             esac
-            if [[ "$dist_tag" =~ ^([vV]?[0-9].*|[xX])$ ]]; then dist_tag=next; fi
             echo "publish $name@$version (dist-tag $dist_tag)"
-            if ! npm publish "./$tgz" --access public --tag "$dist_tag" --ignore-scripts 2>"$errlog"; then
+            if ! npm_for "$name" publish "$artifact/$tgz" --access public --tag "$dist_tag" --ignore-scripts 2>"$errlog"; then
               cat "$errlog"
               if grep -q 'previously published version' "$errlog"; then
                 echo "skip $name@$version (published concurrently)"; continue

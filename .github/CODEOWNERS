@@ -1,4 +1,6 @@
-# Changes to CI, release tooling and the published packages need the owner's review.
+* @quinnjr
+# Every change needs the owner's review: the catch-all above covers new top-level paths (for
+# example a root config file); the entries below name the sensitive ones explicitly.
 # Enforced only once branch protection ("Require review from Code Owners") is available
 # and enabled for main and develop; until then this file only requests reviews.
 /.github/   @quinnjr
