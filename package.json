@@ -16,7 +16,8 @@
     "changeset": "changeset",
     "version-packages": "changeset version",
     "check:pack": "bun scripts/check-pack.ts",
-    "release": "pnpm build && changeset publish --no-git-tag"
+    "release": "pnpm build && changeset publish --no-git-tag",
+    "trust:npm": "bash scripts/trust-npm-publishers.sh"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",
