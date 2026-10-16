@@ -12,7 +12,8 @@ export const config = {
 };
 
 /**
- * RedisPubSub options from the environment: REDIS_PUBSUB_SIGNING_KEY signs events and
+ * RedisPubSub options from the environment: REDIS_PUBSUB_SIGNING_KEY (required under
+ * NODE_ENV=production) signs events and
  * REDIS_PUBSUB_ENCRYPTION_KEY encrypts their payloads (each `openssl rand -base64 32`, from a
  * secret store or the environment).
  */
@@ -22,6 +23,13 @@ export function redisPubSubOptions(env: Record<string, string | undefined>): {
   encryptionKey?: string;
 } {
   const signingKey = env.REDIS_PUBSUB_SIGNING_KEY || undefined;
+  if (!signingKey && env.NODE_ENV === 'production') {
+    // Unsigned events could be injected by anything that can publish to the Redis server.
+    throw new Error(
+      'REDIS_PUBSUB_SIGNING_KEY is required with REDIS_URL under NODE_ENV=production ' +
+        '(generate one with `openssl rand -base64 32`).',
+    );
+  }
   const encryptionKey = env.REDIS_PUBSUB_ENCRYPTION_KEY || undefined;
   return {
     url: env.REDIS_URL || undefined,

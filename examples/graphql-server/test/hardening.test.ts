@@ -1,7 +1,15 @@
 import { describe, expect, test } from 'bun:test';
 import { AuthService, ROLES, RolesGuard } from '../src/auth/auth.js';
 import { toCommentEvent, toPostEvent } from '../src/blog/blog.events.js';
-import { Comment, Post, PostStatus, reviveComment, revivePost } from '../src/blog/blog.types.js';
+import {
+  Comment,
+  isCommentEvent,
+  isPostEvent,
+  Post,
+  PostStatus,
+  reviveComment,
+  revivePost,
+} from '../src/blog/blog.types.js';
 import { listenOptions, redisPubSubOptions } from '../src/config.js';
 
 describe('demo AuthService', () => {
@@ -90,7 +98,51 @@ describe('RolesGuard', () => {
   });
 });
 
+describe('events crossing Redis', () => {
+  const event = {
+    id: 'p9',
+    authorId: 'a2',
+    title: 'T',
+    body: '<p>ok</p><img src=x onerror=alert(1)><script>alert(2)</script>',
+    status: 'PUBLISHED',
+    tags: [],
+    createdAt: '2026-01-01T00:00:00Z',
+    publishedAt: null,
+  };
+
+  test('revivePost and reviveComment sanitize the body again', () => {
+    const post = revivePost(event as never);
+    expect(post.body).toContain('<p>ok</p>');
+    expect(post.body).not.toContain('onerror');
+    expect(post.body).not.toContain('<script');
+    const comment = reviveComment({ ...event, postId: 'p9' } as never);
+    expect(comment.body).not.toContain('onerror');
+  });
+
+  test('an event with an unknown status is dropped by the filter (and revive throws)', () => {
+    expect(isPostEvent(event)).toBe(true);
+    expect(isPostEvent({ ...event, status: 'ARCHIVED' })).toBe(false);
+    expect(isPostEvent(null)).toBe(false);
+    expect(() => revivePost({ ...event, status: 'ARCHIVED' } as never)).toThrow('status');
+    expect(isCommentEvent({ id: 'c', postId: 'p', body: 'b' })).toBe(true);
+    expect(isCommentEvent({ id: 'c', postId: 7, body: 'b' })).toBe(false);
+  });
+});
+
 describe('RedisPubSub configuration', () => {
+  test('production refuses to start without REDIS_PUBSUB_SIGNING_KEY', () => {
+    expect(() =>
+      redisPubSubOptions({ NODE_ENV: 'production', REDIS_URL: 'rediss://cache' }),
+    ).toThrow('REDIS_PUBSUB_SIGNING_KEY');
+    expect(
+      redisPubSubOptions({
+        NODE_ENV: 'production',
+        REDIS_URL: 'rediss://cache',
+        REDIS_PUBSUB_SIGNING_KEY: 'k',
+      }).signingKey,
+    ).toBe('k');
+  });
+
   test('REDIS_PUBSUB_SIGNING_KEY becomes the signingKey', () => {
     expect(redisPubSubOptions({ REDIS_URL: 'redis://localhost:6379' })).toEqual({
       url: 'redis://localhost:6379',
