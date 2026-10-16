@@ -33,16 +33,23 @@ interface SocketState {
   extra: object | undefined;
 }
 
-/** Same origin (Origin host equals Host), an allowed origin, or no Origin header at all. */
+/** Same origin (Origin scheme matches the connection, Origin host equals Host), an allowed origin, or no Origin header. */
 export function originAllowed(
   origin: string | null,
   host: string | null,
+  secure: boolean,
   allowed: SubscriptionOptions['allowedOrigins'],
 ): boolean {
   if (origin === null || allowed === '*') return true;
   if (allowed?.includes(origin)) return true;
   try {
-    return host !== null && new URL(origin).host === host.toLowerCase();
+    const url = new URL(origin);
+    // Same origin means same scheme as well as host: an http:// page must not reach a wss:// socket.
+    return (
+      host !== null &&
+      url.protocol === (secure ? 'https:' : 'http:') &&
+      url.host === host.toLowerCase()
+    );
   } catch {
     return false;
   }
@@ -105,7 +112,14 @@ export function createSubscriptionEndpoint(
         .split(',')
         .map((p) => p.trim());
       const headers = ctx.req.headers;
-      if (!originAllowed(headers.get('origin'), headers.get('host'), options.allowedOrigins)) {
+      if (
+        !originAllowed(
+          headers.get('origin'),
+          headers.get('host'),
+          ctx.secure,
+          options.allowedOrigins,
+        )
+      ) {
         throw new ForbiddenException('Cross-origin GraphQL WebSocket connections are not allowed.');
       }
       if (!offered.includes(GRAPHQL_TRANSPORT_WS)) {

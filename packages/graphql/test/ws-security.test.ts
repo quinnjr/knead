@@ -3,6 +3,7 @@ import { Module } from '@hpmws/core';
 import { APP_GUARD, type Ctx } from '@hpmws/http';
 import { RateLimitModule } from '@hpmws/rate-limit';
 import { Int, Mutation, Query, Resolver, Subscription } from '../src/index.js';
+import { originAllowed } from '../src/subscriptions.js';
 import { type Started, startGraphQL, upgradeStatus } from './helpers.js';
 
 let bumps = 0;
@@ -67,6 +68,21 @@ describe('WebSocket transport security', () => {
     expect(await upgradeStatus(s.app, { origin: 'https://evil.example' })).toBe(403);
     expect(await upgradeStatus(s.app, { origin: `http://127.0.0.1:${s.app.url.port}` })).toBe(101);
     expect(await upgradeStatus(s.app)).toBe(101);
+  });
+
+  test('same-origin also requires the same scheme', async () => {
+    s = await startGraphQL([M]);
+    // The test server speaks plain HTTP, so an https:// page on the same host is another origin.
+    expect(await upgradeStatus(s.app, { origin: `https://127.0.0.1:${s.app.url.port}` })).toBe(403);
+  });
+
+  test('originAllowed compares scheme and host', () => {
+    expect(originAllowed('https://app.example', 'app.example', true, undefined)).toBe(true);
+    expect(originAllowed('http://app.example', 'app.example', true, undefined)).toBe(false);
+    expect(originAllowed('http://app.example', 'APP.example', false, undefined)).toBe(true);
+    expect(originAllowed('https://app.example', 'app.example', false, undefined)).toBe(false);
+    expect(originAllowed('null', 'app.example', false, undefined)).toBe(false);
+    expect(originAllowed(null, 'app.example', true, undefined)).toBe(true);
   });
 
   test('allowedOrigins lists extra origins; "*" allows any', async () => {
