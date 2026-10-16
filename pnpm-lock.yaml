@@ -203,8 +203,8 @@ importers:
         specifier: workspace:^
         version: link:../../packages/security-headers
       graphql:
-        specifier: ^16.14.2
-        version: 16.14.2
+        specifier: ^17.0.2
+        version: 17.0.2
       valibot:
         specifier: ^1.5.0
         version: 1.5.0(typescript@7.0.2)
@@ -237,8 +237,8 @@ importers:
         specifier: workspace:^
         version: link:../../packages/security-headers
       graphql:
-        specifier: ^16.14.2
-        version: 16.14.2
+        specifier: ^17.0.2
+        version: 17.0.2
       valibot:
         specifier: ^1.5.0
         version: 1.5.0(typescript@7.0.2)
@@ -265,16 +265,16 @@ importers:
     dependencies:
       '@leaven-graphql/core':
         specifier: 0.2.2
-        version: 0.2.2(graphql@16.14.2)
+        version: 0.2.2(graphql@17.0.2)
       '@leaven-graphql/errors':
         specifier: 0.2.1
-        version: 0.2.1(graphql@16.14.2)
+        version: 0.2.1(graphql@17.0.2)
       '@leaven-graphql/playground':
         specifier: 0.2.2
         version: 0.2.2
       '@leaven-graphql/ws':
         specifier: 0.2.2
-        version: 0.2.2(graphql@16.14.2)
+        version: 0.2.2(graphql@17.0.2)
       '@standard-schema/spec':
         specifier: ^1.1.0
         version: 1.1.0
@@ -298,8 +298,8 @@ importers:
         specifier: workspace:^
         version: link:../testing
       graphql:
-        specifier: ^16.14.2
-        version: 16.14.2
+        specifier: ^17.0.2
+        version: 17.0.2
 
   packages/http:
     dependencies:
@@ -718,9 +718,9 @@ packages:
       picomatch:
         optional: true
 
-  graphql@16.14.2:
-    resolution: {integrity: sha512-Chq1s4CY7jmh8gO2qvLIJyfCDIN+EHLFW/9iShnp1z8FjBQMoodWP1kDC36VAMXXIvAjj4ARa7ntfAV2BrjsbA==}
-    engines: {node: ^12.22.0 || ^14.16.0 || ^16.0.0 || >=17.0.0}
+  graphql@17.0.2:
+    resolution: {integrity: sha512-FRWbddMxfkjiB7z+aQDWIR+E34xo9I8c9mtK2RPv8PmMzKRvrdsreHL/Ui/TmwHJfhHChEtsFPyMHKI+xuarQQ==}
+    engines: {node: ^22.0.0 || ^24.0.0 || ^25.0.0 || >=26.0.0}
 
   htmlparser2@12.0.0:
     resolution: {integrity: sha512-Tz7u1i95/g2x2jz81+x0FBVhBhY5aRTvD3tXXdFaljuNdzDLJ8UGNRrTcj2cgQvAg3iW/h77Fz15nLW0L0CrZw==}
@@ -978,23 +978,23 @@ snapshots:
 
   '@leaven-graphql/context@0.2.1': {}
 
-  '@leaven-graphql/core@0.2.2(graphql@16.14.2)':
+  '@leaven-graphql/core@0.2.2(graphql@17.0.2)':
     dependencies:
-      '@leaven-graphql/errors': 0.2.1(graphql@16.14.2)
-      graphql: 16.14.2
+      '@leaven-graphql/errors': 0.2.1(graphql@17.0.2)
+      graphql: 17.0.2
 
-  '@leaven-graphql/errors@0.2.1(graphql@16.14.2)':
+  '@leaven-graphql/errors@0.2.1(graphql@17.0.2)':
     dependencies:
-      graphql: 16.14.2
+      graphql: 17.0.2
 
   '@leaven-graphql/playground@0.2.2': {}
 
-  '@leaven-graphql/ws@0.2.2(graphql@16.14.2)':
+  '@leaven-graphql/ws@0.2.2(graphql@17.0.2)':
     dependencies:
       '@leaven-graphql/context': 0.2.1
-      '@leaven-graphql/core': 0.2.2(graphql@16.14.2)
-      '@leaven-graphql/errors': 0.2.1(graphql@16.14.2)
-      graphql: 16.14.2
+      '@leaven-graphql/core': 0.2.2(graphql@17.0.2)
+      '@leaven-graphql/errors': 0.2.1(graphql@17.0.2)
+      graphql: 17.0.2
 
   '@manypkg/find-root@3.1.0':
     dependencies:
@@ -1134,7 +1134,7 @@ snapshots:
     optionalDependencies:
       picomatch: 4.0.7
 
-  graphql@16.14.2: {}
+  graphql@17.0.2: {}
 
   htmlparser2@12.0.0:
     dependencies:

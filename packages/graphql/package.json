@@ -37,7 +37,7 @@
   "peerDependencies": {
     "@hpmws/core": "workspace:^",
     "@hpmws/http": "workspace:^",
-    "graphql": "^16.14.2"
+    "graphql": "^17.0.2"
   },
   "devDependencies": {
     "@hpmws/core": "workspace:^",
@@ -45,7 +45,7 @@
     "@hpmws/rate-limit": "workspace:^",
     "@hpmws/security-headers": "workspace:^",
     "@hpmws/testing": "workspace:^",
-    "graphql": "^16.14.2"
+    "graphql": "^17.0.2"
   },
   "publishConfig": {
     "access": "public",

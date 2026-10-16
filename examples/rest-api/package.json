@@ -14,7 +14,7 @@
     "@hpmws/rate-limit": "workspace:^",
     "@hpmws/sanitize": "workspace:^",
     "@hpmws/security-headers": "workspace:^",
-    "graphql": "^16.14.2",
+    "graphql": "^17.0.2",
     "valibot": "^1.5.0"
   },
   "devDependencies": {
