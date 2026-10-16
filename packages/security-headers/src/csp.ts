@@ -73,6 +73,8 @@ export function buildHeaders(
     ['cross-origin-resource-policy', options.crossOriginResourcePolicy],
     ['x-frame-options', options.xFrameOptions],
     ['x-dns-prefetch-control', options.xDnsPrefetchControl],
+    ['permissions-policy', options.permissionsPolicy],
+    ['x-permitted-cross-domain-policies', options.xPermittedCrossDomainPolicies],
   ];
   for (const [name, value] of simple) if (value) out.push([name, value]);
   return out;
