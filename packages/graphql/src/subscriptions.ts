@@ -108,11 +108,26 @@ function track<T>(
 const asLeavenSocket = (facade: SocketFacade) =>
   facade as unknown as ServerWebSocket<WebSocketContext>;
 
+/** One open subscription socket, as `GraphQLSubscriptions.closeWhere` sees it. */
+export interface GraphQLConnection {
+  /** The upgrade request's Ctx. */
+  readonly http: Ctx;
+  /** The object `onConnect` returned (empty before connection_init, or without onConnect). */
+  readonly context: Readonly<Record<PropertyKey, unknown>>;
+}
+
+export interface SubscriptionEndpoint extends WsEndpoint<UpgradeData> {
+  /** The connection of a socket on this endpoint, or undefined for any other socket. */
+  connection(ws: WsSocket): GraphQLConnection | undefined;
+}
+
+const EMPTY_CONTEXT: Readonly<Record<PropertyKey, unknown>> = Object.freeze({});
+
 /** The graphql-transport-ws endpoint registered with WsRegistry at the GraphQL path. */
 export function createSubscriptionEndpoint(
   runtime: GraphQLRuntime,
   options: SubscriptionOptions,
-): WsEndpoint<UpgradeData> {
+): SubscriptionEndpoint {
   const facades = new WeakMap<WsSocket, SocketFacade>();
   const states = new WeakMap<object, SocketState>();
   const stateOf = (socket: object): SocketState => {
@@ -194,6 +209,15 @@ export function createSubscriptionEndpoint(
     },
   });
   return {
+    connection(ws) {
+      const facade = facades.get(ws);
+      const state = facade && states.get(facade);
+      if (!state) return undefined;
+      return {
+        http: state.http,
+        context: state.extra ? Object.freeze({ ...state.extra }) : EMPTY_CONTEXT,
+      };
+    },
     upgrade(ctx) {
       const offered = (ctx.req.headers.get('sec-websocket-protocol') ?? '')
         .split(',')

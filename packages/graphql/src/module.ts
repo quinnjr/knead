@@ -10,6 +10,7 @@ import {
 } from './options.js';
 import { PUBSUB } from './pubsub.js';
 import { GraphQLRuntime } from './runtime.js';
+import { GraphQLSubscriptions } from './subscriptions-service.js';
 
 export interface GraphQLModuleAsyncOptions {
   /** Routes are compiled from decorators, so the path is static even for async options. */
@@ -52,8 +53,9 @@ export class GraphQLModule {
         { provide: GRAPHQL_PATH, useValue: normalized },
         { provide: PUBSUB, useFactory: () => inject(GRAPHQL_OPTIONS).pubsub ?? new PubSub() },
         GraphQLRuntime,
+        GraphQLSubscriptions,
       ],
-      exports: [PUBSUB, GraphQLRuntime],
+      exports: [PUBSUB, GraphQLRuntime, GraphQLSubscriptions],
     };
   }
 }

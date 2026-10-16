@@ -37,6 +37,11 @@ export interface SubscriptionOptions {
    * `messageRate`, 100 messages per 10s.
    */
   messageRate?: WsMessageRate | false;
+  /**
+   * Milliseconds after which every subscription socket is closed with 4408, so that clients
+   * reconnect and pass `onConnect` again. Default: no limit.
+   */
+  maxConnectionLifetime?: number;
 }
 
 export interface GraphQLModuleOptions {

@@ -18,6 +18,7 @@ import {
   LOGGER,
   ROUTE_META,
   WsRegistry,
+  type WsSocket,
 } from '@hpmws/http';
 import {
   type CompilerOptions,
@@ -72,7 +73,11 @@ import { PlaygroundGate } from './playground.js';
 import { eventIterator, PUBSUB } from './pubsub.js';
 import { IS_PUBLIC } from './resolvers.js';
 import { argNames, type FieldSpec, printSortedSchema, SchemaBuilder } from './schema.js';
-import { createSubscriptionEndpoint } from './subscriptions.js';
+import {
+  createSubscriptionEndpoint,
+  type GraphQLConnection,
+  type SubscriptionEndpoint,
+} from './subscriptions.js';
 import type { Class } from './type-refs.js';
 
 export interface DiscoveredResolver {
@@ -112,6 +117,50 @@ function resolveGuard(ref: GuardRef<any>, injector: ModuleInjector): Guard<any> 
   if (isClassWith(ref, 'canActivate')) return injector.resolveOrConstruct(ref as Type<Guard<any>>);
   if (typeof ref === 'function') return { canActivate: ref as (ctx: unknown) => boolean };
   return ref;
+}
+
+/** Stands in for an event whose rechecked guards denied; its resolver rethrows `error`. */
+class RevokedEvent {
+  constructor(readonly error: unknown) {}
+}
+
+/**
+ * Runs `check` before each event of `source`. When it throws, the next value is a RevokedEvent
+ * and the iterator then ends (and unsubscribes).
+ */
+function recheckEvents<T>(
+  source: AsyncIterableIterator<T>,
+  check: () => Promise<void>,
+): AsyncIterableIterator<T | RevokedEvent> {
+  let revoked = false;
+  return {
+    [Symbol.asyncIterator]() {
+      return this;
+    },
+    async next() {
+      if (revoked) {
+        await source.return?.();
+        return { value: undefined, done: true };
+      }
+      const result = await source.next();
+      if (result.done) return result;
+      try {
+        await check();
+      } catch (error) {
+        revoked = true;
+        return { value: new RevokedEvent(error), done: false };
+      }
+      return result;
+    },
+    async return() {
+      await source.return?.();
+      return { value: undefined, done: true };
+    },
+    async throw(error?: unknown) {
+      await source.return?.();
+      throw error;
+    },
+  };
 }
 
 /** The guard defaultDeny puts on a root field that has no guard of its own. */
@@ -329,6 +378,7 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
   #schema: GraphQLSchema | undefined;
   #executor: LeavenExecutor | undefined;
   #playground: PlaygroundGate | undefined;
+  #endpoint: SubscriptionEndpoint | undefined;
 
   get schema(): GraphQLSchema {
     if (!this.#schema)
@@ -350,6 +400,11 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
 
   get masking(): ErrorMaskingOptions {
     return { maskErrors: this.options.maskErrors, logger: this.logger };
+  }
+
+  /** The GraphQL connection of a subscription socket, or undefined for any other socket. */
+  connection(ws: WsSocket): GraphQLConnection | undefined {
+    return this.#endpoint?.connection(ws);
   }
 
   get subscriptionsEnabled(): boolean {
@@ -380,9 +435,11 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
     }
     const subscriptions = this.options.subscriptions;
     if (subscriptions !== false && this.#schema.getSubscriptionType()) {
-      this.#ws.register(this.options.path, createSubscriptionEndpoint(this, subscriptions), {
+      this.#endpoint = createSubscriptionEndpoint(this, subscriptions);
+      this.#ws.register(this.options.path, this.#endpoint, {
         allowedOrigins: subscriptions.allowedOrigins,
         messageRate: subscriptions.messageRate,
+        maxConnectionLifetime: subscriptions.maxConnectionLifetime,
       });
     }
   }
@@ -514,7 +571,7 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
       const topics = typeof sub.topic === 'function' ? sub.topic(ctx) : sub.topic;
       const filter = sub.filter;
       let warned = false;
-      return eventIterator(
+      const events = eventIterator(
         this.pubsub,
         typeof topics === 'string' ? [topics] : [...topics],
         filter
@@ -536,8 +593,13 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
           },
         },
       );
+      if (!sub.recheckGuards) return events;
+      return recheckEvents(events, () =>
+        runGuards(guards, createResolverCtx(op, injector, meta, ctx.args, parent, info)),
+      );
     });
     spec.resolve = marked(async (payload, args, op: OperationContext, info) => {
+      if (payload instanceof RevokedEvent) throw payload.error;
       op.resetForEvent();
       const value = sub.resolve ? await sub.resolve(payload) : payload;
       const result = await call(await prepare(value, args, op, info, false));

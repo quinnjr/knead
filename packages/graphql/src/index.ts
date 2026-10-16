@@ -46,6 +46,8 @@ export {
 } from './resolvers.js';
 export { GraphQLRuntime } from './runtime.js';
 export { printSortedSchema } from './schema.js';
+export type { GraphQLConnection } from './subscriptions.js';
+export { GraphQLSubscriptions } from './subscriptions-service.js';
 export {
   ArgsType,
   Field,

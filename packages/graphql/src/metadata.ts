@@ -64,6 +64,12 @@ export interface SubscriptionMethodOptions extends ResolverMethodOptions {
   topic: string | ((ctx: any) => string | readonly string[]);
   filter?: (event: { payload: any; args: any; ctx: any }) => boolean | Promise<boolean>;
   resolve?: (payload: any) => unknown;
+  /**
+   * Re-run the root guards (module, class and method guards) before every event. An event whose
+   * guards deny is delivered as a FORBIDDEN error (or the guard's own error) and ends the
+   * subscription. Default false: guards run once, when the operation subscribes.
+   */
+  recheckGuards?: boolean;
 }
 
 export interface ResolverMethodDefinition {
