@@ -818,6 +818,35 @@ describe('release.yml publish step', () => {
     });
   });
 
+  describe('normalisation by npm publish', () => {
+    test.each([
+      [{ repository: 'github:quinnjr/x' }],
+      [{ author: 'A <a@example.com>' }],
+      [{ keywords: 'a,b' }],
+    ])('rejects %j, which npm publish would rewrite', (manifest) => {
+      const r = publish('v1.2.3', [{ name: '@hpmws/core', version: '1.2.3', manifest }]);
+      expectRejected(r, 'npm reads a different package.json');
+    });
+
+    test('ignores the readme, bugs and homepage fields pacote derives', () => {
+      const r = publish('v1.2.3', [
+        {
+          name: '@hpmws/core',
+          version: '1.2.3',
+          manifest: {
+            repository: {
+              type: 'git',
+              url: 'git+https://github.com/quinnjr/high-performance-modular-web-server.git',
+              directory: 'packages/core',
+            },
+          },
+        },
+      ]);
+      expect(r.exitCode).toBe(0);
+      expect(r.publishes).toHaveLength(1);
+    });
+  });
+
   describe('manifest', () => {
     test.each([
       [
@@ -838,9 +867,9 @@ describe('release.yml publish step', () => {
       [{ scripts: { postpack: 'x' } }, 'lifecycle scripts'],
       // pacote normalises these, so the cross-check catches them before the jq checks.
       [{ scripts: 'x' }, 'npm reads a different package.json'],
-      [{ bundleDependencies: ['x'] }, 'bundled dependencies'],
+      [{ bundleDependencies: ['x'] }, 'npm reads a different package.json'],
       [{ bundledDependencies: true }, 'npm reads a different package.json'],
-      [{ name: 42 }, 'invalid package.json'],
+      [{ name: 42 }, 'pacote cannot read it'],
     ])('rejects %j', (manifest, message) => {
       const r = publish('v1.2.3', [
         { name: '@hpmws/core', version: '1.2.3', manifest: manifest as Record<string, unknown> },

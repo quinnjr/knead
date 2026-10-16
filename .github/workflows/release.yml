@@ -389,13 +389,19 @@ jobs:
             }
             const cache = fs.mkdtempSync(path.join(os.tmpdir(), 'pacote-'));
             const m = await npmModule('pacote')
-              .manifest(path.resolve(tgz), { cache })
+              // The options npm publish itself passes, so this is the manifest it would publish.
+              .manifest(path.resolve(tgz), { cache, fullMetadata: true, fullReadJson: true })
               .catch((e) => die(`pacote cannot read it: ${e.message}`));
-            // pacote adds these resolution fields; everything else must match byte for byte.
+            // pacote adds the resolution fields, and with fullReadJson derives readme,
+            // readmeFilename, bugs and homepage; everything else must match byte for byte.
             const { _id, _integrity, _resolved, _from, ...manifest } = m;
-            const json = JSON.stringify(manifest);
-            if (json !== gnuManifest) die('npm reads a different package.json than GNU tar');
-            fs.writeFileSync(path.join(work, `${tgz}.json`), json);
+            const { readme, readmeFilename, bugs, homepage, ...compared } = manifest;
+            const omit = ['readme', 'readmeFilename', 'bugs', 'homepage'];
+            const gnu = JSON.parse(gnuManifest);
+            for (const k of omit) delete gnu[k];
+            if (JSON.stringify(compared) !== JSON.stringify(gnu))
+              die('npm reads a different package.json than GNU tar');
+            fs.writeFileSync(path.join(work, `${tgz}.json`), JSON.stringify(manifest));
           }
           (async () => {
             for (const file of tarballs) await verify(file);
