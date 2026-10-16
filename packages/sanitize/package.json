@@ -3,6 +3,11 @@
   "version": "0.0.0",
   "description": "Opt-in allowlist HTML sanitization as a Standard Schema wrapper",
   "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/quinnjr/high-performance-modular-web-server.git",
+    "directory": "packages/sanitize"
+  },
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
