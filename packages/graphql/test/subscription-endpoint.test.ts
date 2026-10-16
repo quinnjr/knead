@@ -138,6 +138,16 @@ describe('createSubscriptionEndpoint defences (Leaven stubbed)', () => {
     expect(ok.closes).toEqual([]);
   });
 
+  test('more than 100 deferred revocations before init fail closed with 1008', () => {
+    const t = setup();
+    for (let i = 0; i < 100; i++) {
+      expect(t.endpoint.deferRevocation(t.ws, () => false, 1008, 'x')).toBe(true);
+    }
+    expect(t.closes).toEqual([]);
+    t.endpoint.deferRevocation(t.ws, () => false, 1008, 'x');
+    expect(t.closes).toEqual([1008]);
+  });
+
   test('a subscribe that resolves after the socket closed is returned at once', async () => {
     const t = setup();
     const pending = t.subscribe('1');

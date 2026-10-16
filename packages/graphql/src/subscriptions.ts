@@ -14,6 +14,9 @@ import type { GraphQLRuntime } from './runtime.js';
 
 export const GRAPHQL_TRANSPORT_WS = 'graphql-transport-ws';
 
+/** closeWhere predicates kept per socket until its init completes; more fail closed. */
+const MAX_DEFERRED_REVOCATIONS = 100;
+
 /** Accepted subscribe/complete message ids. */
 const MESSAGE_ID = /^[A-Za-z0-9_.:-]{1,64}$/;
 
@@ -364,6 +367,11 @@ export function createSubscriptionEndpoint(
       }
       const state = states.get(facade);
       if (!state || state.initDone || state.closed) return false;
+      if (state.deferred.length >= MAX_DEFERRED_REVOCATIONS) {
+        // Too many to keep: fail closed rather than let one escape.
+        ws.close(1008, 'Revocation state unavailable');
+        return true;
+      }
       state.deferred.push({ predicate, code, reason });
       return true;
     },
@@ -386,6 +394,12 @@ export function createSubscriptionEndpoint(
         send: (message) => ws.send(message),
         close: (code, reason) => ws.close(code, reason),
       };
+      const deferred = early.get(ws.data) ?? [];
+      early.delete(ws.data);
+      if (deferred.length > MAX_DEFERRED_REVOCATIONS) {
+        ws.close(1008, 'Revocation state unavailable');
+        return;
+      }
       facades.set(ws, facade);
       states.set(facade, {
         http,
@@ -396,9 +410,8 @@ export function createSubscriptionEndpoint(
         pending: new Set(),
         iterators: new Map(),
         initDone: false,
-        deferred: early.get(ws.data) ?? [],
+        deferred,
       });
-      early.delete(ws.data);
       handler.handleOpen(asLeavenSocket(facade));
     },
     async message(ws, message) {
