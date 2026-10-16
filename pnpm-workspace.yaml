@@ -7,13 +7,14 @@ packages:
 # written down so it cannot silently change).
 minimumReleaseAge: 1440
 # Exact versions exempt from the age gate (first-party Leaven releases);
-# remove each once it is older than minimumReleaseAge.
+# remove each once it is older than minimumReleaseAge. Publish times from the
+# npm registry; each line says when it may be removed (UTC).
 minimumReleaseAgeExclude:
-  - '@leaven-graphql/context@0.2.1'
-  - '@leaven-graphql/core@0.2.2'
-  - '@leaven-graphql/errors@0.2.1'
-  - '@leaven-graphql/playground@0.2.2'
-  - '@leaven-graphql/ws@0.2.2'
+  - '@leaven-graphql/context@0.2.1' # published 2026-10-16T01:18Z, remove after 2026-10-17T01:19Z
+  - '@leaven-graphql/core@0.2.2' # published 2026-10-16T17:36Z, remove after 2026-10-17T17:37Z
+  - '@leaven-graphql/errors@0.2.1' # published 2026-10-16T01:18Z, remove after 2026-10-17T01:19Z
+  - '@leaven-graphql/playground@0.2.2' # published 2026-10-16T17:36Z, remove after 2026-10-17T17:37Z
+  - '@leaven-graphql/ws@0.2.2' # published 2026-10-16T17:36Z, remove after 2026-10-17T17:37Z
 # Refuse a version whose publish trust evidence (provenance / trusted
 # publisher) is weaker than an earlier version of the same package.
 trustPolicy: no-downgrade
