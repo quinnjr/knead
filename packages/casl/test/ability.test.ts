@@ -17,6 +17,10 @@ const p = definePermissions({
     levels: ['none', 'read'],
     rules: { read: [{ action: 'read', subject: 'User', fields: ['billingAddress'] }] },
   },
+  users: {
+    levels: ['none', 'read'],
+    rules: { read: [{ action: 'read', subject: 'User', fields: ['email', 'name'] }] },
+  },
 });
 
 const effective = (user: Rule[], grant: Record<string, string>) =>
@@ -83,4 +87,36 @@ test('asSubject does not mutate', () => {
   const r = Object.freeze({ authorId: 'u1' });
   expect(asSubject('Post', r)).toBe(r);
   expect(Reflect.ownKeys(r)).toEqual(['authorId']);
+});
+
+test('preserves user rule order', () => {
+  const a = effective(
+    [
+      { action: 'read', subject: 'Post', inverted: true },
+      { action: 'read', subject: 'Post', conditions: { public: true } },
+    ],
+    { posts: 'write' },
+  );
+  expect(a.can('read', asSubject('Post', { public: true }))).toBe(true);
+  expect(a.can('read', asSubject('Post', { public: false }))).toBe(false);
+});
+
+test('partial action overlap', () => {
+  const user: Rule[] = [{ action: ['read', 'update'], subject: 'Post' }];
+  const write = effective(user, { posts: 'write' });
+  expect(write.can('update', 'Post')).toBe(true);
+  expect(write.can('delete', 'Post')).toBe(false);
+  const read = effective(user, { posts: 'read' });
+  expect(read.can('read', 'Post')).toBe(true);
+  expect(read.can('update', 'Post')).toBe(false);
+});
+
+test('conditions and fields are both enforced', () => {
+  const a = effective(
+    [{ action: 'read', subject: 'User', fields: ['email'], conditions: { id: 'u1' } }],
+    { users: 'read' },
+  );
+  expect(a.can('read', asSubject('User', { id: 'u1' }), 'email')).toBe(true);
+  expect(a.can('read', asSubject('User', { id: 'u1' }), 'name')).toBe(false);
+  expect(a.can('read', asSubject('User', { id: 'u2' }), 'email')).toBe(false);
 });

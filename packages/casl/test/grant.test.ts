@@ -69,7 +69,7 @@ describe('parseGrant', () => {
   });
 
   test('linear on adversarial input', () => {
-    for (const input of [' '.repeat(4000) + 'x', 'a:'.repeat(2000)]) {
+    for (const input of [`${' '.repeat(4000)}x`, 'a:'.repeat(2000)]) {
       const start = performance.now();
       parseGrant(input, p);
       expect(performance.now() - start).toBeLessThan(50);

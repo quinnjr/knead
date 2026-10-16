@@ -14,7 +14,10 @@ type Rule = RawRuleOf<MongoAbility>;
 
 const subjectTypes = new WeakMap<object, string>();
 
-/** Records that `record` is of CASL subject type `type` without mutating it; returns record. */
+/**
+ * Records that `record` is of CASL subject type `type` without mutating it; returns record.
+ * Tagging the same object again replaces its previous type.
+ */
 export function asSubject<T extends object>(type: string, record: T): T {
   subjectTypes.set(record, type);
   return record;
@@ -53,11 +56,23 @@ function intersectFields(
   return list(g).filter((f) => matches(f));
 }
 
-/** Rules allowed by both sides. `userRules` may have conditions/fields/inverted; grant rules are catalog rules. */
+/**
+ * Rules allowed by both sides. `userRules` may have conditions/fields/inverted; grant rules are
+ * catalog rules.
+ *
+ * User rules are walked once, in order: each positive rule is replaced, at its own position, by
+ * its intersections with every grant rule (in grant order), and each inverted rule is kept
+ * unchanged at its original position. CASL lets later rules win, so preserving order keeps the
+ * user's own priority intact. This never widens: every emitted positive rule is a subset of the
+ * user rule it replaces (and of a grant rule), and every `cannot` stays where it was.
+ */
 export function intersectRules(userRules: Rule[], grantRules: Rule[]): Rule[] {
   const out: Rule[] = [];
   for (const u of userRules) {
-    if (u.inverted) continue;
+    if (u.inverted) {
+      out.push(u);
+      continue;
+    }
     for (const g of grantRules) {
       const action = intersectNames(u.action, g.action, 'manage');
       const subject = intersectNames(u.subject ?? 'all', g.subject ?? 'all', 'all');
@@ -72,7 +87,6 @@ export function intersectRules(userRules: Rule[], grantRules: Rule[]): Rule[] {
       } as Rule);
     }
   }
-  for (const u of userRules) if (u.inverted) out.push(u);
   return out;
 }
 
