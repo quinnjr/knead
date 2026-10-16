@@ -1,6 +1,6 @@
 # hpmws REST API example
 
-A small users API showing CORS, rate limiting, security headers, guards and schema validation working together. Private; not published.
+A small users API showing CORS, rate limiting, security headers, guards, schema validation and GraphQL working together. Private; not published.
 
 ## Run
 
@@ -13,6 +13,12 @@ Demo bearer tokens (hard-coded, demo only): `admin-token` and `user-token`. Crea
 
 ```bash
 curl -X POST localhost:3000/users -H 'authorization: Bearer admin-token' -H 'content-type: application/json' -d '{"name":"Ada"}'
+```
+
+The same users are available over GraphQL at `/graphql`. `createUser` requires the admin token:
+
+```bash
+curl -X POST localhost:3000/graphql -H 'content-type: application/json' -d '{"query":"{ users { id name } }"}'
 ```
 
 ## Test
