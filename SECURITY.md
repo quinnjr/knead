@@ -2,13 +2,22 @@
 
 ## Reporting a vulnerability
 
-Please report vulnerabilities privately through GitHub Security Advisories:
-open the repository's **Security** tab and choose **Report a vulnerability**
+Do not put vulnerability details in a public issue, pull request or
+discussion.
+
+**Once this repository is public**, report vulnerabilities privately through
+GitHub private vulnerability reporting: open the repository's **Security** tab
+and choose **Report a vulnerability**
 (<https://github.com/quinnjr/high-performance-modular-web-server/security/advisories/new>).
 
-Do not open a public issue, pull request or discussion for a suspected
-vulnerability. Include the affected package(s) and version(s), a description of
-the impact, and steps or a proof of concept to reproduce it.
+**While the repository is private**, GitHub private vulnerability reporting is
+not available. Instead, open a minimal public issue titled "Security contact
+request" that asks for a private way to send a report, and include **no**
+details about the vulnerability, the affected code or how to trigger it. The
+maintainer will reply with a private channel.
+
+In the private report, include the affected package(s) and version(s), a
+description of the impact, and steps or a proof of concept to reproduce it.
 
 ## Supported versions
 
