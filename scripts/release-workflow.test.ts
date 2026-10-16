@@ -681,6 +681,37 @@ describe('release.yml publish step', () => {
     });
   });
 
+  describe('dependency allowlist', () => {
+    test('accepts the dependencies a package is allowed', () => {
+      const r = publish('v1.2.3', [
+        {
+          name: '@hpmws/graphql',
+          version: '1.2.3',
+          manifest: {
+            dependencies: { dataloader: '2.2.3', '@leaven-graphql/core': '0.2.2' },
+            peerDependencies: { graphql: '^16', '@hpmws/core': '1.2.3', '@hpmws/http': '1.2.3' },
+          },
+        },
+      ]);
+      expect(r.exitCode).toBe(0);
+      expect(r.publishes).toHaveLength(1);
+    });
+
+    test.each([
+      ['dependencies', { 'left-pad': '1.0.0' }, 'left-pad'],
+      ['optionalDependencies', { 'left-pad': '1.0.0' }, 'left-pad'],
+      ['peerDependencies', { 'left-pad': '1.0.0' }, 'left-pad'],
+      // Allowed for @hpmws/graphql, not for @hpmws/core.
+      ['dependencies', { dataloader: '2.2.3' }, 'dataloader'],
+      ['peerDependencies', { graphql: '^16' }, 'graphql'],
+    ])('rejects %s %j on @hpmws/core', (field, deps, dep) => {
+      const r = publish('v1.2.3', [
+        { name: '@hpmws/core', version: '1.2.3', manifest: { [field]: deps } },
+      ]);
+      expectRejected(r, `@hpmws/core: dependency ${dep} is not allowed`);
+    });
+  });
+
   describe('manifest', () => {
     test.each([
       [

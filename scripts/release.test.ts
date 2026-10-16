@@ -196,3 +196,32 @@ describe('release.yml publish allowlist', () => {
     expect(allowed).toHaveLength(8);
   });
 });
+
+describe('release.yml dependency allowlist', () => {
+  test("lists exactly each publishable package's dependencies, optional and peer dependencies", () => {
+    const root = join(import.meta.dir, '..');
+    const workflow = Bun.YAML.parse(
+      readFileSync(join(root, '.github/workflows/release.yml'), 'utf8'),
+    ) as { jobs: { publish: { steps: { name?: string; env?: Record<string, string> }[] } } };
+    const step = workflow.jobs.publish.steps.find((s) => s.name === 'Publish tarballs');
+    const allowed = Object.fromEntries(
+      String(step?.env?.ALLOWED_DEPENDENCIES ?? '')
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => {
+          const [name, deps = ''] = line.split(':');
+          return [name.trim(), deps.split(/\s+/).filter(Boolean).sort()];
+        }),
+    );
+    const actual = Object.fromEntries(
+      publishablePackages(root).map((p) => {
+        const manifest = JSON.parse(readFileSync(join(p.dir, 'package.json'), 'utf8'));
+        const deps = new Set<string>();
+        for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies'])
+          for (const dep of Object.keys(manifest[field] ?? {})) deps.add(dep);
+        return [p.name, [...deps].sort()];
+      }),
+    );
+    expect(allowed).toEqual(actual);
+  });
+});

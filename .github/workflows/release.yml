@@ -186,6 +186,17 @@ jobs:
             @hpmws/sanitize
             @hpmws/security-headers
             @hpmws/testing
+          # Per package, the only names allowed in dependencies, optionalDependencies and
+          # peerDependencies (scripts/release.test.ts keeps this equal to the workspace manifests).
+          ALLOWED_DEPENDENCIES: |
+            @hpmws/core:
+            @hpmws/cors: @hpmws/core @hpmws/http
+            @hpmws/graphql: @hpmws/core @hpmws/http @leaven-graphql/core @leaven-graphql/errors @leaven-graphql/playground @leaven-graphql/ws @standard-schema/spec dataloader graphql
+            @hpmws/http: @hpmws/core @standard-schema/spec
+            @hpmws/rate-limit: @hpmws/core @hpmws/http
+            @hpmws/sanitize: @standard-schema/spec sanitize-html
+            @hpmws/security-headers: @hpmws/core @hpmws/http
+            @hpmws/testing: @hpmws/core @hpmws/http
         run: |
           set -euo pipefail
           registry=https://registry.npmjs.org/
@@ -409,6 +420,16 @@ jobs:
             if jq -e 'has("bundleDependencies") or has("bundledDependencies")' >/dev/null <<<"$manifest"; then
               fail "$name: package.json has bundled dependencies"
             fi
+            bad_dep="$(jq -r --arg allow "$ALLOWED_DEPENDENCIES" '
+              .name as $name
+              | ($allow | split("\n") | map(select(startswith($name + ":")))) as $lines
+              | (if ($lines | length) == 1
+                 then $lines[0] | ltrimstr($name + ":") | split(" ") | map(select(length > 0))
+                 else [] end) as $ok
+              | [.dependencies, .optionalDependencies, .peerDependencies
+                 | if . == null then empty elif type == "object" then keys[] else "<not an object>" end]
+              | map(select(. as $d | $ok | index([$d]) | not)) | first // empty' <<<"$manifest")"
+            [ -z "$bad_dep" ] || fail "$name: dependency $bad_dep is not allowed (see ALLOWED_DEPENDENCIES)"
           done
 
           # Every allowed package exactly once: a partial set would leave a half-published release.
