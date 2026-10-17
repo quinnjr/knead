@@ -300,6 +300,30 @@ describe('PrismaHttpModule.forRoot map hardening', () => {
   });
 });
 
+describe('PrismaHttpModule.forRoot map snapshot', () => {
+  test('a getter that changes after the first read never yields a non-function', () => {
+    let reads = 0;
+    const map = {
+      get P2002() {
+        reads += 1;
+        return reads === 1 ? () => new BadRequestException() : 'nope';
+      },
+    };
+    let stored: Record<string, unknown> | undefined;
+    try {
+      const mod = PrismaHttpModule.forRoot({ map: map as never });
+      const provider = mod.providers?.find(
+        (p) => typeof p === 'object' && 'useValue' in p && p.multi !== true,
+      ) as { useValue: { map: Record<string, unknown> } };
+      stored = provider.useValue.map;
+    } catch (error) {
+      expect(error).toBeInstanceOf(KneadError);
+    }
+    if (stored) expect(typeof stored.P2002).toBe('function');
+    expect(reads).toBe(1);
+  });
+});
+
 describe('toHttpException', () => {
   test('ignores inherited map keys', () => {
     // `constructor` is inherited from Object.prototype; it must not be called as a mapper.

@@ -9,32 +9,34 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return proto === Object.prototype || proto === null;
 }
 
-/** Throws a KneadError unless `options.map` is undefined or a plain object of functions. */
-function assertHttpOptions(options: unknown): asserts options is PrismaHttpOptions {
+/**
+ * Validates `options` and returns a snapshot of them. `map` is copied first (each own key read
+ * exactly once, so a getter cannot change its answer) and the copy is what gets validated, frozen
+ * and stored.
+ */
+function snapshotHttpOptions(options: unknown): PrismaHttpOptions {
   if (typeof options !== 'object' || options === null) {
     throw new KneadError('PrismaHttpModule options must be an object.');
   }
   const { map } = options as { map?: unknown };
-  if (map === undefined) return;
+  if (map === undefined) return options as PrismaHttpOptions;
   if (!isPlainObject(map)) {
     throw new KneadError('PrismaHttpModule `map` must be a plain object of mapper functions.');
   }
-  for (const key of Reflect.ownKeys(map)) {
-    if (typeof map[key as string] !== 'function') {
+  const copy: Record<PropertyKey, unknown> = Object.create(null);
+  for (const key of Reflect.ownKeys(map)) copy[key] = map[key as string];
+  for (const key of Reflect.ownKeys(copy)) {
+    if (typeof copy[key] !== 'function') {
       throw new KneadError(`PrismaHttpModule \`map.${String(key)}\` must be a function.`);
     }
   }
+  return { ...(options as PrismaHttpOptions), map: Object.freeze(copy) as never };
 }
 
 @Module({})
 export class PrismaHttpModule {
   static forRoot(options: PrismaHttpOptions = {}): DynamicModule {
-    assertHttpOptions(options);
-    // A frozen null-prototype copy, so later mutation of the caller's map skips no validation.
-    const stored: PrismaHttpOptions =
-      options.map === undefined
-        ? options
-        : { ...options, map: Object.freeze(Object.assign(Object.create(null), options.map)) };
+    const stored = snapshotHttpOptions(options);
     return {
       module: PrismaHttpModule,
       providers: [
