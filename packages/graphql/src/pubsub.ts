@@ -1,6 +1,6 @@
 import { InjectionToken } from '@knead-js/core';
 import { type Logger, redactCredentials, redactValue, summarizeError } from '@knead-js/http';
-import type { PubSubEngine } from '@leaven-graphql/ws';
+import { PubSub as LeavenPubSub, type PubSubEngine } from '@leaven-graphql/ws';
 
 /** The PubSubEngine used by @Subscription resolvers: `inject(PUBSUB).publish(topic, payload)`. */
 export const PUBSUB = new InjectionToken<PubSubEngine>('PUBSUB');
@@ -63,6 +63,17 @@ export function deepFreeze<T>(value: T): T {
 }
 
 /**
+ * Leaven's in-memory PubSub, with every published payload deep-frozen (deepFreeze) before it is
+ * delivered, whether or not anything is subscribed: what a publisher may still change after
+ * `publish()` does not depend on who happens to be listening. The default `PUBSUB` engine.
+ */
+export class PubSub extends LeavenPubSub {
+  override publish<T = unknown>(topic: string, payload: T): void {
+    super.publish(topic, deepFreeze(payload));
+  }
+}
+
+/**
  * An async iterator over `topics` on any PubSubEngine. Payloads' plain objects and arrays are
  * deep-frozen when they arrive (deepFreeze), so they are immutable for resolvers. `filter` runs per event; `return()`
  * unsubscribes from every topic.
@@ -99,7 +110,14 @@ export function eventIterator<T>(
     for (const waiter of waiting.splice(0)) waiter.reject(failure);
   };
   const subscribe = engine.subscribe.bind(engine) as SubscribeWithError;
-  const unsubscribes = topics.map((topic) => subscribe(topic, push, fail));
+  const unsubscribes: (() => void)[] = [];
+  try {
+    for (const topic of topics) unsubscribes.push(subscribe(topic, push, fail));
+  } catch (error) {
+    // A topic the engine refused (a subscriber cap, a closed engine) must not leak the others.
+    for (const unsubscribe of unsubscribes) unsubscribe();
+    throw error;
+  }
   const finish = () => {
     if (done) return;
     done = true;

@@ -141,6 +141,9 @@ describe('options validated at bootstrap', () => {
       expect(() =>
         GraphQLModule.forRoot({ subscriptions: { maxSubscriptionsPerConnection: value } }),
       ).toThrow(HttpConfigError);
+      expect(() =>
+        GraphQLModule.forRoot({ subscriptions: { maxConnectionLifetime: value } }),
+      ).toThrow(HttpConfigError);
       if (value !== 0) {
         expect(() =>
           GraphQLModule.forRoot({ subscriptions: { keepAliveInterval: value } }),
@@ -164,6 +167,12 @@ describe('options validated at bootstrap', () => {
     expect(() => GraphQLModule.forRoot({ subscriptions: { keepAliveInterval: 2 ** 31 } })).toThrow(
       HttpConfigError,
     );
+    expect(() =>
+      GraphQLModule.forRoot({ subscriptions: { maxConnectionLifetime: 2 ** 31 } }),
+    ).toThrow(HttpConfigError);
+    expect(() =>
+      GraphQLModule.forRoot({ subscriptions: { maxConnectionLifetime: 2 ** 31 - 1 } }),
+    ).not.toThrow();
   });
 });
 
