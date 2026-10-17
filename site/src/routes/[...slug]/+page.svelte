@@ -1,6 +1,11 @@
 <script lang="ts">
 import { faPenToSquare } from '@fortawesome/free-regular-svg-icons';
-import { faArrowLeft, faArrowRight, faCube } from '@fortawesome/free-solid-svg-icons';
+import {
+  faArrowLeft,
+  faArrowRight,
+  faChevronDown,
+  faCube,
+} from '@fortawesome/free-solid-svg-icons';
 import Icon from '#lib/components/Icon.svelte';
 import { docHref } from '#lib/links.js';
 import { NAV } from '#lib/nav.js';
@@ -61,8 +66,11 @@ $effect(() => {
 });
 
 let navigations = $state(0);
+// The inline contents list (narrow screens) starts closed on every page.
+let tocOpen = $state(false);
 afterNavigate(() => {
   navigations++;
+  tocOpen = false;
 });
 
 // Copy buttons on code blocks (rendered at build time; one delegated listener here).
@@ -124,6 +132,22 @@ function copyCode(node: HTMLElement) {
           </a>
         </div>
       </header>
+      {#if data.toc.length > 1}
+        <details class="toc-inline" bind:open={tocOpen}>
+          <summary>
+            <span>On this page</span>
+            <span class="count">{data.toc.length} sections</span>
+            <span class="chevron"><Icon icon={faChevronDown} size="0.7rem" /></span>
+          </summary>
+          <ul>
+            {#each data.toc as entry (entry.id)}
+              <li class:sub={entry.depth === 3}>
+                <a href="#{entry.id}" onclick={() => (tocOpen = false)}>{entry.text}</a>
+              </li>
+            {/each}
+          </ul>
+        </details>
+      {/if}
       <div class="prose" use:copyCode>
         <!-- Rendered at build time from this repository's markdown; never user input. -->
         {@html data.html}
@@ -249,6 +273,12 @@ function copyCode(node: HTMLElement) {
     border-color: var(--border-strong);
     color: var(--fg);
     transform: translateY(-1px);
+  }
+
+  @media (hover: none) and (pointer: coarse) {
+    .chip {
+      min-height: 2.75rem;
+    }
   }
 
   .chip.ghost {
@@ -379,6 +409,10 @@ function copyCode(node: HTMLElement) {
     transform: none;
   }
 
+  .toc-inline {
+    display: none;
+  }
+
   @media (max-width: 1240px) {
     .page {
       grid-template-columns: minmax(0, 1fr);
@@ -386,6 +420,85 @@ function copyCode(node: HTMLElement) {
 
     .toc {
       display: none;
+    }
+
+    .toc-inline {
+      display: block;
+      margin: -0.75rem 0 2rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--bg-raised);
+      font-size: 0.9rem;
+    }
+
+    .toc-inline summary {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      min-height: 2.75rem;
+      padding: 0 1rem;
+      color: var(--fg);
+      font-weight: 560;
+      list-style: none;
+      cursor: pointer;
+    }
+
+    .toc-inline summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .count {
+      color: var(--fg-muted);
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      font-weight: 400;
+    }
+
+    .chevron {
+      display: inline-flex;
+      margin-left: auto;
+      color: var(--fg-muted);
+      transition: transform 0.3s var(--ease-out);
+    }
+
+    .toc-inline[open] .chevron {
+      transform: rotate(180deg);
+    }
+
+    .toc-inline ul {
+      margin: 0;
+      padding: 0.4rem 0.5rem 0.6rem;
+      border-top: 1px solid var(--border);
+      list-style: none;
+      animation: toc-open 0.3s var(--ease-out);
+    }
+
+    .toc-inline a {
+      display: flex;
+      align-items: center;
+      min-height: 2.5rem;
+      padding: 0 0.6rem;
+      border-radius: var(--radius-s);
+      color: var(--fg-soft);
+      line-height: 1.35;
+      text-decoration: none;
+    }
+
+    .toc-inline li.sub a {
+      padding-left: 1.6rem;
+      color: var(--fg-muted);
+    }
+
+    .toc-inline a:hover {
+      background: var(--bg-sunken);
+      color: var(--fg);
+    }
+  }
+
+  @keyframes toc-open {
+    from {
+      opacity: 0;
+      transform: translateY(-4px);
     }
   }
 

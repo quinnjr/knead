@@ -100,6 +100,10 @@ function openSearch() {
     box-shadow: var(--shadow-lift);
   }
 
+  .button:active {
+    transform: translateY(0) scale(0.98);
+  }
+
   .button.primary {
     border-color: var(--accent);
     background: var(--accent);

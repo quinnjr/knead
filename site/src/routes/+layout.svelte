@@ -13,6 +13,8 @@ import type { LayoutProps } from './$types';
 
 let { data, children }: LayoutProps = $props();
 let menuOpen = $state(false);
+let sidebar = $state<HTMLElement>();
+let menuButton = $state<HTMLButtonElement>();
 
 const home = resolve('/');
 const current = $derived(page.url.pathname);
@@ -28,8 +30,16 @@ $effect(() => {
 
 $effect(() => {
   if (!menuOpen) return;
+  // The drawer is modal below 960px: focus its current page link (or its first link).
+  const link =
+    sidebar?.querySelector<HTMLAnchorElement>('a[aria-current="page"]') ??
+    sidebar?.querySelector<HTMLAnchorElement>('a');
+  link?.focus({ preventScroll: true });
   const onKey = (event: KeyboardEvent) => {
-    if (event.key === 'Escape') menuOpen = false;
+    if (event.key === 'Escape') {
+      menuOpen = false;
+      menuButton?.focus();
+    }
   };
   window.addEventListener('keydown', onKey);
   return () => window.removeEventListener('keydown', onKey);
@@ -44,6 +54,7 @@ $effect(() => {
       <button
         class="icon-button menu-button"
         type="button"
+        bind:this={menuButton}
         aria-label={menuOpen ? 'Close navigation' : 'Open navigation'}
         aria-expanded={menuOpen}
         aria-controls="sidebar"
@@ -79,7 +90,13 @@ $effect(() => {
   <main id="main">{@render children()}</main>
 {:else}
   <div class="shell">
-    <nav id="sidebar" class="sidebar" class:open={menuOpen} aria-label="Documentation">
+    <nav
+      id="sidebar"
+      class="sidebar"
+      class:open={menuOpen}
+      aria-label="Documentation"
+      bind:this={sidebar}
+    >
       {#each data.nav as section (section.title)}
         <div class="nav-section">
           <p class="nav-title">{section.title}</p>
@@ -109,7 +126,7 @@ $effect(() => {
         onclick={() => (menuOpen = false)}
       ></button>
     {/if}
-    <main id="main" class="main">
+    <main id="main" class="main" inert={menuOpen}>
       {@render children()}
     </main>
   </div>
