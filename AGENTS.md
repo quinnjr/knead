@@ -26,6 +26,7 @@ injection, and is secure by default.
 | `packages/casl` | `@knead-js/casl` | [CASL](https://casl.js.org) authorization: permission catalog, token grants, REST and GraphQL guards |
 | `packages/testing` | `@knead-js/testing` | Test modules, overrides, real ephemeral servers |
 | `examples/rest-api`, `examples/graphql-server` | private | Reference apps; `graphql-server` has an end-to-end `smoke` script |
+| `site/` | private (`@knead-js/docs`) | The documentation site (SvelteKit, deployed to GitHub Pages by `docs.yml`) |
 | `scripts/` | | Release gate/pack (`release.ts`), `check-pack.ts`, `trust-npm-publishers.sh` |
 
 ## Toolchain
@@ -77,6 +78,14 @@ the user's consent. Agents should either ask the user to run it, or, on a freshl
 container only, run `prisma generate` and a plain `prisma db push` with the fixture config
 (`--config test/fixtures/prisma.config.ts`), then `bun test`. Agents must never set
 `PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION` themselves.
+
+The documentation site lives in `site/`: pages in `site/content/**.md`, code examples in
+`site/snippets/**.ts`. Pages never contain inline TypeScript; they include snippet files
+(`<<< area/file.ts#region`), which `pnpm typecheck` compiles against the packages, and the
+behaviour they show is pinned by `site/test/*.test.ts`. A change to a package's public API or
+documented behaviour updates its pages in the same pull request (a test fails when an export is
+missing from its `site/content/packages/<name>.md`). Preview with `pnpm --filter @knead-js/docs dev`;
+`pnpm --filter @knead-js/docs build` fails on any broken internal link or `#fragment`.
 
 **Definition of done:** `pnpm lint && pnpm typecheck && pnpm test && pnpm clean && pnpm build &&
 pnpm check:pack`, plus the smoke script, plus the Redis runs above when relevant, all green.

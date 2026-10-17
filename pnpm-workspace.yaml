@@ -1,6 +1,7 @@
 packages:
   - packages/*
   - examples/*
+  - site
 
 # Supply-chain policy, set explicitly rather than relying on pnpm defaults.
 # Only install versions published at least one day ago (pnpm 12's default,
@@ -15,6 +16,12 @@ minimumReleaseAgeExclude:
   - '@leaven-graphql/errors@0.2.1' # published 2026-10-16T01:18Z, remove after 2026-10-17T01:19Z
   - '@leaven-graphql/playground@0.2.2' # published 2026-10-16T17:36Z, remove after 2026-10-17T17:37Z
   - '@leaven-graphql/ws@0.2.3' # published 2026-10-16T19:39Z, remove after 2026-10-17T19:40Z
+# Security fixes for Prisma 7.9.1's pinned transitive dependencies. prisma@7.10.x ships these
+# versions but was published without provenance (refused by trustPolicy below), so keep 7.9.1
+# and lift only these two. Remove both once a provenance-attested prisma release includes them.
+overrides:
+  'prisma>mysql2': 3.24.4 # GHSA-3f6p-5ww8-9rcr (high) and the zlib inflate DoS (moderate)
+  '@prisma/config>deepmerge-ts': 8.0.2 # stack exhaustion on recursive objects (high)
 # Refuse a version whose publish trust evidence (provenance / trusted
 # publisher) is weaker than an earlier version of the same package.
 trustPolicy: no-downgrade

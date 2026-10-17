@@ -8,7 +8,7 @@
   },
   "scripts": {
     "build": "tsc -b tsconfig.json",
-    "typecheck": "tsc -p tsconfig.check.json",
+    "typecheck": "tsc -p tsconfig.check.json && tsc -p site/tsconfig.snippets.json",
     "test": "pnpm -r test && bun test scripts",
     "lint": "biome check .",
     "format": "biome check --write .",
