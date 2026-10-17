@@ -23,10 +23,13 @@ export class SchedulerRegistry implements OnApplicationBootstrap, BeforeApplicat
   /** Module graphs that already have a registry: a second one would run every job twice. */
   static readonly #claimed = new WeakSet<object>();
   readonly #modules = inject(MODULES);
-  readonly #scheduler = new Scheduler(
-    resolveScheduleOptions(inject(SCHEDULE_OPTIONS), inject(LOGGER)),
-    inject(SCHEDULE_CLOCK),
-  );
+  readonly #options = resolveScheduleOptions(inject(SCHEDULE_OPTIONS), inject(LOGGER));
+  readonly #scheduler = new Scheduler(this.#options, inject(SCHEDULE_CLOCK));
+
+  constructor() {
+    // A store built outside DI (RedisLockStore) logs through the scheduler's logger from now on.
+    this.#options.lockStore?.setLogger?.(this.#options.logger);
+  }
 
   onApplicationBootstrap(): void {
     if (SchedulerRegistry.#claimed.has(this.#modules)) {

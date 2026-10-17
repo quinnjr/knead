@@ -33,12 +33,13 @@ export class ContainerState {
   readonly overrides: ReadonlyMap<Token, NormalizedProvider>;
   globals: readonly ModuleInjector[] = [];
   /**
-   * True while the application starts (ApplicationContext.create clears it) and inside
-   * ApplicationContext.trackConstructed (listen()). Otherwise a transient is tracked only when it
-   * is a dependency of a singleton being constructed (once per singleton), so transients resolved
-   * at runtime are neither kept nor given hooks.
+   * Open tracking scopes: bootstrap (until endBootstrap()) and trackAll() calls. Inside one every
+   * transient is tracked; otherwise only one constructed for a singleton (#singletonsBuilding),
+   * so transients resolved at runtime are neither kept nor given hooks.
    */
-  bootstrapping = true;
+  #scopes = 1;
+  /** Singletons on the stack: a transient built under one is created once per singleton. */
+  #singletonsBuilding = 0;
   readonly #tracked = new Set<unknown>();
 
   constructor(overrides: Iterable<readonly [Token, Provider]> = []) {
@@ -66,6 +67,8 @@ export class ContainerState {
       throw new CircularDependencyError(path);
     }
     this.stack.push(record);
+    const singleton = p.scope === 'singleton' && p.kind !== 'existing';
+    if (singleton) this.#singletonsBuilding++;
     try {
       const value = record.owner.instantiate(record);
       if (p.kind !== 'existing' && (p.scope !== 'transient' || this.#tracksTransient())) {
@@ -76,7 +79,23 @@ export class ContainerState {
       record.state = 'ready';
       return value;
     } finally {
+      if (singleton) this.#singletonsBuilding--;
       this.stack.pop();
+    }
+  }
+
+  /** Closes the bootstrap tracking scope (ApplicationContext.create, once started). */
+  endBootstrap(): void {
+    this.#scopes--;
+  }
+
+  /** Runs `fn` with every instance it constructs tracked, transients included. */
+  trackAll<T>(fn: () => T): T {
+    this.#scopes++;
+    try {
+      return fn();
+    } finally {
+      this.#scopes--;
     }
   }
 
@@ -124,14 +143,11 @@ export class ContainerState {
   }
 
   /**
-   * Whether a transient being constructed now is a startup instance: during bootstrap, or as a
-   * dependency of a singleton under construction (created at most once per singleton).
+   * Whether a transient being constructed now is a startup instance: inside a tracking scope, or
+   * as a dependency of a singleton under construction (created at most once per singleton).
    */
   #tracksTransient(): boolean {
-    if (this.bootstrapping) return true;
-    return this.stack.some(
-      (r) => r.provider.scope === 'singleton' && r.provider.kind !== 'existing',
-    );
+    return this.#scopes > 0 || this.#singletonsBuilding > 0;
   }
 
   #track(value: unknown): void {

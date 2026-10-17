@@ -30,6 +30,36 @@ describe('serializeCsp', () => {
       serializeCsp({ 'script-src': ["'self'"] }, 'abc', { scripts: true, styles: false }),
     ).toBe("script-src 'self' 'nonce-abc'");
   });
+
+  test('an empty source list keeps its trailing space; a nonce-only list has just the nonce', () => {
+    expect(serializeCsp({ 'img-src': [] })).toBe('img-src ');
+    expect(serializeCsp({ 'script-src': [] }, 'abc')).toBe("script-src 'nonce-abc'");
+  });
+});
+
+describe('buildHeaders nonces', () => {
+  const csp = {
+    directives: { 'default-src': ["'self'"] },
+    nonce: { scripts: true, styles: true },
+  } as const;
+  const cspHeader = (nonce?: string) =>
+    Object.fromEntries(
+      buildHeaders(mergeOptions(DEFAULT_OPTIONS, { contentSecurityPolicy: csp }), {
+        secure: false,
+        nonce,
+      }),
+    )['content-security-policy'];
+
+  test('every nonce target gets the request nonce', () => {
+    expect(cspHeader('n1')).toContain("script-src 'self' 'nonce-n1'");
+    expect(cspHeader('n1')).toContain("style-src 'self' 'nonce-n1'");
+    expect(cspHeader('n2')).not.toContain('n1');
+  });
+
+  test('without a nonce, targets are not extended', () => {
+    expect(cspHeader()).not.toContain('script-src');
+    expect(cspHeader()).not.toContain('nonce');
+  });
 });
 
 describe('mergeOptions and buildHeaders', () => {

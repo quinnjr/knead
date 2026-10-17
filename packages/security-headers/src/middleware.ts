@@ -7,7 +7,13 @@ import {
   type Next,
   withHeaders,
 } from '@knead-js/http';
-import { buildHeaders, generateNonce, nonceTargets } from './csp.js';
+import {
+  type CompiledValue,
+  compileHeaders,
+  generateNonce,
+  nonceTargets,
+  withNonce,
+} from './csp.js';
 import {
   DEFAULT_OPTIONS,
   mergeOptions,
@@ -23,14 +29,14 @@ export const SECURITY_HEADERS_META = Symbol('knead:security-headers');
 /** The shortest HSTS max-age that does not log a warning: 180 days. */
 export const MIN_RECOMMENDED_HSTS_MAX_AGE = 15_552_000;
 
-/**
- * Stands in for the nonce when a header list is built ahead of time. Validation rejects line
- * feeds in every CSP token, so it can only appear where the nonce goes.
- */
-const NONCE_SLOT = '\n';
-
-/** A built header list; a value with nonce slots is kept as the parts between them. */
-type CompiledHeaders = readonly (readonly [string, string | readonly string[]])[];
+/** Effective options with their header lists, built on first use for plain and secure requests. */
+interface Compiled {
+  readonly options: SecurityHeadersOptions;
+  /** Whether requests get a nonce (the CSP has nonce targets). */
+  readonly nonce: boolean;
+  plain?: [string, CompiledValue][];
+  secure?: [string, CompiledValue][];
+}
 
 const override = createRouteDecorator<SecurityHeadersOptions>(SECURITY_HEADERS_META);
 
@@ -49,12 +55,9 @@ export class SecurityHeadersMiddleware implements Middleware {
     validateSecurityHeadersOptions(options);
     return options;
   }
-  readonly #cache = new WeakMap<object, SecurityHeadersOptions>();
-  /** Built headers per effective options object, for plain and secure requests. */
-  readonly #compiled = {
-    plain: new WeakMap<SecurityHeadersOptions, CompiledHeaders>(),
-    secure: new WeakMap<SecurityHeadersOptions, CompiledHeaders>(),
-  };
+  readonly #default = compiled(this.#options);
+  /** Per route override object. */
+  readonly #overrides = new WeakMap<object, Compiled>();
   readonly #logger = inject(LOGGER, { optional: true });
   #warnedShortHsts = false;
 
@@ -78,45 +81,36 @@ export class SecurityHeadersMiddleware implements Middleware {
   }
 
   async use(ctx: Ctx, next: Next): Promise<Response> {
-    const options = this.#effective(ctx);
-    const nonce = nonceTargets(options.contentSecurityPolicy) ? generateNonce() : undefined;
+    const entry = this.#effective(ctx);
+    const nonce = entry.nonce ? generateNonce() : undefined;
     if (nonce) ctx.state.cspNonce = nonce;
     const res = await next();
-    return withHeaders(res, this.#headers(options, ctx.secure, nonce), false);
+    const key = ctx.secure ? 'secure' : 'plain';
+    entry[key] ??= compileHeaders(entry.options, ctx.secure);
+    const headers = entry[key];
+    // Without a nonce no value has nonce slots, so the list is sent as built.
+    return withHeaders(
+      res,
+      nonce ? withNonce(headers, nonce) : (headers as [string, string][]),
+      false,
+    );
   }
 
-  /** The same list as buildHeaders(), built once per options and secure flag; only the nonce varies. */
-  #headers(options: SecurityHeadersOptions, secure: boolean, nonce: string | undefined) {
-    const cache = this.#compiled[secure ? 'secure' : 'plain'];
-    let compiled = cache.get(options);
-    if (!compiled) {
-      // use() generates a nonce exactly when the CSP has nonce targets.
-      const slot = nonce === undefined ? undefined : NONCE_SLOT;
-      compiled = buildHeaders(options, { secure, nonce: slot }).map(
-        ([name, value]) =>
-          [name, slot && value.includes(slot) ? value.split(slot) : value] as const,
-      );
-      cache.set(options, compiled);
-    }
-    // Without a nonce no value was split, so the list is sent as built.
-    if (nonce === undefined) return compiled as [string, string][];
-    return compiled.map(([name, value]): [string, string] => [
-      name,
-      typeof value === 'string' ? value : value.join(nonce),
-    ]);
-  }
-
-  #effective(ctx: Ctx): SecurityHeadersOptions {
+  #effective(ctx: Ctx): Compiled {
     const routeOverride = ctx.route?.meta[SECURITY_HEADERS_META] as
       | SecurityHeadersOptions
       | undefined;
-    if (!routeOverride) return this.#options;
-    let merged = this.#cache.get(routeOverride);
-    if (!merged) {
-      merged = mergeOptions(this.#options, routeOverride);
-      this.#cache.set(routeOverride, merged);
-      this.#checkHsts(merged);
+    if (!routeOverride) return this.#default;
+    let entry = this.#overrides.get(routeOverride);
+    if (!entry) {
+      entry = compiled(mergeOptions(this.#options, routeOverride));
+      this.#overrides.set(routeOverride, entry);
+      this.#checkHsts(entry.options);
     }
-    return merged;
+    return entry;
   }
+}
+
+function compiled(options: SecurityHeadersOptions): Compiled {
+  return { options, nonce: nonceTargets(options.contentSecurityPolicy) !== undefined };
 }

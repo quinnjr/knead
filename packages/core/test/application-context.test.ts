@@ -265,6 +265,55 @@ describe('ApplicationContext.initializeLate', () => {
     expect(log).toEqual(['dep:init', 'guard:init', 'dep:destroy']);
   });
 
+  test('a transient of a transient injected into a late instance also receives hooks', async () => {
+    const log: string[] = [];
+    class Inner {
+      onModuleInit() {
+        log.push('inner:init');
+      }
+    }
+    class Outer {
+      readonly inner = inject(Inner);
+    }
+    class LateGuard {
+      readonly outer = inject(Outer);
+    }
+    @Module({
+      providers: [
+        { provide: Inner, useClass: Inner, scope: 'transient' },
+        { provide: Outer, useClass: Outer, scope: 'transient' },
+      ],
+    })
+    class M {}
+    const ctx = await ApplicationContext.create(M);
+    ctx.root.injector.resolveOrConstruct(LateGuard);
+    await ctx.initializeLate();
+    expect(log).toEqual(['inner:init']);
+    await ctx.close();
+  });
+
+  test('trackConstructed tracks transients only while it runs', async () => {
+    let inits = 0;
+    class Transient {
+      onModuleInit() {
+        inits++;
+      }
+    }
+    @Module({ providers: [{ provide: Transient, useClass: Transient, scope: 'transient' }] })
+    class M {}
+    const ctx = await ApplicationContext.create(M);
+    ctx.trackConstructed(() => ctx.get(Transient));
+    expect(() =>
+      ctx.trackConstructed(() => {
+        throw new Error('boom');
+      }),
+    ).toThrow('boom');
+    ctx.get(Transient);
+    await ctx.initializeLate();
+    expect(inits).toBe(1);
+    await ctx.close();
+  });
+
   test('closed is false until close() starts', async () => {
     @Module({})
     class M {}

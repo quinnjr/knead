@@ -10,6 +10,44 @@ export interface Logger {
 
 export const LOGGER = new InjectionToken<Logger>('LOGGER');
 
+/** The part of a logger that DeferredLogger forwards to. */
+export type WarnLogger = Pick<Logger, 'warn'>;
+
+/**
+ * Warnings of an object built outside dependency injection, such as a store passed in module
+ * options. They are held until attach() gives it a logger (a module passes the application's
+ * LOGGER) and forwarded from then on. Without attach(), use() sends them to `fallback` instead.
+ */
+export class DeferredLogger implements WarnLogger {
+  #target: WarnLogger | undefined;
+  #pending: string[] = [];
+
+  /** `target`: an explicit logger, which attach() then never replaces. */
+  constructor(
+    target: WarnLogger | undefined,
+    private readonly fallback: () => WarnLogger,
+  ) {
+    this.#target = target;
+  }
+
+  /** Sends held and future warnings to `logger`, unless a logger was already set. */
+  attach(logger: WarnLogger): void {
+    if (this.#target !== undefined) return;
+    this.#target = logger;
+    for (const message of this.#pending.splice(0)) logger.warn(message);
+  }
+
+  /** Called when the object is first used: nobody attached a logger, so use the fallback. */
+  use(): void {
+    if (this.#target === undefined) this.attach(this.fallback());
+  }
+
+  warn(message: string): void {
+    if (this.#target === undefined) this.#pending.push(message);
+    else this.#target.warn(message);
+  }
+}
+
 /**
  * Logs to the console. Credentials (see redactCredentials) in the message, in string meta and in
  * objects, arrays and Errors (messages, stacks, causes and own properties, see redactValue) are
