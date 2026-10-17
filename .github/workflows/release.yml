@@ -182,24 +182,28 @@ jobs:
           # Exactly the publishable workspace packages (scripts/release.test.ts checks this).
           ALLOWED_PACKAGES: >-
             @knead-js/casl
+            @knead-js/config
             @knead-js/core
             @knead-js/cors
             @knead-js/graphql
             @knead-js/http
             @knead-js/rate-limit
             @knead-js/sanitize
+            @knead-js/schedule
             @knead-js/security-headers
             @knead-js/testing
           # Per package, the only names allowed in dependencies, optionalDependencies and
           # peerDependencies (scripts/release.test.ts keeps this equal to the workspace manifests).
           ALLOWED_DEPENDENCIES: |
             @knead-js/casl: @casl/ability @knead-js/core @knead-js/graphql @knead-js/http
+            @knead-js/config: @knead-js/core @standard-schema/spec
             @knead-js/core:
             @knead-js/cors: @knead-js/core @knead-js/http
             @knead-js/graphql: @knead-js/core @knead-js/http @leaven-graphql/core @leaven-graphql/errors @leaven-graphql/playground @leaven-graphql/ws @standard-schema/spec dataloader graphql
             @knead-js/http: @knead-js/core @standard-schema/spec
             @knead-js/rate-limit: @knead-js/core @knead-js/http
             @knead-js/sanitize: @standard-schema/spec sanitize-html
+            @knead-js/schedule: @knead-js/core croner
             @knead-js/security-headers: @knead-js/core @knead-js/http
             @knead-js/testing: @knead-js/core @knead-js/http
         run: |
@@ -495,7 +499,10 @@ jobs:
             fi
           done
 
-          # 3. Publish.
+          # 3. Resolve every tarball's dist-tag before publishing any, so a registry error or an
+          # unexpected latest dist-tag stops the release before a partial publish.
+          to_publish=()
+          dist_tags=()
           for tgz in "${tarballs[@]}"; do
             manifest="$(cat "$work/$tgz.json")"
             name="$(jq -r .name <<<"$manifest")"
@@ -535,6 +542,17 @@ jobs:
                 fi
                 ;;
             esac
+            to_publish+=("$tgz")
+            dist_tags+=("$dist_tag")
+          done
+
+          # 4. Publish.
+          for i in "${!to_publish[@]}"; do
+            tgz="${to_publish[$i]}"
+            dist_tag="${dist_tags[$i]}"
+            manifest="$(cat "$work/$tgz.json")"
+            name="$(jq -r .name <<<"$manifest")"
+            version="$(jq -r .version <<<"$manifest")"
             echo "publish $name@$version (dist-tag $dist_tag)"
             if ! npm_for "$name" publish "$artifact/$tgz" --access public --tag "$dist_tag" --ignore-scripts 2>"$errlog"; then
               cat "$errlog"

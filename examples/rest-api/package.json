@@ -14,6 +14,7 @@
     "@knead-js/http": "workspace:^",
     "@knead-js/rate-limit": "workspace:^",
     "@knead-js/sanitize": "workspace:^",
+    "@knead-js/schedule": "workspace:^",
     "@knead-js/security-headers": "workspace:^",
     "graphql": "^16.14.2",
     "valibot": "^1.5.0"

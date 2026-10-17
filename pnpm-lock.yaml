@@ -239,6 +239,9 @@ importers:
       '@knead-js/sanitize':
         specifier: workspace:^
         version: link:../../packages/sanitize
+      '@knead-js/schedule':
+        specifier: workspace:^
+        version: link:../../packages/schedule
       '@knead-js/security-headers':
         specifier: workspace:^
         version: link:../../packages/security-headers
@@ -274,6 +277,34 @@ importers:
       graphql:
         specifier: ^16.14.2
         version: 16.14.2
+
+  packages/config:
+    dependencies:
+      '@standard-schema/spec':
+        specifier: ^1.1.0
+        version: 1.1.0
+    devDependencies:
+      '@knead-js/core':
+        specifier: workspace:^
+        version: link:../core
+      '@knead-js/http':
+        specifier: workspace:^
+        version: link:../http
+      '@knead-js/testing':
+        specifier: workspace:^
+        version: link:../testing
+      '@valibot/to-json-schema':
+        specifier: ^1.8.0
+        version: 1.8.0(valibot@1.5.0(typescript@7.0.2))
+      arktype:
+        specifier: ^2.2.8
+        version: 2.2.8
+      valibot:
+        specifier: ^1.5.0
+        version: 1.5.0(typescript@7.0.2)
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
 
   packages/core: {}
 
@@ -367,6 +398,22 @@ importers:
         specifier: ^2.16.2
         version: 2.16.2
 
+  packages/schedule:
+    dependencies:
+      croner:
+        specifier: 10.0.1
+        version: 10.0.1
+    devDependencies:
+      '@knead-js/core':
+        specifier: workspace:^
+        version: link:../core
+      '@knead-js/http':
+        specifier: workspace:^
+        version: link:../http
+      '@knead-js/testing':
+        specifier: workspace:^
+        version: link:../testing
+
   packages/security-headers:
     devDependencies:
       '@knead-js/core':
@@ -395,6 +442,12 @@ importers:
         version: link:../http
 
 packages:
+
+  '@ark/schema@0.56.7':
+    resolution: {integrity: sha512-jmoOJlYIc4k1uv8oYBDNOFnAsKk2a2D9t/D6npF2JUfW4ecPB0v6ce6lruKg7lkBxIBA8Z7UtxfmvephYbhUGQ==}
+
+  '@ark/util@0.56.7':
+    resolution: {integrity: sha512-z8pVnrPk/x9GC18yOp5wCe8rR2+Z6us4CTSg7dvxdsDLuA2xXYq+QETD1fO6f3fMuXe+PCjpvtCnhTW9RHLgEw==}
 
   '@biomejs/biome@2.5.15':
     resolution: {integrity: sha512-WZTW4slm/pdkh92K6t/3aEN++44JD1PQ7squ7RCMLI1flHGl43DVOIGXvCjHiZgBMO1V4uYxoFNtqrIA4qGuIQ==}
@@ -706,12 +759,27 @@ packages:
   '@ucast/mongo@3.0.0':
     resolution: {integrity: sha512-kwuSH+kdB4GCR0LGhy/PEDm4PCflur89AlK82kNiYD0FvsA8A/p+0sx7m+/R8mMFAlmlkAd3VXp7sM/cLLYWYg==}
 
+  '@valibot/to-json-schema@1.8.0':
+    resolution: {integrity: sha512-a0M+uwCuQZEPAo65NYkFSJ14O5c213KoSZmPdoCfuFvUhfULi4T2Z6Tpjv6lTVMW9RoLm74RpRAjNEa43KcN+g==}
+    peerDependencies:
+      valibot: ^1.5.0
+
+  arkregex@0.0.13:
+    resolution: {integrity: sha512-c17sqCqiiZauxyoU1KZ2zbzCgeghGmc8dR2CrdQnlEtpq3bLhRLoLrxTL52M/8yQD8e/i1/IBRpRCNAuqJa7xQ==}
+
+  arktype@2.2.8:
+    resolution: {integrity: sha512-tZyLza7kO2vN8BXBKcj4t43IVMe8/ZyqlITH0chZv7FfEw+edLovpY922tqcK4mCjTpf4oNo2xV6np7tquP1ww==}
+
   bun-types@1.4.3:
     resolution: {integrity: sha512-tinRJNGOmUN+tEAsn2y2e942n9JHRHR42iUYzDH75NmhJqVBokGSQkkfSFdNWwsANIdrK6ACH9t01M452YyTwg==}
 
   cac@7.1.0:
     resolution: {integrity: sha512-LMDU/U2yA4IPIY8KT0NsNPWEYZvAMkbgyspxJ6btJaYV+WMDOHAZCmB0lsTObiHaRS1V/ztKAl7+TSkTqXyeoA==}
     engines: {node: '>=20.19.0'}
+
+  croner@10.0.1:
+    resolution: {integrity: sha512-ixNtAJndqh173VQ4KodSdJEI6nuioBWI0V1ITNKhZZsO0pEMoDxz539T4FTTbSZ/xIOSuDnzxLVRqBVSvPNE2g==}
+    engines: {node: '>=18.0'}
 
   dataloader@2.2.3:
     resolution: {integrity: sha512-y2krtASINtPFS1rSDjacrFgn1dcUuoREVabwlOGOe4SdxenREqwjwjElAdwvbGM7kgZz9a3KVicWR7vcz8rnzA==}
@@ -866,7 +934,16 @@ packages:
     engines: {node: '>= 14.6'}
     hasBin: true
 
+  zod@4.6.7:
+    resolution: {integrity: sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==}
+
 snapshots:
+
+  '@ark/schema@0.56.7':
+    dependencies:
+      '@ark/util': 0.56.7
+
+  '@ark/util@0.56.7': {}
 
   '@biomejs/biome@2.5.15':
     optionalDependencies:
@@ -1150,12 +1227,28 @@ snapshots:
     dependencies:
       '@ucast/core': 2.0.0
 
+  '@valibot/to-json-schema@1.8.0(valibot@1.5.0(typescript@7.0.2))':
+    dependencies:
+      valibot: 1.5.0(typescript@7.0.2)
+
+  arkregex@0.0.13:
+    dependencies:
+      '@ark/util': 0.56.7
+
+  arktype@2.2.8:
+    dependencies:
+      '@ark/schema': 0.56.7
+      '@ark/util': 0.56.7
+      arkregex: 0.0.13
+
   bun-types@1.4.3:
     dependencies:
       '@types/node': 26.6.5
       undici-types: 8.12.1
 
   cac@7.1.0: {}
+
+  croner@10.0.1: {}
 
   dataloader@2.2.3: {}
 
@@ -1297,3 +1390,5 @@ snapshots:
       typescript: 7.0.2
 
   yaml@2.9.1: {}
+
+  zod@4.6.7: {}

@@ -3,6 +3,7 @@ import { inject, Module } from '@knead-js/core';
 import { CorsModule } from '@knead-js/cors';
 import { GraphQLModule } from '@knead-js/graphql';
 import { RateLimitModule } from '@knead-js/rate-limit';
+import { ScheduleModule } from '@knead-js/schedule';
 import { SecurityHeadersModule } from '@knead-js/security-headers';
 import { AuthModule, AuthService } from './auth/auth.js';
 import { caslOptions } from './auth/permissions.js';
@@ -14,6 +15,8 @@ import { UsersModule } from './users/users.module.js';
     RateLimitModule.forRoot({ limit: 100, window: '1m' }),
     SecurityHeadersModule.forRoot(),
     CaslModule.forRoot(caslOptions),
+    // Every replica runs every job; pass a RedisLockStore and `lock: true` to run a cron job once.
+    ScheduleModule.forRoot(),
     GraphQLModule.forRootAsync({
       imports: [AuthModule],
       useFactory: () => {

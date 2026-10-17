@@ -15,7 +15,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-// Every test here runs the real publish step: bash, GNU tar over nine tarballs and a node
+// Every test here runs the real publish step: bash, GNU tar over eleven tarballs and a node
 // process loading pacote. That normally takes 0.3-1 s, but under load (for example `pnpm test`
 // next to another `bun test scripts`) it exceeded bun's 5 s default and failed spuriously.
 setDefaultTimeout(60_000);
@@ -411,11 +411,10 @@ describe('release.yml publish step', () => {
       expect(r.publishes).toEqual([publishCmd('knead-js-core-0.1.0.tgz', 'latest')]);
     });
 
-    // The first package published (tarballs go out in name order), so nothing precedes it.
-    test('a garbled latest dist-tag stops the release', () => {
-      const first = ALLOWED[0]!;
-      const r = publish('v1.2.3', [[first, '1.2.3']], {
-        env: { FAKE_LATEST: `${first}=not-a-version` },
+    // core is not the first tarball, so this proves every dist-tag is resolved before any publish.
+    test('a garbled latest dist-tag stops the release before anything is published', () => {
+      const r = publish('v1.2.3', [['@knead-js/core', '1.2.3']], {
+        env: { FAKE_LATEST: '@knead-js/core=not-a-version' },
       });
       expectRejected(r, 'unexpected latest dist-tag');
     });
@@ -503,7 +502,7 @@ describe('release.yml publish step', () => {
       const r = publish('v1.2.3', []);
       expect(r.exitCode).toBe(0);
       expect(r.allPublishes).toHaveLength(ALLOWED.length);
-      expect(ALLOWED).toHaveLength(9);
+      expect(ALLOWED).toHaveLength(11);
     });
 
     test('publishes nothing when a package is missing from the artifact', () => {
