@@ -468,3 +468,12 @@ Packages use it to warn about unencrypted connections to remote Redis servers.
 `defaultRedisUrl(): string | undefined`. The URL `Bun.redis` connects to when given none:
 `process.env.REDIS_URL`, else `process.env.VALKEY_URL`, else `undefined` (Bun then connects to
 localhost). Empty values count as unset.
+
+### `sendRedisCommand()`
+
+`sendRedisCommand<T>(client: RedisClient, send: () => Promise<T>, timeoutMs: number, connect = true): Promise<T>`.
+Runs `send`, a command on `client`, connecting the client first when `connect` is true and it is
+disconnected (a client without the offline queue rejects sends while disconnected). Rejects with
+`Redis did not answer within <timeoutMs>ms` when no answer arrives in time, and never runs `send`
+after that, so a late command cannot act on an operation already reported as failed. The Redis
+stores of `@knead-js/rate-limit` and `@knead-js/schedule` send their commands through it.

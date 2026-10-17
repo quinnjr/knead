@@ -18,9 +18,14 @@ export interface Schedule {
  */
 export const MAX_CRON_PATTERN_LENGTH = 1024;
 
+/** `text`, cut to `max` characters for an error message. */
+function clip(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
 /** A value quoted in an error message, shortened. */
 function quote(value: string): string {
-  return JSON.stringify(value.length > 100 ? `${value.slice(0, 100)}…` : value);
+  return JSON.stringify(clip(value, 100));
 }
 
 /** Validates the pattern and timezone eagerly; croner only computes times, it never runs jobs. */
@@ -44,7 +49,7 @@ export function cronSchedule(pattern: string, timezone?: string): Schedule {
     const where = timezone === undefined ? '' : ` in timezone ${quote(String(timezone))}`;
     const reason = error instanceof Error ? error.message : String(error);
     throw new ScheduleConfigError(
-      `Invalid cron pattern ${quote(pattern)}${where}: ${reason.length > 200 ? `${reason.slice(0, 200)}…` : reason}`,
+      `Invalid cron pattern ${quote(pattern)}${where}: ${clip(reason, 200)}`,
     );
   }
   // croner returns the first match strictly after the given time, except in the second
@@ -81,11 +86,10 @@ export function timeoutSchedule(after: number): Schedule {
 /** The UTC offset, in minutes, of `timezone` (default: the local zone) at an instant. */
 function utcOffsetMinutes(timezone: string | undefined): (at: number) => number {
   if (timezone === undefined) return (at) => -new Date(at).getTimezoneOffset();
-  const format = new Intl.DateTimeFormat('en-US', {
-    timeZone: timezone,
-    timeZoneName: 'longOffset',
-  });
+  // Built on first use: only a repeated (fall-back) hour needs it.
+  let format: Intl.DateTimeFormat | undefined;
   return (at) => {
+    format ??= new Intl.DateTimeFormat('en-US', { timeZone: timezone, timeZoneName: 'longOffset' });
     const name = format.formatToParts(at).find((part) => part.type === 'timeZoneName')?.value;
     const m = /^GMT([+-])(\d{2}):(\d{2})$/.exec(name ?? '');
     if (!m) return 0;

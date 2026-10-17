@@ -106,7 +106,13 @@ describe('resolveOptions defaults', () => {
 
 describe('options validated at bootstrap', () => {
   test('cacheControl must be a valid header value', () => {
-    for (const cacheControl of ['no-store\r\nset-cookie: a=b', 'a\nb', 'x\u0000', 3 as never]) {
+    for (const cacheControl of [
+      'no-store\r\nset-cookie: a=b',
+      'a\nb',
+      'no-store\n',
+      'x\u0000',
+      3 as never,
+    ]) {
       expect(() => GraphQLModule.forRoot({ cacheControl })).toThrow(HttpConfigError);
     }
     expect(resolveOptions({ cacheControl: 'private, max-age=60' }, '/g').cacheControl).toBe(

@@ -24,6 +24,7 @@ import {
 } from './net.js';
 import { DEFAULT_MAX_PARAMS, requestUrl } from './request.js';
 import { resolveFilter, resolveGuard, resolveMiddleware } from './resolve.js';
+import { isHeaderValue } from './response.js';
 import { checkBunVersion } from './runtime-version.js';
 import { APP_FILTER, APP_GUARD, APP_MIDDLEWARE, HTTP_DEVELOPMENT } from './tokens.js';
 import type { FilterRef, GlobalMiddleware, GuardRef, MiddlewareRef } from './types.js';
@@ -131,17 +132,6 @@ export class KneadFactory {
       globalModules: [core],
     });
     return new HttpApplication(context, context.get(LOGGER), development);
-  }
-}
-
-/** Whether `value` can be set as a header value (no CR, LF or NUL, Latin-1 only). */
-function isHeaderValue(value: string): boolean {
-  if (/[\r\n]/.test(value)) return false;
-  try {
-    new Headers({ 'cache-control': value });
-    return true;
-  } catch {
-    return false;
   }
 }
 
@@ -255,9 +245,8 @@ export class HttpApplication {
   #redirect: Server<undefined> | undefined;
   #closing: Promise<void> | undefined;
   /** The in-flight listen(), so close() can wait for it to settle. */
+  /** Set from the start of listen() until it settles. */
   #pendingListen: Promise<unknown> | undefined;
-  /** True from the start of listen() until it settles (#pendingListen is set once it yields). */
-  #inListen = false;
   readonly #signalHandlers: [NodeJS.Signals, () => void][] = [];
   #compiled: CompiledApp | undefined;
   readonly #extraMiddleware: GlobalMiddleware[] = [];
@@ -440,17 +429,16 @@ export class HttpApplication {
     if (this.#closing || this.context.closed) {
       throw new HttpConfigError('The application is closed.');
     }
-    if (this.#server || this.#inListen) {
+    if (this.#server || this.#pendingListen) {
       throw new HttpConfigError('listen() was already called.');
     }
     // Set before #listen() runs: hooks it calls synchronously already see a listen in progress.
-    this.#inListen = true;
+    const { promise, resolve, reject } = Promise.withResolvers<Server<WsData>>();
+    this.#pendingListen = promise;
     try {
-      const pending = this.#listen(options);
-      this.#pendingListen = pending;
-      return await pending;
+      this.#listen(options).then(resolve, reject);
+      return await promise;
     } finally {
-      this.#inListen = false;
       this.#pendingListen = undefined;
     }
   }
@@ -617,7 +605,7 @@ export class HttpApplication {
 
   /** Global middleware, guards and filters are compiled by listen(): later calls would be lost. */
   #assertNotListening(method: string): void {
-    if (this.#server || this.#inListen || this.#closing) {
+    if (this.#server || this.#pendingListen || this.#closing) {
       throw new HttpConfigError(`${method}() must be called before listen() and close().`);
     }
   }

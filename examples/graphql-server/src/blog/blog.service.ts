@@ -205,7 +205,6 @@ export class BlogService implements OnModuleInit {
 
 /** `items` grouped by `key` for each of `ids`, in `ids` order: one pass over `items`. */
 function groupBy<T>(ids: readonly string[], items: Iterable<T>, key: (item: T) => string): T[][] {
-  const groups = new Map<string, T[]>(ids.map((id) => [id, []]));
-  for (const item of items) groups.get(key(item))?.push(item);
+  const groups = Map.groupBy(items, key);
   return ids.map((id) => groups.get(id) ?? []);
 }

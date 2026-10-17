@@ -18,6 +18,7 @@ import {
   RATE_LIMIT_META,
   type RateLimitRouteMeta,
   SKIP_RATE_LIMIT_META,
+  typeOf,
 } from './decorators.js';
 import { type Duration, parseDuration } from './duration.js';
 import { maskIp } from './keys.js';
@@ -96,11 +97,6 @@ export function validateRateLimitOptions(options: RateLimitModuleOptions): void 
   if (options.middleware !== undefined && typeof options.middleware !== 'boolean') {
     throw new RangeError(`middleware must be a boolean, got ${typeOf(options.middleware)}.`);
   }
-}
-
-/** `typeof`, with null told apart. */
-function typeOf(value: unknown): string {
-  return value === null ? 'null' : typeof value;
 }
 
 export const RATE_LIMIT_OPTIONS = new InjectionToken<RateLimitModuleOptions>('RATE_LIMIT_OPTIONS');

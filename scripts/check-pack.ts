@@ -69,8 +69,8 @@ try {
       const expected = tarballFile(label, pkg.version);
       if (tarballDir === undefined) run(['pnpm', 'pack', '--pack-destination', tmp], pkgDir);
       const from = tarballDir ?? tmp;
-      if (!readdirSync(from).includes(expected)) throw new Error(`tarball ${expected} not found`);
       const tarball = join(from, expected);
+      if (!existsSync(tarball)) throw new Error(`tarball ${expected} not found`);
       tarballs.set(label, tarball);
       const entries = run(['tar', 'tzf', tarball], tmp)
         .stdout.split('\n')

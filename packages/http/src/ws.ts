@@ -405,9 +405,9 @@ export class WsRegistry {
     this.#reserved.set(data, key);
   }
 
-  /** Returns the slot held by `data`, if any, and the key it counted against. */
-  #giveBack(data: object): { key: string | undefined } | undefined {
-    if (!this.#reserved.has(data)) return undefined;
+  /** Returns the slot held by `data`, if any. */
+  #giveBack(data: object): void {
+    if (!this.#reserved.has(data)) return;
     const key = this.#reserved.get(data);
     this.#reserved.delete(data);
     this.#reservedTotal--;
@@ -416,7 +416,6 @@ export class WsRegistry {
       if (count > 0) this.#perIp.set(key, count);
       else this.#perIp.delete(key);
     }
-    return { key };
   }
 
   /** @internal Called by the compiler when an upgrade request arrives (before middleware). */
@@ -467,9 +466,9 @@ export class WsRegistry {
       this.#expiredUpgrades.set(key, entry);
       // Its socket never opened: the slot is returned, so aborted upgrades cannot exhaust the
       // limits. A late open takes one again (#retake).
-      if (entry.hasData) {
-        const slot = this.#giveBack(key);
-        if (slot !== undefined) this.#expiredSlots.set(key, slot.key);
+      if (entry.hasData && this.#reserved.has(key)) {
+        this.#expiredSlots.set(key, this.#reserved.get(key));
+        this.#giveBack(key);
       }
     }
   }

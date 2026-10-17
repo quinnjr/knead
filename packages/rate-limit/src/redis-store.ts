@@ -1,3 +1,4 @@
+import { sendRedisCommand } from '@knead-js/core';
 import {
   ConsoleLogger,
   defaultRedisUrl,
@@ -196,9 +197,7 @@ export class RedisStore implements RateLimitStore {
    * since construction. RateLimitModule calls it with the application's LOGGER.
    */
   setLogger(logger: Logger): void {
-    if (this.#logger !== undefined) return;
-    this.#logger = logger;
-    this.#flush();
+    if (this.#logger === undefined) this.#adopt(logger);
   }
 
   #warn(message: string): void {
@@ -206,10 +205,9 @@ export class RedisStore implements RateLimitStore {
     else this.#logger.warn(message);
   }
 
-  #flush(): void {
-    const pending = this.#pending;
-    this.#pending = [];
-    for (const message of pending) this.#logger?.warn(message);
+  #adopt(logger: Logger): void {
+    this.#logger = logger;
+    for (const message of this.#pending.splice(0)) logger.warn(message);
   }
 
   async consume(key: string, rule: RateLimitRule): Promise<ConsumeResult> {
@@ -221,11 +219,8 @@ export class RedisStore implements RateLimitStore {
         `Rate limit window must be a positive integer (ms), got ${String(rule.windowMs)}.`,
       );
     }
-    if (this.#logger === undefined) {
-      // Used without RateLimitModule: nobody will call setLogger().
-      this.#logger = new ConsoleLogger('knead:rate-limit');
-      this.#flush();
-    }
+    // Used without RateLimitModule: nobody will call setLogger().
+    if (this.#logger === undefined) this.#adopt(new ConsoleLogger('knead:rate-limit'));
     const algorithm: Algorithm =
       rule.algorithm === 'token-bucket' ? 'token-bucket' : 'sliding-window';
     const args = [
@@ -234,19 +229,13 @@ export class RedisStore implements RateLimitStore {
       String(rule.limit),
       String(rule.windowMs),
     ];
-    let expired = false;
-    const reply = await withTimeout(
-      (async () => {
-        // Without the offline queue a send while disconnected rejects, so connect first.
-        if (this.#owned && !this.#client.connected) await this.#client.connect();
-        // A script sent after the timeout would consume a counter for a request already handled.
-        if (expired) return [0, 0, 0];
-        return this.#run(algorithm, args);
-      })(),
+    // A script sent after the timeout would consume a counter for a request already handled.
+    const reply = await sendRedisCommand(
+      this.#client,
+      () => this.#run(algorithm, args),
       this.#commandTimeout,
-    ).finally(() => {
-      expired = true;
-    });
+      this.#owned,
+    );
     const [allowed, remaining, resetAt] = reply as [number, number, number];
     return {
       allowed: Number(allowed) === 1,
@@ -272,19 +261,4 @@ export class RedisStore implements RateLimitStore {
 /** @internal The options of the client a RedisStore builds itself. */
 export function ownedClientOptions(commandTimeout: number): RedisOptions {
   return { enableOfflineQueue: false, connectionTimeout: Math.max(commandTimeout, 1_000) };
-}
-
-/** Rejects with a timeout error when `promise` has not settled within `ms`. */
-async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`Redis did not answer within ${ms}ms`)), ms);
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
-  }
 }

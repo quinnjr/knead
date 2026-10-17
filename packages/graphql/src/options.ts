@@ -4,6 +4,7 @@ import {
   type GuardRef,
   HttpConfigError,
   type HttpException,
+  isHeaderValue,
   type WsMessageRate,
 } from '@knead-js/http';
 import type {
@@ -307,20 +308,14 @@ export function validateGraphQLOptions(options: GraphQLModuleOptions): void {
     }
   }
   const cacheControl = options.cacheControl;
-  if (cacheControl !== undefined && cacheControl !== false) {
-    let valid = typeof cacheControl === 'string';
-    if (valid) {
-      try {
-        new Headers({ 'cache-control': cacheControl });
-      } catch {
-        valid = false;
-      }
-    }
-    if (!valid) {
-      throw new HttpConfigError(
-        `GraphQL cacheControl must be a valid header value or false; got ${JSON.stringify(cacheControl)}.`,
-      );
-    }
+  if (
+    cacheControl !== undefined &&
+    cacheControl !== false &&
+    (typeof cacheControl !== 'string' || !isHeaderValue(cacheControl))
+  ) {
+    throw new HttpConfigError(
+      `GraphQL cacheControl must be a valid header value or false; got ${JSON.stringify(cacheControl)}.`,
+    );
   }
   const subscriptions = options.subscriptions;
   if (subscriptions) {

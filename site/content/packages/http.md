@@ -320,6 +320,9 @@ the response's headers are immutable (as on `Response.redirect()`), it returns a
 headers added. `Set-Cookie` values are appended; with `overwrite` false, headers the response
 already has are kept.
 
+`isHeaderValue(value)` is true when `value` can be sent as a header value: no CR, LF or NUL and
+Latin-1 only. Knead uses it to validate header values given as options at bootstrap.
+
 <<< http/reference.ts#helpers
 
 `requestUrl(req)` returns the request's URL as a `URL`. A request whose `Host` header does not form

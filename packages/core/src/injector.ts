@@ -33,9 +33,10 @@ export class ContainerState {
   readonly overrides: ReadonlyMap<Token, NormalizedProvider>;
   globals: readonly ModuleInjector[] = [];
   /**
-   * True while the application starts (ApplicationContext.create clears it). Afterwards a
-   * transient is tracked only when it is a dependency of a singleton being constructed (a guard
-   * built at listen()), so transients resolved at runtime are neither kept nor given hooks.
+   * True while the application starts (ApplicationContext.create clears it) and inside
+   * ApplicationContext.trackConstructed (listen()). Otherwise a transient is tracked only when it
+   * is a dependency of a singleton being constructed (once per singleton), so transients resolved
+   * at runtime are neither kept nor given hooks.
    */
   bootstrapping = true;
   readonly #tracked = new Set<unknown>();
@@ -252,10 +253,7 @@ export class ModuleInjector implements InjectorLike {
 
   *#sources(): IterableIterator<ModuleInjector> {
     yield* this.imports;
-    const globals = this.state.globals;
-    if (globals.length === 0) return;
-    const imported = this.imports.length > 0 ? new Set(this.imports) : undefined;
-    for (const g of globals) if (g !== this && !imported?.has(g)) yield g;
+    for (const g of this.state.globals) if (g !== this && !this.imports.includes(g)) yield g;
   }
 
   /**
