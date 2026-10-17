@@ -7,9 +7,28 @@ import {
   type OnModuleDestroy,
   type OnModuleInit,
 } from '@knead-js/core';
+import { isFactoryOptions } from './options.js';
 import { PRISMA_CLIENT, PRISMA_OPTIONS } from './tokens.js';
 import { TransactionHost } from './transaction-host.js';
 import type { RegisteredClient, TxClient } from './types.js';
+
+const IDENTIFIER = /^[A-Za-z_$][\w$]{0,99}$/;
+const ERROR_CODE = /^[A-Za-z0-9_.-]{1,64}$/;
+
+/**
+ * `Name (code)` for a production log: the error's name and its `code` or `errorCode`, each only
+ * when it looks like an identifier. Never the message, which can hold a connection string.
+ */
+function describeConnectError(error: unknown): string {
+  const e = (typeof error === 'object' && error !== null ? error : {}) as Record<string, unknown>;
+  const name = typeof e.name === 'string' && IDENTIFIER.test(e.name) ? e.name : 'Error';
+  const raw = e.code ?? e.errorCode;
+  const code =
+    (typeof raw === 'string' && ERROR_CODE.test(raw)) || Number.isInteger(raw)
+      ? String(raw)
+      : undefined;
+  return code === undefined ? name : `${name} (${code})`;
+}
 
 export class PrismaService implements OnModuleInit, OnModuleDestroy {
   /** The raw client. Prefer `db`, which joins the ambient transaction. */
@@ -28,12 +47,8 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     try {
       await this.client.$connect();
     } catch (error) {
-      logError(
-        { logger: this.#logger, development: this.#development },
-        'Prisma failed to connect',
-        error,
-      );
-      if (this.#owned()) {
+      this.#logConnectError(error);
+      if (isFactoryOptions(this.#options)) {
         try {
           await this.client.$disconnect();
         } catch {
@@ -47,15 +62,25 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleDestroy(): Promise<void> {
-    if (this.#owned() || this.#disconnectOnShutdown()) await this.client.$disconnect();
+    const options = this.#options;
+    if (isFactoryOptions(options) || options.disconnectOnShutdown === true) {
+      await this.client.$disconnect();
+    }
   }
 
-  /** Whether the module built the client (a `client` factory) rather than borrowing an instance. */
-  #owned(): boolean {
-    return typeof (this.#options as { client?: unknown }).client === 'function';
-  }
-
-  #disconnectOnShutdown(): boolean {
-    return (this.#options as { disconnectOnShutdown?: boolean }).disconnectOnShutdown === true;
+  /**
+   * In development, the full error redacted (logError). Otherwise only its name and code: driver
+   * messages can carry connection strings and hosts.
+   */
+  #logConnectError(error: unknown): void {
+    if (this.#development) {
+      logError({ logger: this.#logger, development: true }, 'Prisma failed to connect', error);
+      return;
+    }
+    try {
+      this.#logger.error(`Prisma failed to connect: ${describeConnectError(error)}`);
+    } catch {
+      // A failing logger must not mask the connect error.
+    }
   }
 }

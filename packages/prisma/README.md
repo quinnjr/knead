@@ -31,7 +31,7 @@ class AppModule {}
 
 `client` is a factory, so the module owns the instance it builds: it connects at bootstrap and disconnects on shutdown. `forRoot({ instance })` takes a client you built and manage yourself; it is connected at bootstrap but only disconnected with `disconnectOnShutdown: true`. `forRootAsync({ imports, useFactory })` resolves the options from other providers. The module is global and exports `PrismaService`, `TransactionHost` and the `PRISMA_CLIENT` token. Options are checked when `forRoot()` is called (or when the async factory resolves): giving both or neither of `client` and `instance`, or a client without `$connect`, `$disconnect` and `$transaction`, is a `KneadError` at bootstrap, never at request time.
 
-A failed `$connect` aborts bootstrap with a `KneadError` whose message is fixed (`Prisma failed to connect to the database`) and whose `cause` is the original error. Connection strings can appear in driver error messages, so the original is logged through the injected `LOGGER` only after credential redaction.
+A failed `$connect` aborts bootstrap with a `KneadError` whose message is fixed (`Prisma failed to connect to the database`) and whose `cause` is the original error. Connection strings and hosts can appear in driver error messages, so outside development the failure is logged through the injected `LOGGER` with only the error's name and its `code` or `errorCode`, never its message; in development the full error is logged after credential redaction (`redactValue`). A failed connect disconnects a client the module built from `client`, but never an `instance`: its caller owns it.
 
 ### Typing the client
 

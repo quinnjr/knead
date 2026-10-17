@@ -126,6 +126,12 @@ describe('PrismaHttpModule', () => {
         expect(body.detail).toBeUndefined();
         expect(typeof body.correlationId).toBe('string');
       }
+      if (!development) {
+        // Nor does it reach a production log.
+        const logs = JSON.stringify(mod?.logs ?? []);
+        expect(logs).not.toContain('SELECT');
+        expect(logs).not.toContain('secret');
+      }
       await mod?.close();
       mod = undefined;
     }

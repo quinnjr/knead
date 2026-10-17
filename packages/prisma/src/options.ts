@@ -21,6 +21,13 @@ export function assertOptions(options: unknown): asserts options is PrismaModule
   }
 }
 
+/** Whether the options use a `client` factory, so the module owns the client it builds. */
+export function isFactoryOptions(
+  options: PrismaModuleOptions,
+): options is Extract<PrismaModuleOptions, { client: unknown }> {
+  return typeof (options as { client?: unknown }).client === 'function';
+}
+
 /** Throws a KneadError unless `client` has the `$connect`, `$disconnect` and `$transaction` methods. */
 export function assertClient(client: unknown): asserts client is RegisteredClient {
   const c = client as Record<string, unknown> | null | undefined;
