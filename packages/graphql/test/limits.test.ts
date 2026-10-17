@@ -232,6 +232,7 @@ describe('maxFields (FIELD_LIMIT)', () => {
   test('fields in a fragment that is never spread count too (reviewer repro)', async () => {
     s = await startGraphQL([M], { parseOptions: { maxTokens: Infinity } });
     const query = `{ tree { n } } fragment Unused on Tree { ${'n '.repeat(2900)}}`;
+    await s.app.graphql('{ tree { n } }'); // warm up, so the budget measures the limit check
     const started = performance.now();
     const res = await s.app.graphql(query);
     expect(performance.now() - started).toBeLessThan(50);
@@ -240,6 +241,7 @@ describe('maxFields (FIELD_LIMIT)', () => {
 
   test('9,300 __typename are rejected quickly and not cached', async () => {
     s = await startGraphQL([M], { parseOptions: { maxTokens: Infinity } });
+    await s.app.graphql('{ tree { n } }'); // warm up, so the budget measures the limit check
     const before = await cacheSize();
     const started = performance.now();
     const res = await s.app.graphql(`{ ${'__typename '.repeat(9300)}}`);

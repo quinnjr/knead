@@ -1,39 +1,9 @@
-import { inject } from '@knead-js/core';
-import { LOGGER, type Logger, logValue, redactCredentials, redactValue } from './logger.js';
+import { inject, redactCredentials, redactValue, summarizeError } from '@knead-js/core';
+import { LOGGER, type Logger } from './logger.js';
+
+export { LOGGED_MESSAGE_LENGTH, summarizeError } from '@knead-js/core';
+
 import { HTTP_DEVELOPMENT } from './tokens.js';
-
-/** Longest error message logged outside development. */
-export const LOGGED_MESSAGE_LENGTH = 500;
-
-/** A URL scheme with no `@` after it, at the end of a truncated message. */
-const TRAILING_URL = /[a-z][a-z0-9+.-]{0,31}:\/\/[^@\s]*$/i;
-
-/**
- * `Name: message` for logs outside development: the message is redacted first (so a truncation
- * cannot cut a credential URL in half and leave its password prefix behind), then capped at 500
- * characters, then a trailing `scheme://…` fragment without an `@` is removed, then control
- * characters are escaped. No stack, cause or properties.
- */
-export function summarizeError(error: unknown): string {
-  const record =
-    typeof error === 'object' && error !== null
-      ? (error as { name?: unknown; message?: unknown })
-      : undefined;
-  let name: string;
-  let message: string;
-  try {
-    name = typeof record?.name === 'string' ? record.name : record ? 'Error' : typeof error;
-    message = typeof record?.message === 'string' ? record.message : String(error);
-  } catch {
-    name = 'Error';
-    message = '(unprintable)';
-  }
-  message = redactCredentials(message);
-  if (message.length > LOGGED_MESSAGE_LENGTH) {
-    message = `${message.slice(0, LOGGED_MESSAGE_LENGTH).replace(TRAILING_URL, '')}…`;
-  }
-  return `${logValue(name)}: ${logValue(message)}`;
-}
 
 export interface ErrorLogOptions {
   readonly logger: Logger;

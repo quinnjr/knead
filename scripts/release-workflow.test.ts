@@ -15,7 +15,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-// Every test here runs the real publish step: bash, GNU tar over nine tarballs and a node
+// Every test here runs the real publish step: bash, GNU tar over ten tarballs and a node
 // process loading pacote. That normally takes 0.3-1 s, but under load (for example `pnpm test`
 // next to another `bun test scripts`) it exceeded bun's 5 s default and failed spuriously.
 setDefaultTimeout(60_000);
@@ -466,7 +466,7 @@ describe('release.yml publish step', () => {
       expect(r.cwds[0]).not.toBe(r.tarballs);
       expect(readdirSync(r.cwds[0])).toEqual([]);
       const published = r.rawCalls.filter((c) => c.startsWith('npm publish'));
-      expect(published).toHaveLength(9);
+      expect(published).toHaveLength(10);
       for (const c of published) expect(c.split(' ')[2].startsWith(`${r.tarballs}/`)).toBe(true);
       for (const c of r.rawCalls.filter((c) => c !== 'npm root -g'))
         expect(c).toContain('--@knead-js:registry=https://registry.npmjs.org/');
@@ -502,7 +502,7 @@ describe('release.yml publish step', () => {
       const r = publish('v1.2.3', []);
       expect(r.exitCode).toBe(0);
       expect(r.allPublishes).toHaveLength(ALLOWED.length);
-      expect(ALLOWED).toHaveLength(9);
+      expect(ALLOWED).toHaveLength(10);
     });
 
     test('publishes nothing when a package is missing from the artifact', () => {
