@@ -298,12 +298,12 @@ describe('default LOGGER and DEVELOPMENT', () => {
     class Service {
       readonly log = inject(LOGGER);
     }
-    @Module({ providers: [Service] })
+    @Module({ providers: [Service], exports: [Service] })
     class Feature {}
     @Module({ imports: [Feature] })
     class App {}
     const ctx = await ApplicationContext.create(App);
-    expect(ctx.get(LOGGER)).toBeInstanceOf(ConsoleLogger);
-    expect(ctx.modules.length).toBeGreaterThan(1);
+    expect(ctx.get(Service).log).toBeInstanceOf(ConsoleLogger);
+    expect(ctx.get(Service).log).toBe(ctx.get(LOGGER));
   });
 });

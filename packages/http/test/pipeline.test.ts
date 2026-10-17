@@ -269,6 +269,34 @@ describe('declining filters', () => {
     expect(errors).toHaveLength(1);
   });
 
+  test('a declining filter, then a non-Response one, stops before later filters', async () => {
+    const mem = new MemoryLogger();
+    const bad = { catch: () => ({}) } as unknown as ExceptionFilter;
+    const res = await createErrorHandler(
+      [declines, bad, answers418],
+      mem,
+      false,
+    )(new Error('x'), makeCtx('/'));
+    expect(res.status).toBe(500);
+    expect(mem.entries.filter((e) => e.message.includes('did not return a Response'))).toHaveLength(
+      1,
+    );
+  });
+
+  test('a declined 5xx HttpException is masked in production', async () => {
+    const mem = new MemoryLogger();
+    const res = await createErrorHandler(
+      [declines],
+      mem,
+      false,
+    )(new InternalServerErrorException('secret detail'), makeCtx('/boom'));
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.detail).toBeUndefined();
+    expect(typeof body.correlationId).toBe('string');
+    expect(JSON.stringify(body)).not.toContain('secret detail');
+  });
+
   test('defaultErrorResponse is exported and masks 5xx outside development', async () => {
     const mem = new MemoryLogger();
     const res = defaultErrorResponse(

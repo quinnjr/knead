@@ -8,7 +8,7 @@ import {
   Module,
 } from '@knead-js/core';
 import { PrismaModule, PrismaService, Transactional, TransactionHost } from '../src/index.js';
-import { createFakeClient } from './fake-client.js';
+import { createFakeClient, type FakeTx } from './fake-client.js';
 
 const tick = (ms = 1) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -33,6 +33,7 @@ describe('TransactionHost', () => {
     await host.run(async () => {
       expect(host.isActive).toBe(true);
       expect(prisma.db).toBe(fake.transactions[0]?.tx as never);
+      expect(await (prisma.db as unknown as FakeTx).query()).toBe(fake.transactions[0]!.tx.id);
     });
     expect(prisma.db).toBe(fake);
     await ctx.close();
@@ -225,9 +226,13 @@ describe('TransactionHost', () => {
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    let late: Promise<{ active: boolean; db: unknown }> | undefined;
+    let late: Promise<{ active: boolean; db: unknown; query: Promise<number> }> | undefined;
     await host.run(async () => {
-      late = gate.then(() => ({ active: host.isActive, db: prisma.db }));
+      late = gate.then(() => ({
+        active: host.isActive,
+        db: prisma.db,
+        query: (prisma.db as unknown as FakeTx).query(),
+      }));
     });
     expect(host.isActive).toBe(false);
     release();
@@ -236,6 +241,7 @@ describe('TransactionHost', () => {
     // It still sees the (closed) transaction, so Prisma fails loudly instead of silently
     // writing outside it.
     expect(seen?.db).toBe(fake.transactions[0]?.tx as never);
+    await expect(seen?.query).rejects.toThrow('already closed');
     await ctx.close();
   });
 

@@ -1,7 +1,8 @@
 import { inject } from '@knead-js/core';
 import { PrismaService, Transactional } from '../src/index.js';
 
-declare module '../src/types.js' {
+// Augments the public entry, exactly as the README tells users to.
+declare module '../src/index.js' {
   interface PrismaClientRegistry {
     client: {
       user: { findMany(): Promise<{ id: number }[]> };

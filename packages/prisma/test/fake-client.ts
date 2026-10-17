@@ -1,9 +1,15 @@
 import type { PrismaLike, RegisteredClient } from '../src/types.js';
 
+/** A fake transaction client. Like Prisma's, it fails once its transaction has settled. */
+export interface FakeTx {
+  id: number;
+  query(): Promise<number>;
+}
+
 export interface FakeTransaction {
   options?: unknown;
   outcome: 'commit' | 'rollback';
-  tx: { id: number };
+  tx: FakeTx;
 }
 
 export interface FakeClientOptions {
@@ -31,18 +37,29 @@ export function createFakeClient(opts: FakeClientOptions = {}): FakeClient & Reg
     async $disconnect() {
       calls.push('$disconnect');
     },
-    async $transaction<R>(fn: (tx: { id: number }) => Promise<R>, options?: unknown): Promise<R> {
-      const record: FakeTransaction = { options, outcome: 'commit', tx: { id: nextId++ } };
+    async $transaction<R>(fn: (tx: FakeTx) => Promise<R>, options?: unknown): Promise<R> {
+      const id = nextId++;
+      let settled = false;
+      const tx: FakeTx = {
+        id,
+        async query() {
+          if (settled) throw new Error(`Transaction ${id} already closed`);
+          return id;
+        },
+      };
+      const record: FakeTransaction = { options, outcome: 'commit', tx };
       transactions.push(record);
       calls.push('$transaction');
       try {
-        const result = await fn(record.tx);
+        const result = await fn(tx);
         calls.push('commit');
         return result;
       } catch (error) {
         record.outcome = 'rollback';
         calls.push('rollback');
         throw error;
+      } finally {
+        settled = true;
       }
     },
   };
