@@ -1,0 +1,23 @@
+// Fixture schema for the KNEAD_PRISMA_TEST_DATABASE_URL-gated integration suite (test/integration.test.ts).
+// The generated client lands in ./generated, which is gitignored.
+
+generator client {
+  provider = "prisma-client"
+  output   = "./generated"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id    Int    @id @default(autoincrement())
+  email String @unique
+  posts Post[]
+}
+
+model Post {
+  id       Int  @id @default(autoincrement())
+  authorId Int
+  author   User @relation(fields: [authorId], references: [id])
+}

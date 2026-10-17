@@ -29,6 +29,7 @@ export {
   plaintextRedisHost,
   type TrustProxy,
 } from './net.js';
+export { defaultErrorResponse } from './pipeline.js';
 export { DEFAULT_MAX_PARAMS, requestUrl } from './request.js';
 export { assertGuardRef } from './resolve.js';
 export { withHeaders } from './response.js';

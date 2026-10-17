@@ -11,6 +11,7 @@
     { "path": "packages/sanitize" },
     { "path": "packages/schedule" },
     { "path": "packages/graphql" },
-    { "path": "packages/casl" }
+    { "path": "packages/casl" },
+    { "path": "packages/prisma" }
   ]
 }
