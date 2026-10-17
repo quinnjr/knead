@@ -155,8 +155,8 @@ way it replaces `LoggingModule` and module-local `LOGGER` providers.
 | `body` | A raw body. |
 | `tls` | `{ rejectUnauthorized: false }` accepts a self-signed certificate. Tests only. |
 
-`path` is resolved against the server's URL, so an absolute URL would be followed to the host it
-names, with the request's headers. Pass paths, never URLs built from untrusted input.
+`path` must start with `/` (anything else rejects with a `TypeError`) and is appended to the
+server's origin, so every request, even one to `'//other.example/x'`, goes to the test server.
 
 ## GraphQL
 
@@ -180,7 +180,7 @@ test('queries stock over HTTP', async () => {
 `app.graphql()` POSTs `{ query, variables, operationName }` to `/graphql` (or `options.path`) and
 returns the parsed body with `status` and `headers` (a non-JSON response rejects with its status
 and body text). `app.graphqlSubscribe()` returns an async
-iterator of payloads; the server may still be registering the subscription when it resolves, so
+iterator of payloads (an abnormal close or a non-JSON frame makes `next()` reject); the server may still be registering the subscription when it resolves, so
 publish events until one arrives (the [guide](https://quinnjr.github.io/knead/guide/testing/#subscriptions)
 shows a helper).
 

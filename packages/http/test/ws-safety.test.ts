@@ -172,6 +172,42 @@ describe('WebSocket origin check', () => {
       HttpConfigError,
     );
   });
+
+  test('allowedOrigins entries that could never match an Origin are configuration errors', async () => {
+    const ws = await registry();
+    for (const entry of [
+      'https://app.example/',
+      'https://app.example/path',
+      'https://app.example?x=1',
+      'https://user@app.example',
+      'https://*.example.com',
+      '*.example.com',
+      'https://app.example:443',
+    ]) {
+      expect(
+        () =>
+          ws.register(
+            `/x${encodeURIComponent(entry)}`,
+            { upgrade: () => ({}) },
+            {
+              allowedOrigins: [entry],
+            },
+          ),
+        entry,
+      ).toThrow(HttpConfigError);
+    }
+    expect(() =>
+      ws.register('/w', { upgrade: () => ({}) }, { allowedOrigins: ['https://*.example.com'] }),
+    ).toThrow(/wildcards are not supported/);
+    // Exact origins are accepted, case-insensitively, with an explicit non-default port.
+    ws.register(
+      '/ok',
+      { upgrade: () => ({}) },
+      {
+        allowedOrigins: ['https://App.Example', 'http://localhost:5173', 'https://[::1]:8443'],
+      },
+    );
+  });
 });
 
 function fakeSocket(endpoint: string, data: unknown = null) {
@@ -273,6 +309,8 @@ describe('Bun WebSocket limits', () => {
       { maxPayloadLength: 0 },
       { backpressureLimit: -1 },
       { idleTimeout: 1.5 },
+      { idleTimeout: 961 },
+      { idleTimeout: 2 ** 31 },
       { maxConnectionsPerIp: 0 },
       { ipv6Subnet: -1 },
       { ipv6Subnet: 0 },
@@ -289,6 +327,15 @@ describe('Bun WebSocket limits', () => {
     expect(() => ws.register('/y', { upgrade: () => ({}) }, { maxConnectionLifetime: -5 })).toThrow(
       HttpConfigError,
     );
+  });
+
+  test('maxConnectionLifetime above the setTimeout range is a configuration error', async () => {
+    // setTimeout() treats a delay above 2^31 - 1 as 1 ms, which would close every socket at once.
+    const ws = await registry();
+    expect(() =>
+      ws.register('/big', { upgrade: () => ({}) }, { maxConnectionLifetime: 2 ** 31 }),
+    ).toThrow(HttpConfigError);
+    ws.register('/max', { upgrade: () => ({}) }, { maxConnectionLifetime: 2 ** 31 - 1 });
   });
 });
 
@@ -999,6 +1046,138 @@ describe('slots of upgrades that never open', () => {
     } finally {
       setSystemTime();
     }
+  });
+
+  test('an upgrade that expired in its guards and then never opens returns its slot', async () => {
+    const ws = await registry();
+    ws.configure({ maxConnectionsPerIp: 1, maxConnections: 1 });
+    ws.register('/x', { upgrade: () => ({}) });
+    const ctx = {};
+    ws.beginUpgrade(ctx);
+    later(31_000); // a guard took over 30s
+    try {
+      expect(ws.upgradesInProgress).toBe(0);
+      ws.reserve({ endpoint: '/x', data: null }, '1.2.3.4', ctx);
+      expect(() => ws.reserve({}, '1.2.3.4')).toThrow();
+      later(31_000); // its socket never opens
+      expect(ws.upgradesInProgress).toBe(0);
+      ws.reserve({}, '1.2.3.4');
+    } finally {
+      setSystemTime();
+    }
+  });
+
+  test('an upgrade that expired in its guards still fails closed at a late open', async () => {
+    const ws = await registry();
+    ws.configure({ maxPendingRevocations: 1 });
+    const opened: unknown[] = [];
+    ws.register('/x', { upgrade: () => ({}), open: (s) => void opened.push(s) });
+    const ctx = {};
+    ws.beginUpgrade(ctx);
+    // Lost while the upgrade was in its guards: never checked against it.
+    ws.closeWhere(() => false);
+    ws.closeWhere(() => false);
+    later(31_000);
+    try {
+      expect(ws.upgradesInProgress).toBe(0);
+      const data: WsData = { endpoint: '/x', data: null };
+      ws.reserve(data, '1.2.3.4', ctx);
+      const socket = { data, close: mock(() => {}) } as unknown as WsSocket & {
+        close: ReturnType<typeof mock>;
+      };
+      await ws.handler().open!(socket);
+      expect(socket.close).toHaveBeenCalledWith(1008, 'Revocation state unavailable');
+      expect(opened).toEqual([]);
+    } finally {
+      setSystemTime();
+    }
+  });
+
+  test('the endpoint gets no close for a late open it never saw (1013)', async () => {
+    const { ws, socket } = await reserved();
+    const events: string[] = [];
+    ws.register('/y', {
+      upgrade: () => ({}),
+      open: () => void events.push('open'),
+      message: () => void events.push('message'),
+      close: () => void events.push('close'),
+      drain: () => void events.push('drain'),
+    });
+    (socket.data as { endpoint: string }).endpoint = '/y';
+    later(31_000);
+    try {
+      expect(ws.upgradesInProgress).toBe(0);
+      ws.reserve({}, '1.2.3.4');
+      await ws.handler().open!(socket);
+      expect(socket.close).toHaveBeenCalledWith(1013, 'Too many WebSocket connections');
+      await ws.handler().message!(socket, 'x');
+      await ws.handler().drain!(socket);
+      await ws.handler().close!(socket, 1013, '');
+      expect(events).toEqual([]);
+    } finally {
+      setSystemTime();
+    }
+  });
+});
+
+describe('endpoint lifecycle', () => {
+  test('a socket revoked before open never reaches message, drain or close', async () => {
+    const ws = await registry();
+    const events: string[] = [];
+    ws.register('/x', {
+      upgrade: () => ({}),
+      open: () => void events.push('open'),
+      message: () => void events.push('message'),
+      close: () => void events.push('close'),
+      drain: () => void events.push('drain'),
+    });
+    const ctx = {};
+    const data: WsData = { endpoint: '/x', data: null };
+    ws.beginUpgrade(ctx);
+    ws.reserve(data, '1.2.3.4', ctx);
+    ws.closeWhere(() => true);
+    const socket = { data, close: mock(() => {}) } as unknown as WsSocket & {
+      close: ReturnType<typeof mock>;
+    };
+    await ws.handler().open!(socket);
+    expect(socket.close).toHaveBeenCalledWith(1008, 'Connection revoked');
+    await ws.handler().message!(socket, 'x');
+    await ws.handler().drain!(socket);
+    await ws.handler().close!(socket, 1008, 'Connection revoked');
+    expect(events).toEqual([]);
+  });
+
+  test('an open handler that throws closes the socket with 1011 (fails closed)', async () => {
+    const ws = await registry();
+    const events: string[] = [];
+    ws.register('/x', {
+      upgrade: () => ({}),
+      open: async () => {
+        await Bun.sleep(0);
+        throw new Error('no session');
+      },
+      close: (_s, code) => void events.push(`close:${code}`),
+    });
+    const socket = fakeSocket('/x');
+    await ws.handler().open!(socket);
+    expect(socket.close).toHaveBeenCalledWith(1011, 'Internal error');
+    // The endpoint saw open, so it still gets its close to clean up.
+    await ws.handler().close!(socket, 1011, 'Internal error');
+    expect(events).toEqual(['close:1011']);
+  });
+
+  test('a real client is disconnected with 1011 when open throws', async () => {
+    app = await startWith({
+      '/boom': {
+        endpoint: {
+          open() {
+            throw new Error('no session');
+          },
+        },
+      },
+    });
+    const socket = await connect(app, '/boom');
+    expect(await closed(socket)).toBe(1011);
   });
 });
 

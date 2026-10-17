@@ -278,7 +278,7 @@ See [errors](/guide/errors/) for the response format and production masking.
 | Option | Type | Default |
 | --- | --- | --- |
 | `type` | `string` | `'about:blank'` |
-| `title` | `string` | `STATUS_TITLES[status]`, or `'Error'` |
+| `title` | `string` | `STATUS_TITLES[status]`, else the reason phrase from `node:http`'s `STATUS_CODES` (`502` is `Bad Gateway`), else `'Error'` |
 | `extensions` | `Record<string, unknown>` | `{}` |
 | `headers` | `Bun.HeadersInit` | none |
 | `cause` | `unknown` | none |
@@ -332,7 +332,7 @@ options, WebSocket endpoints registered after `listen()`, and calling `listen()`
 | --- | --- |
 | `ProblemDetails` | The RFC 9457 body: `{ type: string; title: string; status: number; detail?: string; instance?: string; [extension: string]: unknown }`. |
 | `problemResponse(problem, headers?)` | A `Response` with `problem` as JSON, its `status`, `Content-Type: application/problem+json; charset=utf-8` and `X-Content-Type-Options: nosniff`. |
-| `STATUS_TITLES` | `Readonly<Record<number, string>>`: titles for 400, 401, 403, 404, 405, 409, 413, 415, 421, 422, 429, 500 and 503. |
+| `STATUS_TITLES` | `Readonly<Record<number, string>>`: titles for 400, 401, 403, 404, 405, 409, 413, 415, 421, 422, 429, 500 and 503 (RFC 9110 names). Other statuses take their title from `node:http`'s `STATUS_CODES`. |
 | `defaultErrorResponse(error, ctx, logger, development)` | The response Knead sends for an error that no filter handled, with production masking and 5xx logging. `ctx` needs only `req`. |
 
 ## Responses
@@ -403,7 +403,7 @@ modules register endpoints here). Inject it with `inject(WsRegistry)`.
 
 | Type | Definition |
 | --- | --- |
-| `WsEndpoint<D = unknown>` | `{ upgrade(ctx: Ctx): D \| false \| Promise<D \| false>; open?(ws); message?(ws, message: string \| Buffer); close?(ws, code, reason); drain?(ws) }`. `upgrade()` returns the socket data to accept, or `false` to answer `403`; throw an `HttpException` for another status. Errors thrown by the event hooks are logged. |
+| `WsEndpoint<D = unknown>` | `{ upgrade(ctx: Ctx): D \| false \| Promise<D \| false>; open?(ws); message?(ws, message: string \| Buffer); close?(ws, code, reason); drain?(ws) }`. `upgrade()` returns the socket data to accept, or `false` to answer `403`; throw an `HttpException` for another status. Errors thrown by the event hooks are logged; one thrown by `open` also closes the socket with `1011`. `message`, `close` and `drain` run only for sockets whose `open` ran. |
 | `WsSocket` | `ServerWebSocket<WsData>`, the socket the hooks receive. |
 | `WsData` | `{ readonly endpoint: string; readonly data: unknown; readonly ip?: string \| undefined }`: `data` is what `upgrade()` returned, `ip` the upgrade's `ctx.ip`. |
 | `WsMessageRate` | `{ limit: number; windowMs: number }`: a token bucket of `limit` messages refilled over `windowMs`. |
@@ -414,9 +414,9 @@ modules register endpoints here). Inject it with `inject(WsRegistry)`.
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `allowedOrigins` | `readonly string[] \| '*'` | same origin only | Origins allowed besides the request's own; `'*'` disables the check. Upgrades without an `Origin` header are allowed. |
+| `allowedOrigins` | `readonly string[] \| '*'` | same origin only | Origins allowed besides the request's own, each exactly `scheme://host[:port]` (no path, default port or wildcard); `'*'` disables the check. Upgrades without an `Origin` header are allowed. |
 | `messageRate` | `WsMessageRate \| false` | the server's `messageRate` | Per-socket rate; exceeding it closes the socket with `1008`. |
-| `maxConnectionLifetime` | `number` | no limit | Milliseconds after which a socket is closed with `4408`. |
+| `maxConnectionLifetime` | `number` | no limit | Milliseconds after which a socket is closed with `4408`, at most `2 ** 31 - 1`. |
 | `meta` | `Readonly<Record<PropertyKey, unknown>>` | none | Route-style metadata for the upgrade's `ctx.meta`, copied and frozen at `register()`. |
 
 #### WsServerOptions
@@ -431,7 +431,7 @@ when none is free.
 | `maxPayloadLength` | `number` | `262144` (256 KiB) | Largest message in bytes; a larger one drops the connection. |
 | `backpressureLimit` | `number` | `1048576` (1 MiB) | Bytes buffered for a slow reader before backpressure applies. |
 | `closeOnBackpressureLimit` | `boolean` | `true` | Close a socket over `backpressureLimit`. A non-boolean is an `HttpConfigError`. |
-| `idleTimeout` | `number` | `120` | Seconds without traffic before a socket is closed. |
+| `idleTimeout` | `number` | `120` | Seconds without traffic before a socket is closed, 0 to 960. |
 | `maxConnectionsPerIp` | `number \| false` | `100` | Open sockets per client IP; more upgrades get `429`. |
 | `ipv6Subnet` | `number` | `64` | IPv6 prefix length the per-IP limit groups by, 1 to 128. |
 | `maxConnections` | `number` | no limit | Open sockets in total; more upgrades get `503`. |
@@ -450,7 +450,7 @@ themselves.
 
 | Export | Description |
 | --- | --- |
-| `TrustProxy` | `false \| number \| readonly string[]`: ignore forwarding headers, trust that many proxy hops, or trust the listed CIDRs. See [the server](/guide/server/). |
+| `TrustProxy` | `false \| number \| readonly string[]`: ignore forwarding headers, trust that many proxy hops, or trust the listed CIDRs. A CIDR is an address with an optional `/` and 1 to 3 decimal digits (`10.0.0.0/8`); any other entry (`10.0.0.0/`, `10.0.0.0/0x8`, `10.0.0.0/8/x`, a non-string) is an `HttpConfigError`. See [the server](/guide/server/). |
 | `parseIp(ip)` | The address as 4 bytes (IPv4, including IPv4-mapped IPv6) or 16 bytes (IPv6) in a `Uint8Array`, or `undefined` when it is not an IP address. Zone ids are ignored. |
 | `formatIp(bytes)` | Dotted IPv4 for 4 bytes; RFC 5952 IPv6 (lowercase, longest zero run compressed) for 16. |
 | `normalizeIp(ip)` | The canonical text form of an address (as `ctx.ip` is): IPv4-mapped IPv6 becomes IPv4, IPv6 is compressed. Unparseable input is returned unchanged. |

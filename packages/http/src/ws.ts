@@ -61,7 +61,7 @@ export interface WsServerOptions {
   backpressureLimit?: number;
   /** Close a socket that exceeds `backpressureLimit`. Default true. */
   closeOnBackpressureLimit?: boolean;
-  /** Seconds without traffic before a socket is closed. Default 120. */
+  /** Seconds without traffic before a socket is closed, at most 960. Default 120. */
   idleTimeout?: number;
   /**
    * Open sockets per client IP (`ctx.ip`, IPv6 grouped by `ipv6Subnet`); more upgrades get 429.
@@ -148,10 +148,19 @@ interface SocketState {
   timer: ReturnType<typeof setTimeout> | undefined;
 }
 
-function assertInteger(name: string, value: unknown, min: number): void {
-  if (typeof value !== 'number' || !Number.isInteger(value) || value < min) {
+/** The largest delay setTimeout() honours; above it the timer fires after 1 ms. */
+const MAX_TIMEOUT = 2 ** 31 - 1;
+
+function assertInteger(name: string, value: unknown, min: number, max?: number): void {
+  if (
+    typeof value !== 'number' ||
+    !Number.isInteger(value) ||
+    value < min ||
+    (max !== undefined && value > max)
+  ) {
+    const range = max === undefined ? `>= ${min}` : `from ${min} to ${max}`;
     throw new HttpConfigError(
-      `WebSocket ${name} must be an integer >= ${min}, got ${String(value)}.`,
+      `WebSocket ${name} must be an integer ${range}, got ${String(value)}.`,
     );
   }
 }
@@ -192,7 +201,8 @@ function resolveServerOptions(options: WsServerOptions): ResolvedServerOptions {
       `WebSocket closeOnBackpressureLimit must be a boolean, got ${String(o.closeOnBackpressureLimit)}.`,
     );
   }
-  assertInteger('idleTimeout', o.idleTimeout, 0);
+  // Bun rejects more than 960s, but a value above 2^31 wraps around instead of being rejected.
+  assertInteger('idleTimeout', o.idleTimeout, 0, 960);
   if (o.maxConnectionsPerIp !== false)
     assertInteger('maxConnectionsPerIp', o.maxConnectionsPerIp, 1);
   if (o.maxConnections !== undefined) assertInteger('maxConnections', o.maxConnections, 1);
@@ -217,6 +227,27 @@ function originOf(value: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * An allowedOrigins entry must be exactly an origin (`scheme://host[:port]`, any case): a path,
+ * query, credentials, default port or wildcard would never be what a browser sends, so the entry
+ * would silently match nothing or more than it says.
+ */
+function assertOrigin(path: string, entry: unknown): void {
+  const origin = typeof entry === 'string' ? originOf(entry) : undefined;
+  // `new URL()` accepts `*` in a host, so `https://*.example.com` is an origin that never matches.
+  const wildcard = typeof entry === 'string' && entry.includes('*');
+  if (!wildcard && origin !== undefined && origin === (entry as string).toLowerCase()) return;
+  const shown = JSON.stringify(entry);
+  const hint = wildcard
+    ? 'wildcards are not supported; list each origin'
+    : origin === undefined
+      ? 'expected scheme://host[:port]'
+      : `expected the bare origin ${JSON.stringify(origin)}`;
+  throw new HttpConfigError(
+    `Invalid allowedOrigins entry for WebSocket endpoint ${path}: ${shown} (${hint}).`,
+  );
 }
 
 /**
@@ -267,6 +298,8 @@ export class WsRegistry {
   readonly #endpoints = new Map<string, WsEndpoint<any>>();
   readonly #options = new Map<string, WsEndpointOptions>();
   readonly #sockets = new Map<WsSocket, SocketState>();
+  /** Sockets whose endpoint saw open: only those get message, drain and close. */
+  readonly #opened = new WeakSet<WsSocket>();
   /** Upgrade data objects holding a connection slot, with the IP they count against. */
   readonly #reserved = new WeakMap<object, string | undefined>();
   readonly #perIp = new Map<string, number>();
@@ -319,17 +352,16 @@ export class WsRegistry {
     }
     const origins = options.allowedOrigins;
     if (origins !== undefined && origins !== '*') {
-      for (const origin of origins) {
-        if (originOf(origin) === undefined) {
-          throw new HttpConfigError(
-            `Invalid allowedOrigins entry for WebSocket endpoint ${normalized}: ${JSON.stringify(origin)}`,
-          );
-        }
-      }
+      for (const origin of origins) assertOrigin(normalized, origin);
     }
     assertRate(`messageRate of ${normalized}`, options.messageRate);
     if (options.maxConnectionLifetime !== undefined) {
-      assertInteger(`maxConnectionLifetime of ${normalized}`, options.maxConnectionLifetime, 1);
+      assertInteger(
+        `maxConnectionLifetime of ${normalized}`,
+        options.maxConnectionLifetime,
+        1,
+        MAX_TIMEOUT,
+      );
     }
     const meta = options.meta;
     if (meta !== undefined && (typeof meta !== 'object' || meta === null || Array.isArray(meta))) {
@@ -387,8 +419,15 @@ export class WsRegistry {
       this.#withData.set(data, entry);
       return;
     }
+    // The upgrade expired while in its guards: it is pending again from now, so its slot is
+    // returned if its socket never opens. Its marks are kept, so it still fails closed at open
+    // for a predicate it missed.
     const expired = this.#expiredUpgrades.get(ctx);
-    if (expired !== undefined) this.#expiredUpgrades.set(data, expired);
+    if (expired !== undefined) {
+      const revived: UpgradeEntry = { ...expired, at: Date.now(), hasData: true };
+      this.#upgrades.set(data, revived);
+      this.#withData.set(data, revived);
+    }
   }
 
   /** Takes a slot counted against `key` (the masked IP, if limited), or throws 429 / 503. */
@@ -537,22 +576,30 @@ export class WsRegistry {
         const entry = this.#upgrades.get(ws.data) ?? this.#expiredUpgrades.get(ws.data);
         this.endUpgrade(ws.data);
         if (entry !== undefined && this.#reapply(ws, entry)) return;
-        await this.#dispatch(ws, 'open');
+        // Marked before open runs, so messages that arrive while an async open is pending are
+        // still delivered.
+        this.#opened.add(ws);
+        // An endpoint that failed to set up its socket must not serve it (fail closed).
+        if (!(await this.#dispatch(ws, 'open'))) ws.close(1011, 'Internal error');
       },
-      message: (ws, message) => {
-        if (!this.#admitMessage(ws)) return;
-        return this.#dispatch(ws, 'message', message);
+      message: async (ws, message) => {
+        if (!this.#opened.has(ws) || !this.#admitMessage(ws)) return;
+        await this.#dispatch(ws, 'message', message);
       },
-      close: (ws, code, reason) => {
+      close: async (ws, code, reason) => {
         const state = this.#sockets.get(ws);
         if (state?.timer !== undefined) clearTimeout(state.timer);
         this.#sockets.delete(ws);
         this.release(ws.data);
         // An idle registry holds no predicate closures.
         if (this.#upgrades.size === 0) this.#dropKept();
-        return this.#dispatch(ws, 'close', code, reason);
+        if (!this.#opened.has(ws)) return;
+        this.#opened.delete(ws);
+        await this.#dispatch(ws, 'close', code, reason);
       },
-      drain: (ws) => this.#dispatch(ws, 'drain'),
+      drain: async (ws) => {
+        if (this.#opened.has(ws)) await this.#dispatch(ws, 'drain');
+      },
     };
   }
 
@@ -772,18 +819,21 @@ export class WsRegistry {
     return false;
   }
 
-  async #dispatch(ws: WsSocket, event: WsEvent, ...args: unknown[]): Promise<void> {
+  /** Runs the endpoint's handler for `event`; returns false when it threw (the error is logged). */
+  async #dispatch(ws: WsSocket, event: WsEvent, ...args: unknown[]): Promise<boolean> {
     const endpoint = this.#endpoints.get(ws.data.endpoint);
     const fn = endpoint?.[event] as ((...a: unknown[]) => unknown) | undefined;
-    if (!fn) return;
+    if (!fn) return true;
     try {
       await fn.call(endpoint, ws, ...args);
+      return true;
     } catch (error) {
       logError(
         this.#log,
         `WebSocket ${event} handler for ${logValue(ws.data.endpoint)} threw`,
         error,
       );
+      return false;
     }
   }
 }

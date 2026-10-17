@@ -33,16 +33,20 @@ A `WsEndpoint<D>` has one required method and four optional ones:
 | Method | Called |
 | --- | --- |
 | `upgrade(ctx)` | On the upgrade request, after middleware and guards. Return the socket data (`D`) to accept, `false` to reject with `403`, or throw an `HttpException` for another status. May be `async`. |
-| `open(ws)` | When the socket is open. |
+| `open(ws)` | When the socket is open, unless it was closed first (a revocation, or `1013`). |
 | `message(ws, message)` | For each message: a `string` for text frames, a `Buffer` for binary ones. |
-| `close(ws, code, reason)` | When the socket has closed. |
+| `close(ws, code, reason)` | When the socket has closed, if `open` ran for it. |
 | `drain(ws)` | When a socket that hit backpressure can take more data. |
 
 Each socket is a `WsSocket`, Bun's `ServerWebSocket` with `WsData` as its data: `ws.data.endpoint`
 is the endpoint path, `ws.data.data` is what `upgrade()` returned, and `ws.data.ip` is the client
 IP of the upgrade request (`ctx.ip`). Everything else, such as `send()`, `subscribe()` and
-`publish()`, is Bun's API. An error thrown (or a rejected promise) in `open`, `message`, `close` or
-`drain` is logged as `WebSocket <event> handler for <path> threw` and does not close the socket.
+`publish()`, is Bun's API. `message`, `close` and `drain` run only for sockets whose `open` ran, so a
+socket closed before it reached the endpoint (revoked while upgrading, or `1013`) never gets
+them. An error thrown (or a rejected promise) in any handler is logged as
+`WebSocket <event> handler for <path> threw`. One in `open` also closes the socket with `1011`
+(`Internal error`), so a socket the endpoint failed to set up is never served; its `close` still
+runs. One in `message`, `close` or `drain` does not close the socket.
 
 ### Authenticating the socket
 
@@ -118,9 +122,9 @@ check itself, exported for transports that verify origins on their own.
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `allowedOrigins` | `readonly string[] \| '*'` | Same origin only | Origins accepted in addition to the same origin. Each entry must be a valid origin URL, or `register()` throws. `'*'` disables the check. |
+| `allowedOrigins` | `readonly string[] \| '*'` | Same origin only | Origins accepted in addition to the same origin. Each entry must be exactly an origin, `scheme://host[:port]` (any case), or `register()` throws: no path, trailing slash, query, credentials, default port or wildcard (`https://*.example.com` is not supported; list each origin). `'*'` disables the check. |
 | `messageRate` | `WsMessageRate \| false` | The server's `messageRate` | Per-socket message rate for this endpoint. `false` disables it. |
-| `maxConnectionLifetime` | `number` | No limit | Milliseconds after opening at which the socket is closed with `4408` (`Connection lifetime exceeded`). |
+| `maxConnectionLifetime` | `number` | No limit | Milliseconds after opening at which the socket is closed with `4408` (`Connection lifetime exceeded`). An integer from 1 to 2147483647 (`2 ** 31 - 1`, the largest `setTimeout()` delay). |
 | `meta` | `Readonly<Record<PropertyKey, unknown>>` | none | Route-style metadata that guards read as `ctx.meta` on upgrades. On the path of a `GET` route it is merged over that route's meta, for upgrades only. Copied and frozen at `register()`. |
 
 A `WsMessageRate` is `{ limit, windowMs }`: a token bucket of `limit` messages, refilled evenly
@@ -138,7 +142,7 @@ as `WS_DEFAULTS`:
 | `maxPayloadLength` | `number` | `262144` (256 KiB) | The connection is dropped (close code `1006`). The default is above `@knead-js/graphql`'s 100 KiB query limit plus its message envelope. |
 | `backpressureLimit` | `number` | `1048576` (1 MiB) | Bytes buffered for a slow reader before backpressure applies. |
 | `closeOnBackpressureLimit` | `boolean` | `true` | A socket over `backpressureLimit` is closed. |
-| `idleTimeout` | `number` | `120` | Seconds without traffic before the socket is closed. |
+| `idleTimeout` | `number` | `120` | Seconds without traffic before the socket is closed. An integer from 0 to 960. |
 | `maxConnectionsPerIp` | `number \| false` | `100` | Further upgrades from that client get `429` (`Too many WebSocket connections from this address.`). `false` disables it. |
 | `ipv6Subnet` | `number` | `64` | IPv6 clients are counted per prefix of this length (one client usually controls a whole /64). An integer from 1 to 128; 128 counts full addresses. |
 | `maxConnections` | `number` | No limit | Open sockets in total; further upgrades get `503`. |

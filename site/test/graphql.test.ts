@@ -272,7 +272,9 @@ describe('graphql: subscriptions', () => {
     });
     await Bun.sleep(50);
     expect(mod!.get(SignOutService).signOut('grace-token', 'a2')).toBe(1);
-    expect((await sub.next()).done).toBe(true);
+    // A revoked subscription is not a completed one: next() rejects with the close code.
+    const revoked = (await sub.next().catch((error: unknown) => error)) as Error;
+    expect(revoked.message).toBe('WebSocket closed: 1008 Connection revoked');
     mod!.get(PUBSUB).publish('chat.r1', { text: 'still here' });
     expect((await other.next()).value).toEqual({ data: { message: 'still here' } });
     await other.close();

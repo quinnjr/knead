@@ -65,10 +65,9 @@ Responses are the framework's real responses, so errors arrive as
 the new options. It takes the same options as `listen()` (`ListenOptions` from `@knead-js/http`),
 with `port: 0` and `hostname: '127.0.0.1'` as defaults. `app.url` is the server's URL.
 
-> [!WARNING]
-> `path` is resolved against the test server's URL with `new URL(path, app.url)`, so an absolute
-> URL is followed to whatever host it names, headers included. Pass paths, never URLs built from
-> untrusted input.
+> [!NOTE]
+> `path` must start with `/`, or `request()` rejects with a `TypeError`. It is appended to the test
+> server's origin, so a request always goes to the test server, even for `'//other.example/x'`.
 
 ## Override providers
 
@@ -183,8 +182,11 @@ the server closes the socket first, it rejects with
 `WebSocket closed before connection_ack: <code> <reason>`, so
 `rejects.toThrow('4403')` asserts that `onConnect` refused the client. The
 returned iterator yields each `next` payload, ends when the server completes the subscription,
-and yields an `error` message as `{ errors }` before ending. `close()` sends `complete` and closes
-the socket; breaking out of a `for await` loop does the same.
+and yields an `error` message as `{ errors }` before ending. If the server closes the socket with
+any code other than 1000 first (for example `closeWhere()` revoking it with 1008), `next()`
+rejects with `WebSocket closed: <code> <reason>` instead of ending quietly, so a revoked
+subscription cannot pass for a completed one. `close()` sends `complete` and closes the socket;
+breaking out of a `for await` loop does the same.
 
 The server registers the subscription shortly after the acknowledgment, so an event published
 right away can be missed. Trigger the event until the subscription yields, as `nextEvent` does
