@@ -334,19 +334,27 @@ try {
   });
 
   await check(`rate limit answers 429 after ${RATE_LIMIT} requests per minute`, async () => {
+    // Earlier checks already spent part of the window, so count from the first remaining value.
+    let remaining: number | undefined;
     for (let i = 0; i <= RATE_LIMIT; i++) {
       const res = await fetch(`${base}/graphql`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ query: '{ __typename }' }),
       });
+      const limit = res.headers.get('ratelimit-limit');
+      assert(limit === String(RATE_LIMIT), `RateLimit-Limit is ${limit}, expected ${RATE_LIMIT}`);
       if (res.status === 429) {
         const retryAfter = Number(res.headers.get('retry-after'));
         assert(retryAfter > 0, 'no Retry-After');
         assert(res.headers.get('x-frame-options') === 'DENY', 'no security headers on 429');
+        assert(remaining !== undefined, 'rate limited before any request was allowed');
+        // The request that reported `remaining` plus `remaining` more were allowed.
+        assert(i === remaining + 1, `429 after ${i} requests, but ${remaining} were remaining`);
         return `429 after ${i} more requests, Retry-After ${retryAfter}s`;
       }
       assert(res.status === 200, `unexpected status ${res.status}`);
+      remaining ??= Number(res.headers.get('ratelimit-remaining'));
     }
     throw new Error('never rate limited');
   });

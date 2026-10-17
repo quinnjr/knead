@@ -24,6 +24,7 @@ import {
 } from './net.js';
 import { DEFAULT_MAX_PARAMS, requestUrl } from './request.js';
 import { resolveFilter, resolveGuard, resolveMiddleware } from './resolve.js';
+import { isHeaderValue } from './response.js';
 import { checkBunVersion } from './runtime-version.js';
 import { APP_FILTER, APP_GUARD, APP_MIDDLEWARE, HTTP_DEVELOPMENT } from './tokens.js';
 import type { FilterRef, GlobalMiddleware, GuardRef, MiddlewareRef } from './types.js';
@@ -89,7 +90,10 @@ export interface ListenOptions {
    * and shared caches according to their heuristics.
    */
   defaultCacheControl?: string;
-  /** Request validation: `redactIssueMessages` makes body and query issue messages generic. */
+  /**
+   * Request validation: `redactIssueMessages` makes params, query and body issue messages
+   * generic.
+   */
   validation?: ValidationOptions;
   /** Largest accepted request body in bytes; larger bodies get 413. Default 1 MiB. */
   maxRequestBodySize?: number;
@@ -241,6 +245,7 @@ export class HttpApplication {
   #redirect: Server<undefined> | undefined;
   #closing: Promise<void> | undefined;
   /** The in-flight listen(), so close() can wait for it to settle. */
+  /** Set from the start of listen() until it settles. */
   #pendingListen: Promise<unknown> | undefined;
   readonly #signalHandlers: [NodeJS.Signals, () => void][] = [];
   #compiled: CompiledApp | undefined;
@@ -427,10 +432,12 @@ export class HttpApplication {
     if (this.#server || this.#pendingListen) {
       throw new HttpConfigError('listen() was already called.');
     }
-    const pending = this.#listen(options);
-    this.#pendingListen = pending;
+    // Set before #listen() runs: hooks it calls synchronously already see a listen in progress.
+    const { promise, resolve, reject } = Promise.withResolvers<Server<WsData>>();
+    this.#pendingListen = promise;
     try {
-      return await pending;
+      this.#listen(options).then(resolve, reject);
+      return await promise;
     } finally {
       this.#pendingListen = undefined;
     }
@@ -444,7 +451,7 @@ export class HttpApplication {
     }
     const hosts = this.#allowedHosts(options);
     const cc = options.defaultCacheControl;
-    if (cc !== undefined && (typeof cc !== 'string' || cc === '' || /[\r\n]/.test(cc))) {
+    if (cc !== undefined && (typeof cc !== 'string' || cc === '' || !isHeaderValue(cc))) {
       throw new HttpConfigError(
         `defaultCacheControl must be a header value, got ${JSON.stringify(cc)}.`,
       );
@@ -467,35 +474,39 @@ export class HttpApplication {
       .sort((a, b) => (b.entry.priority ?? 0) - (a.entry.priority ?? 0) || a.index - b.index);
     const ws = this.context.get(WsRegistry);
     ws.configure(options.websocket ?? {});
-    const compiled = compileApplication({
-      modules: this.context.modules,
-      globalMiddleware: entries.map(({ entry, injector }) =>
-        resolveMiddleware(entry.middleware, injector),
-      ),
-      globalGuards: [
-        ...this.context
-          .collectEntries(APP_GUARD)
-          .map(({ value, injector }) => resolveGuard(value, injector, 'APP_GUARD')),
-        ...this.#extraGuards.map((g) => resolveGuard(g, root, 'useGlobalGuards()')),
-      ],
-      globalFilters: [
-        ...this.context
-          .collectEntries(APP_FILTER)
-          .map(({ value, injector }) => resolveFilter(value, injector)),
-        ...this.#extraFilters.map((f) => resolveFilter(f, root)),
-      ],
-      logger: this.logger,
-      development: this.development,
-      net: {
-        trust: compileTrust(options.trustProxy ?? false),
-        tls: options.tls !== undefined,
-        maxParams: options.maxParams ?? DEFAULT_MAX_PARAMS,
-      },
-      ws,
-      hosts,
-      validation: options.validation,
-      defaultCacheControl: options.defaultCacheControl,
-    });
+    // Transients built for the routes here (guards, middleware, filters) are startup instances:
+    // tracked, so initializeLate() below gives them init hooks and close() shutdown hooks.
+    const compiled = this.context.trackConstructed(() =>
+      compileApplication({
+        modules: this.context.modules,
+        globalMiddleware: entries.map(({ entry, injector }) =>
+          resolveMiddleware(entry.middleware, injector),
+        ),
+        globalGuards: [
+          ...this.context
+            .collectEntries(APP_GUARD)
+            .map(({ value, injector }) => resolveGuard(value, injector, 'APP_GUARD')),
+          ...this.#extraGuards.map((g) => resolveGuard(g, root, 'useGlobalGuards()')),
+        ],
+        globalFilters: [
+          ...this.context
+            .collectEntries(APP_FILTER)
+            .map(({ value, injector }) => resolveFilter(value, injector)),
+          ...this.#extraFilters.map((f) => resolveFilter(f, root)),
+        ],
+        logger: this.logger,
+        development: this.development,
+        net: {
+          trust: compileTrust(options.trustProxy ?? false),
+          tls: options.tls !== undefined,
+          maxParams: options.maxParams ?? DEFAULT_MAX_PARAMS,
+        },
+        ws,
+        hosts,
+        validation: options.validation,
+        defaultCacheControl: options.defaultCacheControl,
+      }),
+    );
     // Middleware, guards and filters constructed by the compiler get their init hooks now (and
     // shutdown hooks at close()); a failing hook rejects listen() before anything is bound.
     await this.context.initializeLate();
@@ -592,7 +603,10 @@ export class HttpApplication {
     });
   }
 
+  /** Global middleware, guards and filters are compiled by listen(): later calls would be lost. */
   #assertNotListening(method: string): void {
-    if (this.#server) throw new HttpConfigError(`${method}() must be called before listen().`);
+    if (this.#server || this.#pendingListen || this.#closing) {
+      throw new HttpConfigError(`${method}() must be called before listen() and close().`);
+    }
   }
 }

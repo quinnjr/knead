@@ -9,7 +9,7 @@ import {
 } from './exceptions.js';
 import { type Logger, logValue, redactCredentials, redactValue } from './logger.js';
 import { CATCH } from './metadata.js';
-import { requestUrl } from './request.js';
+import { requestPathname } from './request.js';
 import type { ExceptionFilter, Guard, Middleware } from './types.js';
 
 export type Handler = (ctx: RequestContext) => Promise<Response>;
@@ -69,7 +69,7 @@ export function defaultErrorResponse(
   logger: Logger,
   development: boolean,
 ): Response {
-  const instance = requestUrl(ctx.req).pathname;
+  const instance = requestPathname(ctx.req);
   const where = `${logValue(ctx.req.method)} ${logValue(instance)}`;
   const log = { logger, development };
   if (error instanceof HttpException) {

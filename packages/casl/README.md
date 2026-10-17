@@ -155,6 +155,7 @@ caller. The grant is untrusted input:
   empty grant.
 - A malformed or empty grant is still an authenticated identity with an empty ability, so every
   check is a `403`. Only a `resolve()` that returns no identity produces a `401`.
+- The grant is parsed before `defineUserAbility()` runs: a malformed or missing grant skips it.
 - Only own enumerable keys are read; `__proto__`, `constructor` and `prototype` are skipped.
 - For a first-party session (your own app's sign-in), `fullGrant(permissions)` grants every area at
   its highest level. The user's own abilities still apply.
@@ -178,7 +179,7 @@ Things to know:
   passes `@Can('update', 'Post')`. Load the record and call `authorize(ctx, action,
   asSubject('Post', record))`, as the quick start does.
 - **One ability per request.** The guard, `authorize()` and `forCtx()` share an ability cached on
-  `ctx.state`, so `resolve()` and `defineUserAbility()` run once.
+  `ctx.state`, so `resolve()` and `defineUserAbility()` run at most once.
 - **CASL's `ForbiddenError`** thrown by your code becomes a `403` through `CaslForbiddenFilter`,
   without CASL's message (it can describe your rules).
 - **Import CASL from `@knead-js/casl`.** Use the re-exported `ForbiddenError`, `subject`,

@@ -71,6 +71,7 @@ export class TransactionHost {
   run<R>(fn: () => Promise<R>, options: RunOptions = {}): Promise<R> {
     try {
       assertPropagation(options.propagation);
+      assertIsolationLevel(options.isolationLevel);
     } catch (error) {
       return Promise.reject(error);
     }

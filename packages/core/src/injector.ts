@@ -32,6 +32,14 @@ export class ContainerState {
   readonly injectors: ModuleInjector[] = [];
   readonly overrides: ReadonlyMap<Token, NormalizedProvider>;
   globals: readonly ModuleInjector[] = [];
+  /**
+   * Open tracking scopes: bootstrap (until endBootstrap()) and trackAll() calls. Inside one every
+   * transient is tracked; otherwise only one constructed for a singleton (#singletonsBuilding),
+   * so transients resolved at runtime are neither kept nor given hooks.
+   */
+  #scopes = 1;
+  /** Singletons on the stack: a transient built under one is created once per singleton. */
+  #singletonsBuilding = 0;
   readonly #tracked = new Set<unknown>();
 
   constructor(overrides: Iterable<readonly [Token, Provider]> = []) {
@@ -59,15 +67,35 @@ export class ContainerState {
       throw new CircularDependencyError(path);
     }
     this.stack.push(record);
+    const singleton = p.scope === 'singleton' && p.kind !== 'existing';
+    if (singleton) this.#singletonsBuilding++;
     try {
       const value = record.owner.instantiate(record);
-      if (p.kind !== 'existing') this.#track(value);
+      if (p.kind !== 'existing' && (p.scope !== 'transient' || this.#tracksTransient())) {
+        this.#track(value);
+      }
       if (p.scope === 'transient') return value;
       record.value = value;
       record.state = 'ready';
       return value;
     } finally {
+      if (singleton) this.#singletonsBuilding--;
       this.stack.pop();
+    }
+  }
+
+  /** Closes the bootstrap tracking scope (ApplicationContext.create, once started). */
+  endBootstrap(): void {
+    this.#scopes--;
+  }
+
+  /** Runs `fn` with every instance it constructs tracked, transients included. */
+  trackAll<T>(fn: () => T): T {
+    this.#scopes++;
+    try {
+      return fn();
+    } finally {
+      this.#scopes--;
     }
   }
 
@@ -112,6 +140,14 @@ export class ContainerState {
         await this.resolveAsync(dependency, [...waiting, record]);
       }
     }
+  }
+
+  /**
+   * Whether a transient being constructed now is a startup instance: inside a tracking scope, or
+   * as a dependency of a singleton under construction (created at most once per singleton).
+   */
+  #tracksTransient(): boolean {
+    return this.#scopes > 0 || this.#singletonsBuilding > 0;
   }
 
   #track(value: unknown): void {
@@ -163,8 +199,13 @@ export class ModuleInjector implements InjectorLike {
       if (options?.optional) return undefined;
       throw this.noProvider(token);
     }
-    if (records[0]!.provider.multi) return records.map((r) => this.state.resolve(r)) as T;
-    return this.state.resolve(records[0]!) as T;
+    return this.resolveRecords(records) as T;
+  }
+
+  /** @internal Resolves lookup() records: all of a multi token, else the single one. */
+  resolveRecords(records: readonly ProviderRecord[]): unknown {
+    if (records[0]!.provider.multi) return records.map((r) => this.state.resolve(r));
+    return this.state.resolve(records[0]!);
   }
 
   /** Own providers first, then exports of imported modules, then exports of global modules. */
@@ -238,7 +279,8 @@ export class ModuleInjector implements InjectorLike {
   resolveOrConstruct<T>(cls: Type<T>): T {
     let record = this.#constructed.get(cls);
     if (!record) {
-      if (this.lookup(cls)) return this.get(cls) as T;
+      const visible = this.lookup(cls);
+      if (visible) return this.resolveRecords(visible) as T;
       const provider = this.state.overrides.get(cls) ?? {
         kind: 'class' as const,
         token: cls,

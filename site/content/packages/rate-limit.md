@@ -44,9 +44,11 @@ application shuts down.
 
 `validateRateLimitOptions(options: RateLimitModuleOptions): void` throws a `RangeError` for a
 `limit` that is not a positive integer, an invalid or out-of-range `window`, an `ipv6Subnet`
-outside 1 to 128 (`0` would put every IPv6 client in one bucket), and an unknown
-`onMissingKey`, `onStoreError` or `algorithm`. An unknown `onStoreError` is rejected rather than
-treated as `'allow'`, so a typo cannot silently make the limit fail open.
+outside 1 to 128 (`0` would put every IPv6 client in one bucket), an unknown
+`onMissingKey`, `onStoreError` or `algorithm`, a `store` without a `consume()` method, a `key`
+that is not a function and a `middleware` that is not a boolean. An unknown `onStoreError` is
+rejected rather than treated as `'allow'`, and a malformed `store` rather than failing on every
+request, so a mistake cannot silently make the limit fail open.
 
 ## Counters
 
@@ -83,10 +85,10 @@ controller (class decorator) its own counter. `RateLimitRouteOptions`:
 | `window` | `Duration` | the module's `window` | Parsed with `parseDuration()`. |
 | `key` | `KeyFn` | the module's `key` | The key function for this route. |
 
-The options are validated when the decorator is applied: a `limit` that is not a positive integer
-or an invalid `window` throws a `RangeError` at import time. The decorator stores
-`RateLimitRouteMeta` (the options plus `windowMs`, the parsed window in milliseconds) in route
-metadata under `RATE_LIMIT_META`.
+The options are validated when the decorator is applied: a `limit` that is not a positive
+integer, an invalid `window` or a `key` that is not a function throws a `RangeError` at import
+time. The decorator stores `RateLimitRouteMeta` (the options plus `windowMs`, the parsed window in
+milliseconds) in route metadata under `RATE_LIMIT_META`.
 
 A method decorator replaces a controller decorator rather than merging with it: options the method
 leaves out come from the module, not from the controller.
@@ -206,7 +208,8 @@ store.
 or a string such as `'500ms'`, `'15s'`, `'1.5m'`, `'1h'` or `'1d'`.
 
 `parseDuration(value: Duration | string): number` returns whole milliseconds, rounded up and at
-least 1. It throws a `RangeError` for anything else (`'1w'`, `'1 m'`), for zero, negative or
+least 1. It throws a `RangeError` for anything else (`'1w'`, `'1 m'`, `null`, `undefined`, an
+object), for zero, negative or
 non-finite values, and for more than `MAX_DURATION_MS`, 31536000000 (365 days).
 
 ## Stores
@@ -222,7 +225,7 @@ four instances behind a load balancer, a client effectively gets four times the 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `maxKeys` | `number` | `10000` | Most counters kept (an integer of at least 1). The least recently used are evicted, which resets them. A flood of distinct keys can therefore reset other clients' counters: size it for your key cardinality, or use `RedisStore`. |
-| `sweepIntervalMs` | `number` | `60000` | How often expired counters are removed. `0` disables the timer. The timer does not keep the process alive. |
+| `sweepIntervalMs` | `number` | `60000` | How often expired counters are removed. `0` disables the timer. A negative, `NaN` or infinite value is a `RangeError`. The timer does not keep the process alive. |
 | `hashKeys` | `boolean` | `true` | Store keys as HMAC-SHA256 hashes (32 hex characters) under a random per-process secret, so client IPs and API keys cannot be read from a memory dump and long keys cost a fixed size. |
 | `now` | `() => number` | `Date.now` | The clock, for tests. |
 
@@ -232,7 +235,9 @@ It also has `size` (the number of counters), `sweep()` and `close()` (stops the 
 
 Counters shared by every instance through Redis or Valkey. Each `consume()` is one Lua script
 (`EVALSHA`, falling back to `EVAL` when the script is not cached), so checks are atomic, and the
-script uses the Redis server's `TIME` as its clock, so instance clocks do not matter.
+script uses the Redis server's `TIME` as its clock, so whether a request is admitted does not
+depend on instance clocks. The `RateLimit-Reset` and `Retry-After` headers are computed from the
+store's `resetAt` against the instance clock, so a skewed instance reports them off by its skew.
 
 <<< security/redis-store.ts#store title="rate-limit.module.ts"
 
@@ -247,7 +252,13 @@ script uses the Redis server's `TIME` as its clock, so instance clocks do not ma
 | `hashSecret` | `string` or `Uint8Array` | none | Key for the hashes (HMAC-SHA256), at least 32 bytes and the same on every instance. Without it, the hash is plain SHA-256, and (with `hashKeys` on) a warning is logged once per process. |
 | `requireTls` | `boolean` | `false` | Throw an `HttpConfigError` at construction instead of only warning when the URL is plaintext to a remote host. |
 | `commandTimeout` | `number` | `250` | Milliseconds to wait for Redis before the call fails as a store error. An integer of at least 1. |
-| `logger` | `Logger` | a `ConsoleLogger('knead:rate-limit')` | Where the warnings go. |
+| `logger` | `Logger` | the application's `LOGGER` | Where the warnings go. Without it, the construction warnings are held until `RateLimitModule` starts and passes its `LOGGER` (`setLogger()`); a store used without the module sends them to a `ConsoleLogger('knead:rate-limit')` at its first `consume()`. |
+
+When it builds its own client (no `client` option), the store creates it with
+`enableOfflineQueue: false` and a `connectionTimeout` of `max(commandTimeout, 1000)` ms, and
+connects before sending. While Redis is unreachable, each `consume()` fails within
+`commandTimeout` as a store error instead of queueing a script that would be replayed, and
+consume counters, once Redis is back.
 
 Rules that protect the data in Redis:
 
@@ -274,6 +285,7 @@ A store implements `RateLimitStore`:
 | --- | --- | --- |
 | `consume` | `(key: string, rule: RateLimitRule) => Promise<ConsumeResult>` | Counts one request atomically and reports the outcome. |
 | `close` | `() => void` or `() => Promise<void>`, optional | Called when the application shuts down. |
+| `setLogger` | `(logger: Logger) => void`, optional | Called once when `RateLimiter` is created, with the application's `LOGGER`, for a store built outside dependency injection. |
 
 `ConsumeResult` is `{ allowed: boolean; remaining: number; resetAt: number }`. `resetAt` is in
 epoch milliseconds: on a denial, the earliest time a request would be admitted (it becomes
@@ -291,8 +303,8 @@ throws a `RangeError` unless `prefix` is an integer from 0 to 128.
 ### `hashKey()`
 
 `hashKey(key: string, secret?: string | Uint8Array): string` returns the first 32 hex characters
-(128 bits) of HMAC-SHA256 under `secret`, or of a plain SHA-256 without one. Use it in a custom
-store.
+(128 bits) of HMAC-SHA256 under `secret`, or of a plain SHA-256 without one (both computed with
+`Bun.CryptoHasher`). Use it in a custom store.
 
 ## Classes and tokens
 

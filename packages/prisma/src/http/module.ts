@@ -17,7 +17,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Validates `options` and returns a snapshot of them. `map` is copied first (each own key read
+ * Validates `options` and returns a frozen snapshot of them. `map` is copied first (each own key read
  * exactly once, so a getter cannot change its answer) and the copy is what gets validated, frozen
  * and stored.
  */
@@ -26,7 +26,7 @@ function snapshotHttpOptions(options: unknown): PrismaHttpOptions {
     throw new KneadError('PrismaHttpModule options must be an object.');
   }
   const { map } = options as { map?: unknown };
-  if (map === undefined) return options as PrismaHttpOptions;
+  if (map === undefined) return Object.freeze({ ...(options as PrismaHttpOptions) });
   if (!isPlainObject(map)) {
     throw new KneadError('PrismaHttpModule `map` must be a plain object of mapper functions.');
   }
@@ -37,7 +37,7 @@ function snapshotHttpOptions(options: unknown): PrismaHttpOptions {
       throw new KneadError(`PrismaHttpModule \`map.${String(key)}\` must be a function.`);
     }
   }
-  return { ...(options as PrismaHttpOptions), map: Object.freeze(copy) as never };
+  return Object.freeze({ ...(options as PrismaHttpOptions), map: Object.freeze(copy) as never });
 }
 
 const PRISMA_HTTP_SETUP = new InjectionToken<true>('knead:prisma-http:setup');

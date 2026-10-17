@@ -197,8 +197,10 @@ The defaults bound what one request can cost:
 | WebSocket limits (`websocket`) | See [WebSockets](/guide/websockets/#limits) | |
 
 Parameters are counted before they are parsed, so an oversized query string or form is rejected
-without building it. Parsed query strings, forms and JSON bodies drop `__proto__` keys (forms also
-drop `constructor` and `prototype`; JSON drops those two when they hold an object) at every depth.
+without building it. Parsed query strings and forms drop the keys `__proto__`, `constructor` and
+`prototype`. JSON bodies drop `__proto__` keys at every depth, and `constructor` and `prototype`
+keys whose value is an object. See
+[prototype pollution](/guide/request-context/#prototype-pollution).
 
 `defaultCacheControl` must be a non-empty header value without line breaks, and `maxParams` an
 integer of at least 1; anything else is an `HttpConfigError` at `listen()`.

@@ -1,3 +1,4 @@
+import { DeferredLogger, sendRedisCommand } from '@knead-js/core';
 import {
   ConsoleLogger,
   defaultRedisUrl,
@@ -5,7 +6,7 @@ import {
   type Logger,
   plaintextRedisHost,
 } from '@knead-js/http';
-import { RedisClient } from 'bun';
+import { RedisClient, type RedisOptions } from 'bun';
 import { hashKey, hashSecretBytes } from './keys.js';
 
 /** Whether the unkeyed-hash warning was logged in this process. */
@@ -118,11 +119,17 @@ export interface RedisStoreOptions {
    * `valkey://` URL to a non-loopback host. Without it, that only logs a warning. Default false.
    */
   requireTls?: boolean;
-  /** Where warnings go. Default: a ConsoleLogger. */
+  /**
+   * Where warnings go. Without it, the construction warnings are held until RateLimitModule
+   * passes the application's LOGGER (setLogger()), or go to a `ConsoleLogger('knead:rate-limit')`
+   * at the first consume() when the store is used on its own.
+   */
   logger?: Logger;
   /**
    * Milliseconds a consume() waits for Redis before failing; the failure is a store error, so
-   * `onStoreError` decides. Default 250. A supplied client should also set
+   * `onStoreError` decides. Default 250. The store's own client is built with
+   * `enableOfflineQueue: false` and a `connectionTimeout` of `max(commandTimeout, 1000)` ms, so
+   * nothing queues while Redis is unreachable. A supplied client should also set
    * `enableOfflineQueue: false` and a `connectionTimeout`, so commands fail fast while Redis is
    * unreachable instead of queueing.
    */
@@ -144,7 +151,7 @@ export class RedisStore implements RateLimitStore {
   readonly #hashKeys: boolean;
   readonly #hashSecret: Uint8Array | undefined;
 
-  readonly #logger: Logger;
+  readonly #log: DeferredLogger;
   readonly #commandTimeout: number;
 
   constructor(options: RedisStoreOptions = {}) {
@@ -153,7 +160,7 @@ export class RedisStore implements RateLimitStore {
       throw new RangeError(`commandTimeout must be an integer >= 1 (ms), got ${String(timeout)}.`);
     }
     this.#commandTimeout = timeout;
-    this.#logger = options.logger ?? new ConsoleLogger('knead:rate-limit');
+    this.#log = new DeferredLogger(options.logger, () => new ConsoleLogger('knead:rate-limit'));
     const remote = plaintextRedisHost(
       options.client === undefined ? (options.url ?? defaultRedisUrl()) : undefined,
     );
@@ -162,22 +169,32 @@ export class RedisStore implements RateLimitStore {
         `RedisStore connects to ${remote} over plaintext redis://, so rate-limit keys and ` +
         'credentials cross the network unencrypted. Use rediss:// (TLS) with an ACL user.';
       if (options.requireTls) throw new HttpConfigError(problem);
-      this.#logger.warn(problem);
+      this.#log.warn(problem);
     }
     this.#hashKeys = options.hashKeys ?? true;
     this.#hashSecret =
       options.hashSecret === undefined ? undefined : hashSecretBytes(options.hashSecret);
     if (this.#hashKeys && this.#hashSecret === undefined && !warnedUnkeyed) {
       warnedUnkeyed = true;
-      this.#logger.warn(
+      this.#log.warn(
         'RedisStore has no hashSecret, so rate-limit keys are stored as plain SHA-256 hashes ' +
           'and client IPs are recoverable from the Redis keys. Set hashSecret (32+ bytes, the ' +
           'same on every instance).',
       );
     }
     this.#owned = options.client === undefined;
-    this.#client = options.client ?? new RedisClient(options.url);
+    // Without the offline queue, commands sent during an outage fail instead of piling up and
+    // being replayed (consuming counters) when Redis comes back.
+    this.#client = options.client ?? new RedisClient(options.url, ownedClientOptions(timeout));
     this.#prefix = options.prefix ?? 'knead:rl:';
+  }
+
+  /**
+   * Sets where warnings go when no `logger` option was given, and delivers the warnings held
+   * since construction. RateLimitModule calls it with the application's LOGGER.
+   */
+  setLogger(logger: Logger): void {
+    this.#log.attach(logger);
   }
 
   async consume(key: string, rule: RateLimitRule): Promise<ConsumeResult> {
@@ -189,6 +206,8 @@ export class RedisStore implements RateLimitStore {
         `Rate limit window must be a positive integer (ms), got ${String(rule.windowMs)}.`,
       );
     }
+    // Used without RateLimitModule: nobody will call setLogger().
+    this.#log.use();
     const algorithm: Algorithm =
       rule.algorithm === 'token-bucket' ? 'token-bucket' : 'sliding-window';
     const args = [
@@ -197,7 +216,13 @@ export class RedisStore implements RateLimitStore {
       String(rule.limit),
       String(rule.windowMs),
     ];
-    const reply = await withTimeout(this.#run(algorithm, args), this.#commandTimeout);
+    // A script sent after the timeout would consume a counter for a request already handled.
+    const reply = await sendRedisCommand(
+      this.#client,
+      () => this.#run(algorithm, args),
+      this.#commandTimeout,
+      this.#owned,
+    );
     const [allowed, remaining, resetAt] = reply as [number, number, number];
     return {
       allowed: Number(allowed) === 1,
@@ -220,17 +245,7 @@ export class RedisStore implements RateLimitStore {
   }
 }
 
-/** Rejects with a timeout error when `promise` has not settled within `ms`. */
-async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`Redis did not answer within ${ms}ms`)), ms);
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
-  }
+/** @internal The options of the client a RedisStore builds itself. */
+export function ownedClientOptions(commandTimeout: number): RedisOptions {
+  return { enableOfflineQueue: false, connectionTimeout: Math.max(commandTimeout, 1_000) };
 }

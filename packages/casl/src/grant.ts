@@ -52,9 +52,9 @@ export function parseGrant(input: unknown, permissions: Permissions): Grant | nu
       if (SKIPPED_KEYS.has(key)) continue;
       const level = (input as Record<string, unknown>)[key];
       if (typeof level !== 'string') return null;
-      pairs.push([key, level]);
+      // Stop before walking the rest of an oversized, attacker-supplied object.
+      if (pairs.push([key, level]) > areaCount) return null;
     }
-    if (pairs.length > areaCount) return null;
     return build(pairs, permissions);
   }
   return null;

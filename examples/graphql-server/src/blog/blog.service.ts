@@ -106,10 +106,14 @@ export class BlogService implements OnModuleInit {
     );
   }
 
-  /** One lookup for the posts of many authors, in key order. */
+  /** One pass over the posts for many authors, in key order. */
   postsByAuthorIds(ids: readonly string[]): Post[][] {
-    const posts = [...this.#posts.values()];
-    return ids.map((id) => posts.filter((p) => p.authorId === id));
+    return groupBy(ids, this.#posts.values(), (p) => p.authorId);
+  }
+
+  /** One pass over the comments for many posts, in key order. */
+  commentsByPostIds(ids: readonly string[]): Comment[][] {
+    return groupBy(ids, this.#comments.values(), (c) => c.postId);
   }
 
   commentsFor(postId: string): Comment[] {
@@ -197,4 +201,10 @@ export class BlogService implements OnModuleInit {
     this.#posts.set(post.id, post);
     return post;
   }
+}
+
+/** `items` grouped by `key` for each of `ids`, in `ids` order: one pass over `items`. */
+function groupBy<T>(ids: readonly string[], items: Iterable<T>, key: (item: T) => string): T[][] {
+  const groups = Map.groupBy(items, key);
+  return ids.map((id) => groups.get(id) ?? []);
 }

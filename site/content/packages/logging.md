@@ -109,7 +109,7 @@ Every value is copied into plain JSON data and redacted: strings and object keys
 | Typed array, `ArrayBuffer` | `"[<constructor name> <n> bytes]"`. |
 | Cycle | `"[Circular]"`. |
 | Throwing getter or `toJSON()` | `"[unreadable]"`. |
-| `Error` (anywhere) | Outside development, `summarizeError()`: `Name: message`, redacted, at most 500 characters, control characters escaped. In development, its redacted stack (or `Name: message` when the stack does not contain the message), an indented line with its own enumerable properties as redacted JSON (with `errors` for an `AggregateError`), then `Caused by: ...` with the same details for each cause (a cause that is not an `Error` is written as redacted JSON), up to 16 errors, after which the text ends with `Caused by: … (more causes omitted)`. |
+| `Error` (anywhere) | Outside development, `summarizeError()`: `Name: message`, redacted, at most 500 characters, control characters escaped. In development, its redacted stack (or `Name: message` when the stack does not contain the message), an indented line with its own enumerable properties as redacted JSON (with `errors` for an `AggregateError`), then `Caused by: ...` with the same details for each cause (a cause that is not an `Error` is written as redacted JSON), up to 16 errors, after which the text ends with `Caused by: … (more causes omitted)`. An error's properties are copied one level below it, so nested errors share the depth limit, and an error reached again through its own properties or causes is `"[Circular]"`. |
 
 Output is escaped by `JSON.stringify`, plus U+2028 and U+2029, so a record is always exactly one
 line.
@@ -126,6 +126,7 @@ These caps keep the work linear in the size of the input, whatever is logged:
 | Keys per object | 1000 | A `"…": "<n> more keys omitted"` entry |
 | Values per record | 10000 | `"[Truncated]"` |
 | Errors per cause chain (development) | 16 | `Caused by: … (more causes omitted)` |
+| Detailed errors per record (development) | 100 | `summarizeError()`, as outside development |
 
 If the clock or the message itself cannot be read, the logger still writes a record, with
 `"meta":"[unloggable meta]"` (and `"msg":"[unloggable message]"` when the message could not be

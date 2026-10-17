@@ -14,8 +14,12 @@ export function parseDuration(value: Duration | string): number {
   if (typeof value === 'number') {
     ms = value;
   } else {
-    const m = /^(\d+(?:\.\d+)?)(ms|s|m|h|d)$/.exec(value.trim());
-    if (!m) throw new RangeError(`Invalid duration "${value}" (use e.g. 500ms, 15s, 1m, 1h, 1d).`);
+    const m = typeof value === 'string' ? /^(\d+(?:\.\d+)?)(ms|s|m|h|d)$/.exec(value.trim()) : null;
+    if (!m) {
+      throw new RangeError(
+        `Invalid duration "${String(value)}" (use e.g. 500ms, 15s, 1m, 1h, 1d).`,
+      );
+    }
     ms = Number(m[1]) * UNITS[m[2] as keyof typeof UNITS];
   }
   if (!Number.isFinite(ms) || ms <= 0)

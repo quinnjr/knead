@@ -1,7 +1,28 @@
 {
   "name": "@knead-js/casl",
-  "version": "0.2.1",
-  "description": "CASL authorization module for the Knead framework",
+  "version": "0.3.0",
+  "description": "CASL authorization guards (REST and GraphQL) for Knead, the NestJS-style web framework for Bun",
+  "keywords": [
+    "bun",
+    "bunjs",
+    "bun-framework",
+    "knead",
+    "web-framework",
+    "http-framework",
+    "typescript",
+    "casl",
+    "authorization",
+    "permissions",
+    "access-control",
+    "abac",
+    "rbac",
+    "guards",
+    "graphql"
+  ],
+  "homepage": "https://quinnjr.github.io/knead/packages/casl/",
+  "bugs": {
+    "url": "https://github.com/quinnjr/knead/issues"
+  },
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",

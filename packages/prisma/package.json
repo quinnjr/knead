@@ -1,7 +1,26 @@
 {
   "name": "@knead-js/prisma",
-  "version": "0.2.1",
-  "description": "Prisma 7 integration for the Knead framework",
+  "version": "0.3.0",
+  "description": "Prisma 7 integration with ambient transactions and HTTP error mapping for Knead, the NestJS-style web framework for Bun",
+  "keywords": [
+    "bun",
+    "bunjs",
+    "bun-framework",
+    "knead",
+    "web-framework",
+    "http-framework",
+    "typescript",
+    "prisma",
+    "orm",
+    "database",
+    "transactions",
+    "postgres",
+    "sql"
+  ],
+  "homepage": "https://quinnjr.github.io/knead/packages/prisma/",
+  "bugs": {
+    "url": "https://github.com/quinnjr/knead/issues"
+  },
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",

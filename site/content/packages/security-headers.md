@@ -66,8 +66,9 @@ Set any option to `false` to drop that header.
 | `permissionsPolicy` | `string` or `false` | `'camera=(), microphone=(), geolocation=(), interest-cohort=()'` | The `Permissions-Policy` value. |
 | `xPermittedCrossDomainPolicies` | `'none'`, `'master-only'`, `'by-content-type'`, `'all'` or `false` | `'none'` | Flash and PDF cross-domain policy files. |
 
-Each of these values must be a string (or `false`) without control characters other than tab.
-Anything else, such as a value containing a line break, is an `HttpConfigError` at startup that
+Each of these values must be a string (or `false`) without control characters other than tab and
+without characters above U+00FF, which Bun cannot send in a header. Anything else, such as a value
+containing a line break, is an `HttpConfigError` at startup that
 names the header: `Invalid Referrer-Policy: "no-referrer\r\nX-Injected: 1"`.
 
 ## Content Security Policy
@@ -137,7 +138,8 @@ Where the nonce goes:
 - values that are not a string, a string array or a boolean, and array elements that are not
   strings;
 - any source containing `;`, `,`, a carriage return or a line feed, which could inject another
-  directive or header;
+  directive or header, or any other control character except tab (such as NUL) or a character
+  above U+00FF, which would make every response fail;
 - array elements that contain whitespace (each element is one source; use a string to give
   several at once).
 
@@ -231,7 +233,7 @@ an HSTS `maxAge` that is not a non-negative integer, `preload` with `includeSubD
 `maxAge` under one year, and a header option (`referrerPolicy`, `crossOriginOpenerPolicy`,
 `crossOriginResourcePolicy`, `xContentTypeOptions`, `xFrameOptions`, `xDnsPrefetchControl`,
 `permissionsPolicy`, `xPermittedCrossDomainPolicies`) that is neither `false` nor a string without
-control characters other than tab.
+control characters other than tab and without characters above U+00FF.
 `forRoot()`, `@SecurityHeaders()` and the middleware's constructor all call it.
 
 ## Classes and tokens

@@ -90,7 +90,7 @@ export class TestingModuleBuilder {
 }
 
 export class TestingModule {
-  #testApp: TestApp | undefined;
+  #testApp: Promise<TestApp> | undefined;
 
   constructor(
     readonly app: HttpApplication,
@@ -105,10 +105,18 @@ export class TestingModule {
     return this.app.get(token);
   }
 
-  async createApp(options: ListenOptions = {}): Promise<TestApp> {
-    if (this.#testApp) return this.#testApp;
-    await this.app.listen({ port: 0, hostname: '127.0.0.1', ...options });
-    this.#testApp = new TestApp(this.app);
+  /**
+   * Starts the server on an ephemeral port. Later calls, including concurrent ones, return the
+   * same TestApp; a failed start is not cached, so it can be retried.
+   */
+  createApp(options: ListenOptions = {}): Promise<TestApp> {
+    this.#testApp ??= this.app.listen({ port: 0, hostname: '127.0.0.1', ...options }).then(
+      () => new TestApp(this.app),
+      (error: unknown) => {
+        this.#testApp = undefined;
+        throw error;
+      },
+    );
     return this.#testApp;
   }
 
@@ -154,7 +162,10 @@ export class TestApp {
     return fetch(url, { method, headers, body, ...(init.tls ? { tls: init.tls } : {}) });
   }
 
-  /** POSTs a GraphQL operation as JSON and returns the parsed body plus status and headers. */
+  /**
+   * POSTs a GraphQL operation as JSON and returns the parsed body plus status and headers. A
+   * response that is not JSON rejects with an Error naming its status and body text.
+   */
   async graphql<TData = Record<string, unknown>>(
     query: string,
     options: GraphQLRequestOptions = {},
@@ -162,8 +173,16 @@ export class TestApp {
     const res = await this.request('POST', options.path ?? '/graphql', {
       headers: options.headers,
       json: { query, variables: options.variables, operationName: options.operationName },
+      ...(options.tls ? { tls: options.tls } : {}),
     });
-    const body = (await res.json()) as Omit<GraphQLResult<TData>, 'status' | 'headers'>;
+    const text = await res.text();
+    let body: Omit<GraphQLResult<TData>, 'status' | 'headers'>;
+    try {
+      body = JSON.parse(text) as Omit<GraphQLResult<TData>, 'status' | 'headers'>;
+    } catch {
+      const shown = text.length > 1024 ? `${text.slice(0, 1024)}…` : text;
+      throw new Error(`GraphQL response is not JSON (status ${res.status}): ${shown}`);
+    }
     return { ...body, status: res.status, headers: res.headers };
   }
 

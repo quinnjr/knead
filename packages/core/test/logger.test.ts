@@ -11,6 +11,19 @@ describe('logging in core', () => {
     expect(JSON.stringify(logger.entries[0])).toContain('Error: x');
   });
 
+  test('logError in development still logs an Error whose message getter throws', () => {
+    const logger = new MemoryLogger();
+    const error = new Error('x');
+    Object.defineProperty(error, 'message', {
+      get() {
+        throw new Error('no message');
+      },
+    });
+    logError({ logger, development: true }, 'boom', error);
+    expect(logger.entries).toHaveLength(1);
+    expect(JSON.stringify(logger.entries[0])).toContain('unloggable value');
+  });
+
   test('logError in development logs the full error, redacted', () => {
     const logger = new MemoryLogger();
     const error = Object.assign(new Error('connect postgres://app:pw@db failed'), {

@@ -83,7 +83,7 @@ interface OverrideBy<T> {
 | `logger` | `Logger` | The logger passed to `KneadFactory.create()` (the `logger` option of `compile()`, or the default `MemoryLogger`). |
 | `logs` | `readonly LogEntry[]` | The entries of `logger` when it is a `MemoryLogger` (`{ level, message, meta }`, unredacted), otherwise `[]`. |
 | `get<T>(token: Token<T>): T` | method | A provider instance, as `app.get(token)`. |
-| `createApp(options?: ListenOptions): Promise<TestApp>` | method | Starts the server with `{ port: 0, hostname: '127.0.0.1', ...options }` and returns a `TestApp`. Later calls return the same `TestApp` and ignore their options. |
+| `createApp(options?: ListenOptions): Promise<TestApp>` | method | Starts the server with `{ port: 0, hostname: '127.0.0.1', ...options }` and returns a `TestApp`. Later calls, including concurrent ones, return the same `TestApp` (the server listens once) and ignore their options. A failed start is not cached. |
 | `close(): Promise<void>` | method | Closes the application: stops the server if one is listening and runs the shutdown hooks. |
 
 ## `TestApp`
@@ -93,7 +93,7 @@ interface OverrideBy<T> {
 | `app` | `HttpApplication` | The listening application. |
 | `url` | `URL` | The server's URL, such as `http://127.0.0.1:41723/`. |
 | `request(method: string, path: string, init?: TestRequestInit): Promise<Response>` | method | Sends a request with `fetch()` to `new URL(path, url)`. |
-| `graphql<TData>(query: string, options?: GraphQLRequestOptions): Promise<GraphQLResult<TData>>` | method | POSTs `{ query, variables, operationName }` as JSON to `options.path` (default `'/graphql'`) and returns the parsed body plus `status` and `headers`. |
+| `graphql<TData>(query: string, options?: GraphQLRequestOptions): Promise<GraphQLResult<TData>>` | method | POSTs `{ query, variables, operationName }` as JSON to `options.path` (default `'/graphql'`) and returns the parsed body plus `status` and `headers`. A response that is not JSON rejects with `Error: GraphQL response is not JSON (status <status>): <body text>` (the text capped at 1024 characters). |
 | `graphqlSubscribe<TData>(query: string, options?: GraphQLSubscribeOptions): Promise<GraphQLSubscription<TData>>` | method | Opens a `graphql-transport-ws` connection (`ws:`, or `wss:` for an HTTPS server) and subscribes. |
 | `close(): Promise<void>` | method | Closes the application, like `TestingModule.close()`. |
 
@@ -128,6 +128,7 @@ until one arrives (see the [testing guide](/guide/testing/)).
 | `operationName` | `string` | none | The operation to run. |
 | `headers` | `Bun.HeadersInit` | none | Request headers (for subscriptions, the upgrade request's headers). |
 | `path` | `string` | `'/graphql'` | The endpoint path. |
+| `tls` | `{ rejectUnauthorized?: boolean }` | none | TLS options for an HTTPS test server, passed to `fetch()` and, for subscriptions, to the `wss:` WebSocket. `rejectUnauthorized: false` accepts any certificate, such as a self-signed one: tests only, never in application code. |
 
 ### `GraphQLSubscribeOptions`
 

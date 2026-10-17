@@ -39,7 +39,10 @@ when it is called; a problem throws `KneadError`.
 ### `PrismaModule.forRootAsync()`
 
 `PrismaModule.forRootAsync(options: PrismaModuleAsyncOptions): DynamicModule` resolves the options
-at bootstrap and validates them then.
+at bootstrap and validates them then. The call itself throws `KneadError` when `options` is not an
+object (`PrismaModule.forRootAsync() options must be an object.`), `useFactory` is not a function
+(`PrismaModule.forRootAsync() \`useFactory\` must be a function.`) or `imports` is given and is not
+an array (`PrismaModule.forRootAsync() \`imports\` must be an array.`).
 
 ### `PrismaModuleAsyncOptions`
 
@@ -112,7 +115,8 @@ applications in one process never share transactions.
   anyway, the transaction rolls back and the owning `run()` rejects with a `KneadError`
   (`TransactionHost: transaction marked rollback-only by an inner failure`) whose `cause` is the
   first inner rejection. If the owner rejects itself, its own rejection wins.
-- An unknown `propagation` rejects with a `KneadError`.
+- An unknown `propagation` or `isolationLevel` rejects with a `KneadError`, before a transaction is
+  opened.
 
 `isActive: boolean` is `true` when the current async context is inside an open transaction.
 
@@ -211,7 +215,7 @@ without `forRoot()` fails with `Import PrismaHttpModule.forRoot(), not PrismaHtt
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `map` | `Record<string, PrismaErrorMapper>` | none | Overrides and additions keyed by error code (`'P2034'`) or error name. Must be a plain object (or one with a `null` prototype) whose own values, including symbol and non-enumerable keys, are all functions; otherwise `forRoot()` throws `KneadError`. A frozen copy is stored. |
+| `map` | `Record<string, PrismaErrorMapper>` | none | Overrides and additions keyed by error code (`'P2034'`) or error name. Must be a plain object (or one with a `null` prototype) whose own values, including symbol and non-enumerable keys, are all functions; otherwise `forRoot()` throws `KneadError`. A frozen copy is stored, inside a frozen copy of the options. |
 
 ### `PrismaExceptionFilter`
 

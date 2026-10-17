@@ -52,7 +52,7 @@ that throws, still produces a response with the CORS headers, so the browser can
 | A string | The `Origin` header equals it exactly (scheme, host and port, case-sensitive). |
 | A string array | The `Origin` header equals one of the entries exactly. |
 | A `RegExp` | The pattern matches the whole `Origin` header. `lastIndex` is reset before each test, so `g` and `y` flags are safe. |
-| A function | It returns (or resolves to) `true`. It receives the origin and the request `Ctx`. |
+| A function | It returns (or resolves to) exactly `true`. Any other value, even a truthy one such as `1` or `{}`, disallows the origin. It receives the origin and the request `Ctx`. |
 
 A RegExp must be anchored and must not have a top-level `|`:
 
@@ -142,6 +142,9 @@ list your cross-origin front ends in the endpoint's `allowedOrigins` as well. Se
 
 `validateCorsOptions(options: CorsOptions): void` throws a `CorsConfigError` for:
 
+- An `origin` that is not a string, an array of strings, a RegExp or a function (including a
+  missing `origin`, or an array with a non-string entry): the message starts with
+  `CORS origin must be a string, an array of strings, a RegExp or a function`.
 - `'*'` inside an origin array: `Use origin: '*' instead of listing '*' among origins.`
 - `origin: '*'` with `credentials: true`: the message starts with
   `CORS origin "*" cannot be combined with credentials: true`.

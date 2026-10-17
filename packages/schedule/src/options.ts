@@ -1,4 +1,4 @@
-import { InjectionToken, summarizeError } from '@knead-js/core';
+import { ConsoleLogger, InjectionToken, logValue, summarizeError } from '@knead-js/core';
 import type { JobContext } from './decorators.js';
 import { type Duration, parseDuration } from './duration.js';
 import { ScheduleConfigError } from './errors.js';
@@ -20,7 +20,8 @@ export interface ScheduleModuleOptions {
   enabled?: boolean;
   /**
    * Receives the scheduler's warnings and errors as single redacted strings, never raw error
-   * objects; `@knead-js/http`'s `Logger` fits. Default: console.
+   * objects, with control characters in job names escaped; `@knead-js/core`'s `Logger` fits.
+   * Default: the application's `LOGGER`.
    */
   logger?: ScheduleLogger;
 }
@@ -43,9 +44,15 @@ export interface ResolvedScheduleOptions {
   logger: ScheduleLogger;
 }
 
-/** @internal Validates options eagerly so mistakes surface at forRoot(). */
-export function resolveScheduleOptions(options: ScheduleModuleOptions): ResolvedScheduleOptions {
-  const { lockStore, onError, enabled, logger = console } = options;
+/**
+ * @internal Validates options eagerly so mistakes surface at forRoot(). `fallbackLogger` is used
+ * when no `logger` is configured: SchedulerRegistry passes the application's LOGGER.
+ */
+export function resolveScheduleOptions(
+  options: ScheduleModuleOptions,
+  fallbackLogger: ScheduleLogger = new ConsoleLogger(),
+): ResolvedScheduleOptions {
+  const { lockStore, onError, enabled, logger = fallbackLogger } = options;
   if (lockStore !== undefined && typeof lockStore?.acquire !== 'function') {
     throw new ScheduleConfigError('lockStore must implement acquire(key, ttlMs).');
   }
@@ -64,7 +71,9 @@ export function resolveScheduleOptions(options: ScheduleModuleOptions): Resolved
     onError:
       onError ??
       ((error, ctx) =>
-        logger.error(`[knead:schedule] Job "${ctx.name}" failed: ${summarizeError(error)}`)),
+        logger.error(
+          `[knead:schedule] Job "${logValue(ctx.name)}" failed: ${summarizeError(error)}`,
+        )),
     shutdownTimeout: parseDuration(options.shutdownTimeout ?? '10s', 'shutdownTimeout'),
     enabled: enabled ?? true,
     logger,

@@ -86,6 +86,26 @@ function withIntegrity(html: string, assets: Readonly<Record<string, string>>): 
     .replace(STYLESHEET, (tag, _all: string, url: string) => `${tag}${attrs(url)}`);
 }
 
+/** A CSP host-source host: a DNS name or bracketed IPv6 literal, with an optional port. */
+const CSP_HOST = /^(?:[a-z0-9.-]+|\[[0-9a-f:.]+\])(?::\d{1,5})?$/;
+
+/**
+ * The origin (`ws[s]://host[:port]`) of an absolute ws:// or wss:// endpoint, for connect-src, or
+ * undefined for a relative endpoint or anything that is not a plain host (which then stays
+ * blocked: 'self' alone).
+ */
+function webSocketOrigin(endpoint: string | undefined): string | undefined {
+  if (endpoint === undefined || !/^wss?:\/\//i.test(endpoint)) return undefined;
+  let url: URL;
+  try {
+    url = new URL(endpoint);
+  } catch {
+    return undefined;
+  }
+  if (url.protocol !== 'ws:' && url.protocol !== 'wss:') return undefined;
+  return CSP_HOST.test(url.host) ? `${url.protocol}//${url.host}` : undefined;
+}
+
 export function playgroundPage(
   endpoint: string,
   subscriptionEndpoint?: string,
@@ -97,6 +117,7 @@ export function playgroundPage(
     title: 'GraphQL Playground',
   });
   const html = withIntegrity(rendered, assets);
+  const wsOrigin = webSocketOrigin(subscriptionEndpoint);
   const hashes = [...html.matchAll(INLINE_SCRIPT)].map((m) => `'sha256-${sha256(m[1] ?? '')}'`);
   // CDN sources are the exact asset URLs the page loads, not the whole CDN host.
   const csp = [
@@ -107,7 +128,8 @@ export function playgroundPage(
     // No third-party font hosts (Google Fonts would learn of every visit): system fonts.
     "font-src 'self' data:",
     ['img-src', "'self'", 'data:', ...urls(html, ICON)].join(' '),
-    "connect-src 'self'",
+    // A cross-origin subscription endpoint is allowed by its exact origin.
+    ['connect-src', "'self'", ...(wsOrigin ? [wsOrigin] : [])].join(' '),
     "base-uri 'self'",
     "form-action 'self'",
     "frame-ancestors 'none'",
@@ -134,9 +156,14 @@ export function playgroundResponse(page: PlaygroundPage): Response {
  * gate is created at bootstrap: if Leaven's page references an asset without one, or its inline
  * scripts differ from PLAYGROUND_SCRIPT_HASHES, that is logged once and every request gets 503.
  */
+/** Rendered pages kept per gate; the endpoint may come from the Host header, so it is bounded. */
+const MAX_CACHED_PAGES = 16;
+
 export class PlaygroundGate {
   readonly #assets: Readonly<Record<string, string>>;
   readonly #available: boolean;
+  /** Rendered pages by endpoint and subscription endpoint, least recently used first. */
+  readonly #pages = new Map<string, PlaygroundPage>();
 
   constructor(
     logger: Logger,
@@ -181,6 +208,26 @@ export class PlaygroundGate {
         },
       });
     }
-    return playgroundResponse(playgroundPage(endpoint, subscriptionEndpoint, this.#assets));
+    return playgroundResponse(this.#page(endpoint, subscriptionEndpoint));
+  }
+
+  /** @internal How many rendered pages are cached (for tests). */
+  get cachedPages(): number {
+    return this.#pages.size;
+  }
+
+  #page(endpoint: string, subscriptionEndpoint: string | undefined): PlaygroundPage {
+    const key = JSON.stringify([endpoint, subscriptionEndpoint ?? null]);
+    let page = this.#pages.get(key);
+    if (page) {
+      this.#pages.delete(key);
+    } else {
+      page = playgroundPage(endpoint, subscriptionEndpoint, this.#assets);
+      if (this.#pages.size >= MAX_CACHED_PAGES) {
+        this.#pages.delete(this.#pages.keys().next().value as string);
+      }
+    }
+    this.#pages.set(key, page);
+    return page;
   }
 }

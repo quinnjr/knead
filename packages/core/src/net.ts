@@ -1,4 +1,6 @@
-/** IP address parsing and Redis URL checks shared by the HTTP, rate-limit, GraphQL and schedule packages. */
+/** IP address parsing and Redis helpers shared by the HTTP, rate-limit, GraphQL and schedule packages. */
+
+import type { RedisClient } from 'bun';
 
 function parseV4(ip: string): Uint8Array | undefined {
   const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip);
@@ -61,7 +63,7 @@ export function isLoopbackHostname(hostname: string): boolean {
 /**
  * The `host[:port]` of a plaintext Redis/Valkey URL (`redis://`, `valkey://`) to a host that is
  * not loopback, or undefined: TLS URLs (`rediss://`, `valkeys://`), Unix sockets, loopback hosts
- * and unparseable URLs are not plaintext remote connections.
+ * unparseable URLs and URLs with no host are not plaintext remote connections.
  */
 export function plaintextRedisHost(url: string | undefined): string | undefined {
   if (url === undefined || url === '') return undefined;
@@ -72,6 +74,7 @@ export function plaintextRedisHost(url: string | undefined): string | undefined 
     return undefined;
   }
   if (parsed.protocol !== 'redis:' && parsed.protocol !== 'valkey:') return undefined;
+  if (parsed.hostname === '') return undefined;
   return isLoopbackHostname(parsed.hostname) ? undefined : parsed.host;
 }
 
@@ -81,4 +84,46 @@ export function plaintextRedisHost(url: string | undefined): string | undefined 
  */
 export function defaultRedisUrl(): string | undefined {
   return process.env.REDIS_URL || process.env.VALKEY_URL || undefined;
+}
+
+/**
+ * Runs `send` (a command on `client`), first connecting the client when `connect` is true and it
+ * is disconnected: without the offline queue, a send while disconnected rejects. Rejects when no
+ * answer arrives within `timeoutMs`. `send` never runs after the timeout, so a late command cannot
+ * act on an operation already reported as failed.
+ */
+export async function sendRedisCommand<T>(
+  client: RedisClient,
+  send: () => Promise<T>,
+  timeoutMs: number,
+  connect = true,
+): Promise<T> {
+  if (!connect || client.connected) return withTimeout(send(), timeoutMs);
+  let expired = false;
+  return withTimeout(
+    (async () => {
+      await client.connect();
+      // Already rejected by the timeout: the value is never seen.
+      if (expired) return undefined as T;
+      return send();
+    })(),
+    timeoutMs,
+  ).finally(() => {
+    expired = true;
+  });
+}
+
+/** Rejects with a timeout error when `promise` has not settled within `ms`. */
+async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`Redis did not answer within ${ms}ms`)), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }

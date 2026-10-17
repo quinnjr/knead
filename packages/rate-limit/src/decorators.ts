@@ -22,11 +22,15 @@ const skipMeta = createRouteDecorator<boolean>(SKIP_RATE_LIMIT_META);
 
 /**
  * Per-route (or per-controller) limit with its own counter.
- * @throws RangeError for a limit that is not a positive integer or an invalid window.
+ * @throws RangeError for a limit that is not a positive integer, an invalid window or a `key`
+ * that is not a function.
  */
 export function RateLimit(options: RateLimitRouteOptions) {
   if (options.limit !== undefined && (!Number.isInteger(options.limit) || options.limit < 1)) {
     throw new RangeError(`Rate limit must be a positive integer, got ${String(options.limit)}.`);
+  }
+  if (options.key !== undefined && typeof options.key !== 'function') {
+    throw new RangeError(`key must be a function, got ${typeOf(options.key)}.`);
   }
   const windowMs = options.window !== undefined ? parseDuration(options.window) : undefined;
   return rateLimitMeta(windowMs === undefined ? options : { ...options, windowMs });
@@ -34,4 +38,9 @@ export function RateLimit(options: RateLimitRouteOptions) {
 
 export function SkipRateLimit() {
   return skipMeta(true);
+}
+
+/** @internal `typeof`, with null told apart. */
+export function typeOf(value: unknown): string {
+  return value === null ? 'null' : typeof value;
 }

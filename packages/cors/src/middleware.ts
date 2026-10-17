@@ -25,12 +25,27 @@ export function mergeVary(res: Response, values: readonly string[]): Response {
 
 export class CorsMiddleware implements Middleware {
   readonly #options = inject(CORS_OPTIONS);
+  // Everything that does not depend on the request is built once.
+  readonly #wildcard = this.#options.origin === '*';
+  readonly #origins: ReadonlySet<string> | undefined = Array.isArray(this.#options.origin)
+    ? new Set(this.#options.origin)
+    : undefined;
+  readonly #methods = (this.#options.methods ?? DEFAULT_METHODS).join(', ');
+  readonly #allowHeaders = this.#options.allowedHeaders?.join(', ');
+  readonly #exposeHeaders = this.#options.exposedHeaders?.length
+    ? this.#options.exposedHeaders.join(', ')
+    : undefined;
+  readonly #maxAge = this.#options.maxAge === undefined ? undefined : String(this.#options.maxAge);
+  readonly #vary: readonly string[] = this.#wildcard ? [] : ['Origin'];
+  readonly #preflightVary = [
+    ...this.#vary,
+    ...(this.#allowHeaders === undefined ? ['Access-Control-Request-Headers'] : []),
+  ].join(', ');
 
   async use(ctx: Ctx, next: Next): Promise<Response> {
     const o = this.#options;
     const origin = ctx.req.headers.get('origin');
-    const wildcard = o.origin === '*';
-    const vary = wildcard ? [] : ['Origin'];
+    const wildcard = this.#wildcard;
     const allowed =
       origin !== null && origin.length <= MAX_ORIGIN_LENGTH && (await this.#matches(origin, ctx));
     // Browsers do not enforce CORS on WebSockets, so a cross-site page could otherwise open an
@@ -50,14 +65,13 @@ export class CorsMiddleware implements Middleware {
       if (allowed) {
         headers.set('access-control-allow-origin', wildcard ? '*' : origin);
         if (o.credentials) headers.set('access-control-allow-credentials', 'true');
-        headers.set('access-control-allow-methods', (o.methods ?? DEFAULT_METHODS).join(', '));
-        const requested = ctx.req.headers.get('access-control-request-headers');
-        const allowHeaders = o.allowedHeaders ? o.allowedHeaders.join(', ') : requested;
+        headers.set('access-control-allow-methods', this.#methods);
+        const allowHeaders =
+          this.#allowHeaders ?? ctx.req.headers.get('access-control-request-headers');
         if (allowHeaders) headers.set('access-control-allow-headers', allowHeaders);
-        if (o.maxAge !== undefined) headers.set('access-control-max-age', String(o.maxAge));
+        if (this.#maxAge !== undefined) headers.set('access-control-max-age', this.#maxAge);
       }
-      if (!o.allowedHeaders && !wildcard) vary.push('Access-Control-Request-Headers');
-      if (vary.length > 0) headers.set('vary', vary.join(', '));
+      if (this.#preflightVary) headers.set('vary', this.#preflightVary);
       return new Response(null, { status: 204, headers });
     }
 
@@ -66,10 +80,9 @@ export class CorsMiddleware implements Middleware {
     if (allowed) {
       headers.set('access-control-allow-origin', wildcard ? '*' : origin);
       if (o.credentials) headers.set('access-control-allow-credentials', 'true');
-      if (o.exposedHeaders?.length)
-        headers.set('access-control-expose-headers', o.exposedHeaders.join(', '));
+      if (this.#exposeHeaders) headers.set('access-control-expose-headers', this.#exposeHeaders);
     }
-    return mergeVary(withHeaders(res, headers), vary);
+    return mergeVary(withHeaders(res, headers), this.#vary);
   }
 
   async #matches(origin: string, ctx: Ctx): Promise<boolean> {
@@ -80,7 +93,8 @@ export class CorsMiddleware implements Middleware {
       rule.lastIndex = 0;
       return rule.test(origin);
     }
-    if (typeof rule === 'function') return rule(origin, ctx);
-    return rule.includes(origin);
+    // Fail closed: only a literal true (or a promise of one) allows the origin.
+    if (typeof rule === 'function') return (await rule(origin, ctx)) === true;
+    return this.#origins?.has(origin) === true;
   }
 }

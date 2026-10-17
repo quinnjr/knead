@@ -18,6 +18,7 @@ import {
   RATE_LIMIT_META,
   type RateLimitRouteMeta,
   SKIP_RATE_LIMIT_META,
+  typeOf,
 } from './decorators.js';
 import { type Duration, parseDuration } from './duration.js';
 import { maskIp } from './keys.js';
@@ -85,6 +86,17 @@ export function validateRateLimitOptions(options: RateLimitModuleOptions): void 
       `algorithm must be 'sliding-window' or 'token-bucket', got ${String(options.algorithm)}.`,
     );
   }
+  // A store without consume() would throw on every request, and the default onStoreError
+  // ('allow') would then let every request through.
+  if (options.store !== undefined && typeof options.store?.consume !== 'function') {
+    throw new RangeError('store must implement consume(key, rule).');
+  }
+  if (options.key !== undefined && typeof options.key !== 'function') {
+    throw new RangeError(`key must be a function, got ${typeOf(options.key)}.`);
+  }
+  if (options.middleware !== undefined && typeof options.middleware !== 'boolean') {
+    throw new RangeError(`middleware must be a boolean, got ${typeOf(options.middleware)}.`);
+  }
 }
 
 export const RATE_LIMIT_OPTIONS = new InjectionToken<RateLimitModuleOptions>('RATE_LIMIT_OPTIONS');
@@ -125,6 +137,11 @@ export class RateLimiter implements OnModuleDestroy {
   readonly #defaultKey: KeyFn = (ctx) =>
     ctx.ip === undefined ? undefined : maskIp(ctx.ip, this.#ipv6Subnet);
   #warnedNoKey = false;
+
+  constructor() {
+    // A store built outside DI (RedisStore) logs through the application's LOGGER from now on.
+    this.#store.setLogger?.(this.#logger);
+  }
 
   /** `phase` separates the guard's counters from the middleware's. */
   async check(

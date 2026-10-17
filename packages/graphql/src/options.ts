@@ -4,6 +4,7 @@ import {
   type GuardRef,
   HttpConfigError,
   type HttpException,
+  isHeaderValue,
   type WsMessageRate,
 } from '@knead-js/http';
 import type {
@@ -44,7 +45,8 @@ export interface SubscriptionOptions {
   /**
    * Called before every recheck of a `recheckGuards: true` subscription, with the operation's
    * upgrade Ctx and current user context. An object is merged over that context (the guards and
-   * the event's resolvers see it); `false` ends the subscription with FORBIDDEN. Without it,
+   * the event's resolvers see it); anything else (`false`, but also `undefined`, `null` or
+   * `true`) ends the subscription with FORBIDDEN. Without it,
    * rechecked guards see the identity from connect time: use it for a live lookup (for example
    * re-verifying the session) so that a revoked credential ends the subscription.
    */
@@ -52,11 +54,11 @@ export interface SubscriptionOptions {
     http: Ctx;
     context: Readonly<Record<PropertyKey, unknown>>;
   }) => ConnectContext | false | Promise<ConnectContext | false>;
-  /** ms to wait for `connection_init` (Leaven default 3000). */
+  /** ms to wait for `connection_init`, an integer from 1 to 2^31 - 1 (Leaven default 3000). */
   connectionInitTimeout?: number;
-  /** ms between server pings; 0 disables (Leaven default 12000). */
+  /** ms between server pings, an integer up to 2^31 - 1; 0 disables (Leaven default 12000). */
   keepAliveInterval?: number;
-  /** Leaven default 100. */
+  /** Concurrent subscriptions per socket, a positive integer (Leaven default 100). */
   maxSubscriptionsPerConnection?: number;
   /**
    * Browser origins allowed to open a subscription socket, besides the server's own origin
@@ -94,8 +96,9 @@ export interface GraphQLModuleOptions {
    * Serves GraphQL Playground to browsers. Default: the application is in development (the
    * HTTP_DEVELOPMENT flag). An object enables
    * it with options: `subscriptionEndpoint` is the WebSocket URL the page connects to (a
-   * `ws://`/`wss://` URL or an absolute path). Without it, the URL is derived from the request's
-   * Host header when that is a plain `host[:port]`, and is the relative path otherwise.
+   * `ws://`/`wss://` URL or an absolute path; a URL's origin is added to the page's CSP
+   * `connect-src`). Without it, the URL is derived from the request's Host header when that is a
+   * plain `host[:port]`, and is the relative path otherwise.
    */
   playground?: boolean | PlaygroundOptions;
   /** Default: true in development (HTTP_DEVELOPMENT), or when the playground is on. */
@@ -139,11 +142,14 @@ export interface GraphQLModuleOptions {
   /** Leaven execution hooks (Leaven has no plugin system; these are its extension point). */
   hooks?: ExecutionHooks;
   /**
-   * Cache-Control of GraphQL responses. Default 'no-store' (responses often carry per-user
-   * data); `false` sends none.
+   * Cache-Control of GraphQL responses (a valid header value, checked at bootstrap). Default
+   * 'no-store' (responses often carry per-user data); `false` sends none.
    */
   cacheControl?: string | false;
-  /** GET requests must carry one of `requiredHeaders` (default ['x-graphql-request']). */
+  /**
+   * GET requests must carry one of `requiredHeaders` (header names; default
+   * ['x-graphql-request']).
+   */
   csrf?: { requiredHeaders?: readonly string[] } | false;
   /** Default: true outside development (HTTP_DEVELOPMENT). */
   maskErrors?: boolean;
@@ -247,6 +253,26 @@ function parseOptionsWithDefaults(options: ParseOptions | undefined): ParseOptio
   return tokens === false ? rest : { ...rest, maxTokens: tokens };
 }
 
+/** An RFC 9110 header field name (a token). */
+const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+
+/** Longest timer delay setTimeout/setInterval honour; larger values fire after 1 ms. */
+const MAX_TIMER_DELAY = 2 ** 31 - 1;
+
+function subscriptionInteger(
+  name: string,
+  value: number | undefined,
+  min: number,
+  max = Number.MAX_SAFE_INTEGER,
+): void {
+  if (value === undefined) return;
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < min || value > max) {
+    throw new HttpConfigError(
+      `GraphQL subscriptions.${name} must be an integer from ${min} to ${max}; got ${String(value)}.`,
+    );
+  }
+}
+
 export function validateGraphQLOptions(options: GraphQLModuleOptions): void {
   if (options.path !== undefined && /[:*]/.test(options.path)) {
     throw new HttpConfigError(`GraphQL path must be exact; got ${options.path}`);
@@ -272,6 +298,40 @@ export function validateGraphQLOptions(options: GraphQLModuleOptions): void {
   if (csrf && csrf.requiredHeaders !== undefined && csrf.requiredHeaders.length === 0) {
     throw new HttpConfigError(
       'csrf.requiredHeaders must list at least one header; use csrf: false to disable the check.',
+    );
+  }
+  for (const name of csrf ? (csrf.requiredHeaders ?? []) : []) {
+    if (typeof name !== 'string' || !HEADER_NAME.test(name)) {
+      throw new HttpConfigError(
+        `csrf.requiredHeaders entries must be header names; got ${JSON.stringify(name)}.`,
+      );
+    }
+  }
+  const cacheControl = options.cacheControl;
+  if (
+    cacheControl !== undefined &&
+    cacheControl !== false &&
+    (typeof cacheControl !== 'string' || !isHeaderValue(cacheControl))
+  ) {
+    throw new HttpConfigError(
+      `GraphQL cacheControl must be a valid header value or false; got ${JSON.stringify(cacheControl)}.`,
+    );
+  }
+  const subscriptions = options.subscriptions;
+  if (subscriptions) {
+    // Leaven passes the first two to setTimeout/setInterval and compares the count with `>=`.
+    subscriptionInteger(
+      'connectionInitTimeout',
+      subscriptions.connectionInitTimeout,
+      1,
+      MAX_TIMER_DELAY,
+    );
+    // 0 disables the pings.
+    subscriptionInteger('keepAliveInterval', subscriptions.keepAliveInterval, 0, MAX_TIMER_DELAY);
+    subscriptionInteger(
+      'maxSubscriptionsPerConnection',
+      subscriptions.maxSubscriptionsPerConnection,
+      1,
     );
   }
 }

@@ -80,10 +80,11 @@ HSTS is sent, so a wrong `trustProxy` weakens all three. See [server](/guide/ser
   `NODE_ENV === 'development'` or you pass `development: true` to `KneadFactory.create()`, and
   `listen()` warns when development mode runs on an address reachable from other hosts.
 - **Logs.** Outside development an error is logged as `Name: message` only, without the stack,
-  cause or properties. Credentials are redacted everywhere: URL userinfo
+  cause or properties. Credentials of a recognizable shape are redacted everywhere: URL userinfo
   (`redis://***@host`), secret `key=value` pairs (`password=`, `token=`, `api_key=` and similar),
-  `Bearer` and `Basic` credentials, and sensitive keys in nested objects. See
-  [logging](/guide/logging/).
+  `Bearer` and `Basic` credentials of 8 or more characters, and sensitive keys in nested objects.
+  Short tokens such as `Bearer abc123` and secrets without a recognizable shape or key name are
+  not redacted; see the [known limits](/guide/logging/#credentials-in-text) in the logging guide.
 
 ### Fail-closed guards
 

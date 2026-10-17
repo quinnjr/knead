@@ -25,6 +25,14 @@ export interface GraphQLRequestOptions {
   headers?: Bun.HeadersInit;
   /** Default '/graphql'. */
   path?: string;
+  /**
+   * TLS options for an HTTPS test server. `rejectUnauthorized: false` accepts any certificate
+   * (for self-signed test certificates): tests only, never in application code.
+   */
+  tls?: {
+    /** `false` skips certificate verification. Tests only. */
+    rejectUnauthorized?: boolean;
+  };
 }
 
 export interface GraphQLSubscribeOptions extends GraphQLRequestOptions {
@@ -47,6 +55,7 @@ export function subscribe<TData>(
   const socket = new WebSocket(url.toString(), {
     protocols: ['graphql-transport-ws'],
     headers: options.headers,
+    ...(options.tls ? { tls: options.tls } : {}),
   } as unknown as string[]);
   const queue: GraphQLPayload<TData>[] = [];
   const waiting: ((result: IteratorResult<GraphQLPayload<TData>>) => void)[] = [];

@@ -1,4 +1,7 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { inject, Module, type OnModuleInit } from '@knead-js/core';
 import { Controller, type Ctx, Post, WsRegistry } from '@knead-js/http';
 import { Test, type TestingModule } from '../src/index.js';
@@ -8,6 +11,16 @@ import { Test, type TestingModule } from '../src/index.js';
 class FakeGraphQL {
   @Post('/') async post(ctx: Ctx) {
     return { data: { echo: await ctx.json(), auth: ctx.req.headers.get('authorization') } };
+  }
+}
+
+@Controller('/plain')
+class PlainText {
+  @Post('/') post() {
+    return new Response('upstream exploded', {
+      status: 502,
+      headers: { 'content-type': 'text/plain' },
+    });
   }
 }
 
@@ -35,7 +48,7 @@ class FakeSubscriptions implements OnModuleInit {
   }
 }
 
-@Module({ controllers: [FakeGraphQL], providers: [FakeSubscriptions] })
+@Module({ controllers: [FakeGraphQL, PlainText], providers: [FakeSubscriptions] })
 class FakeModule {}
 
 let mod: TestingModule | undefined;
@@ -77,5 +90,70 @@ describe('TestApp.graphqlSubscribe', () => {
     await expect(
       app.graphqlSubscribe('subscription { n }', { connectionParams: { deny: true } }),
     ).rejects.toThrow('4403');
+  });
+});
+
+describe('TestApp.graphql on a non-JSON response', () => {
+  test('rejects with the status and the body text', async () => {
+    mod = await Test.createModule({ imports: [FakeModule] }).compile();
+    const app = await mod.createApp();
+    await expect(app.graphql('{ x }', { path: '/plain' })).rejects.toThrow(
+      /502.*upstream exploded/,
+    );
+  });
+});
+
+const hasOpenssl = Bun.which('openssl') !== null;
+
+describe.skipIf(!hasOpenssl)('GraphQL helpers over HTTPS with a self-signed certificate', () => {
+  let certDir = '';
+  let certificate: { cert: Bun.BunFile; key: Bun.BunFile };
+  beforeAll(() => {
+    certDir = mkdtempSync(join(tmpdir(), 'knead-testing-tls-'));
+    const key = join(certDir, 'key.pem');
+    const cert = join(certDir, 'cert.pem');
+    const result = Bun.spawnSync([
+      'openssl',
+      'req',
+      '-x509',
+      '-newkey',
+      'rsa:2048',
+      '-nodes',
+      '-keyout',
+      key,
+      '-out',
+      cert,
+      '-days',
+      '1',
+      '-subj',
+      '/CN=127.0.0.1',
+      '-addext',
+      'subjectAltName=IP:127.0.0.1',
+    ]);
+    if (result.exitCode !== 0) throw new Error(result.stderr.toString());
+    certificate = { cert: Bun.file(cert), key: Bun.file(key) };
+  });
+  afterAll(() => {
+    rmSync(certDir, { recursive: true, force: true });
+  });
+
+  test('graphql() accepts tls options', async () => {
+    mod = await Test.createModule({ imports: [FakeModule] }).compile();
+    const app = await mod.createApp({ tls: certificate });
+    expect(app.url.protocol).toBe('https:');
+    const res = await app.graphql('{ x }', { tls: { rejectUnauthorized: false } });
+    expect(res.status).toBe(200);
+    expect(res.data?.echo).toEqual({ query: '{ x }' });
+  });
+
+  test('graphqlSubscribe() opens wss: with tls options', async () => {
+    mod = await Test.createModule({ imports: [FakeModule] }).compile();
+    const app = await mod.createApp({ tls: certificate });
+    const sub = await app.graphqlSubscribe('subscription { n }', {
+      tls: { rejectUnauthorized: false },
+    });
+    const values = [];
+    for await (const value of sub) values.push(value);
+    expect(values).toEqual([{ data: { n: 1 } }, { data: { n: 2, q: 'subscription { n }' } }]);
   });
 });

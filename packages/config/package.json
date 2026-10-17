@@ -1,7 +1,28 @@
 {
   "name": "@knead-js/config",
-  "version": "0.2.1",
-  "description": "Typed environment configuration for the Knead framework",
+  "version": "0.3.0",
+  "description": "Typed, validated configuration from environment variables for Knead, the NestJS-style web framework for Bun",
+  "keywords": [
+    "bun",
+    "bunjs",
+    "bun-framework",
+    "knead",
+    "web-framework",
+    "http-framework",
+    "typescript",
+    "config",
+    "configuration",
+    "env",
+    "environment-variables",
+    "dotenv",
+    "validation",
+    "standard-schema",
+    "typed-config"
+  ],
+  "homepage": "https://quinnjr.github.io/knead/packages/config/",
+  "bugs": {
+    "url": "https://github.com/quinnjr/knead/issues"
+  },
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",

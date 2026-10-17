@@ -104,6 +104,69 @@ describe('resolveOptions defaults', () => {
   });
 });
 
+describe('options validated at bootstrap', () => {
+  test('cacheControl must be a valid header value', () => {
+    for (const cacheControl of [
+      'no-store\r\nset-cookie: a=b',
+      'a\nb',
+      'no-store\n',
+      'x\u0000',
+      3 as never,
+    ]) {
+      expect(() => GraphQLModule.forRoot({ cacheControl })).toThrow(HttpConfigError);
+    }
+    expect(resolveOptions({ cacheControl: 'private, max-age=60' }, '/g').cacheControl).toBe(
+      'private, max-age=60',
+    );
+    expect(resolveOptions({ cacheControl: false }, '/g').cacheControl).toBe(false);
+  });
+
+  test('csrf.requiredHeaders entries must be header names', () => {
+    for (const name of ['', 'x y', 'x:y', 'x\r\ny', 'é', 7 as never]) {
+      expect(() => GraphQLModule.forRoot({ csrf: { requiredHeaders: [name] } })).toThrow(
+        HttpConfigError,
+      );
+    }
+    expect(() =>
+      GraphQLModule.forRoot({ csrf: { requiredHeaders: ['X-Requested-With', 'x-csrf_token'] } }),
+    ).not.toThrow();
+  });
+
+  test('subscription timing and count options must be integers in range', () => {
+    const bad = [0, -1, 1.5, Number.NaN, Infinity, '10' as never];
+    for (const value of bad) {
+      expect(() =>
+        GraphQLModule.forRoot({ subscriptions: { connectionInitTimeout: value } }),
+      ).toThrow(HttpConfigError);
+      expect(() =>
+        GraphQLModule.forRoot({ subscriptions: { maxSubscriptionsPerConnection: value } }),
+      ).toThrow(HttpConfigError);
+      if (value !== 0) {
+        expect(() =>
+          GraphQLModule.forRoot({ subscriptions: { keepAliveInterval: value } }),
+        ).toThrow(HttpConfigError);
+      }
+    }
+    // keepAliveInterval 0 disables the pings.
+    expect(() =>
+      GraphQLModule.forRoot({
+        subscriptions: {
+          connectionInitTimeout: 1000,
+          keepAliveInterval: 0,
+          maxSubscriptionsPerConnection: 5,
+        },
+      }),
+    ).not.toThrow();
+    // A timer delay above 2^31 - 1 ms overflows to 1 ms in setTimeout/setInterval.
+    expect(() =>
+      GraphQLModule.forRoot({ subscriptions: { connectionInitTimeout: 2 ** 31 } }),
+    ).toThrow(HttpConfigError);
+    expect(() => GraphQLModule.forRoot({ subscriptions: { keepAliveInterval: 2 ** 31 } })).toThrow(
+      HttpConfigError,
+    );
+  });
+});
+
 describe('GraphQLModule', () => {
   test('custom path; csrf: false allows plain GET', async () => {
     s = await startGraphQL([BlogModule], { path: 'api/gql/', csrf: false });

@@ -53,9 +53,9 @@ The global module `KneadFactory` registers. It provides and exports `HTTP_DEVELO
 | `listen(options?)` | Compiles the routes, runs the lifecycle init hooks of middleware, guards and filters constructed for them, and binds the listener. Resolves to the Bun `Server`. Rejects with `HttpConfigError` for an invalid option or route definition, when called twice, or once `close()` has started. |
 | `close(signal?)` | Graceful, idempotent shutdown: stops accepting connections, waits up to `shutdownTimeout` for in-flight requests, closes WebSockets with `1001`, then runs the shutdown hooks of the context. |
 | `enableShutdownHooks(signals?, options?)` | Calls `close(signal)` on the first of `signals` (default `['SIGTERM', 'SIGINT']`), then exits with code 0, or 1 if shutdown failed. `{ exit: false }` keeps the process alive. Throws after `close()`. |
-| `useGlobalMiddleware(middleware, priority = 0)` | Adds global middleware. Before `listen()` only. |
-| `useGlobalGuards(...guards)` | Adds guards to every route, after `APP_GUARD` guards. Before `listen()` only. |
-| `useGlobalFilters(...filters)` | Adds exception filters tried after route, controller and `APP_FILTER` filters. Before `listen()` only. |
+| `useGlobalMiddleware(middleware, priority = 0)` | Adds global middleware. Before `listen()` only: throws `HttpConfigError` once `listen()` has started (even while it is still initializing) or `close()` has. |
+| `useGlobalGuards(...guards)` | Adds guards to every route, after `APP_GUARD` guards. Before `listen()` only, like `useGlobalMiddleware()`. |
+| `useGlobalFilters(...filters)` | Adds exception filters tried after route, controller and `APP_FILTER` filters. Before `listen()` only, like `useGlobalMiddleware()`. |
 | `reloadTls(tls)` | Replaces the TLS certificates: binds a new listener on the same port (`SO_REUSEPORT`) and lets the old one finish its in-flight requests (up to `shutdownTimeout`). Linux only, and only for an application listening with `tls`; throws `HttpConfigError` otherwise or while closing. |
 | `get(token)` | Resolves a provider visible to the root module, or else from the first module that provides `token`. |
 | `routes` | The compiled route table, `readonly RouteTableEntry[]` (empty before `listen()`). |
@@ -86,7 +86,7 @@ failed because a lifecycle hook threw has closed the application. See [the serve
 | `websocket` | `WsServerOptions` | see [`WsServerOptions`](#wsserveroptions) | Server-wide WebSocket limits. |
 | `maxParams` | `number` | `1000` | Most query parameters (more is `400`) or urlencoded or multipart fields (more is `413`) per request. An integer of at least 1. |
 | `maxRequestBodySize` | `number` | `1048576` (1 MiB) | Largest request body in bytes; Bun answers larger ones with `413`. |
-| `defaultCacheControl` | `string` | none | `Cache-Control` for every response that has none, such as `'no-store'`. |
+| `defaultCacheControl` | `string` | none | `Cache-Control` for every response that has none (including 404s, `421`s and rejected WebSocket upgrades), such as `'no-store'`. Must be a valid header value (no CR, LF or NUL, Latin-1 only). |
 | `validation` | `ValidationOptions` | `{}` | See [`ValidationOptions`](#validationoptions). |
 | `idleTimeout` | `number` | Bun's default (10 seconds) | Seconds a connection may be idle. |
 | `shutdownTimeout` | `number` | `10000` | Milliseconds `close()` waits for in-flight requests, and for a `listen()` still initializing. |
@@ -198,7 +198,7 @@ every route of the controller; a method-level value wins over the class-level on
 | `headers` | `StandardSchemaV1` | Validates and replaces `ctx.headers`. |
 | `body` | `StandardSchemaV1` | Validates the parsed body; sets `ctx.body` and the value of `ctx.json()`. |
 | `authorize` | `GuardRef<any>[]` | Guards that run after validation. |
-| `status` | `number` | Status of a successful response (default `200`, or `204` for `undefined`). |
+| `status` | `number` | Status of a successful response (default `200`, or `204` for `undefined`): an integer from 200 to 599, otherwise `listen()` throws `HttpConfigError`. With `204`, `205` or `304` the returned value is dropped. |
 
 ## Middleware, guards and filters
 
@@ -320,6 +320,9 @@ the response's headers are immutable (as on `Response.redirect()`), it returns a
 headers added. `Set-Cookie` values are appended; with `overwrite` false, headers the response
 already has are kept.
 
+`isHeaderValue(value)` is true when `value` can be sent as a header value: no CR, LF or NUL and
+Latin-1 only. Knead uses it to validate header values given as options at bootstrap.
+
 <<< http/reference.ts#helpers
 
 `requestUrl(req)` returns the request's URL as a `URL`. A request whose `Host` header does not form
@@ -365,8 +368,8 @@ modules register endpoints here). Inject it with `inject(WsRegistry)`.
 
 | Member | Description |
 | --- | --- |
-| `register(path, endpoint, options?)` | Registers a `WsEndpoint` at an exact path (no `:` or `*` segments). Throws `HttpConfigError` for a duplicate path, a registration after `listen()`, or invalid options. |
-| `closeWhere(predicate, code = 1008, reason = 'Connection revoked')` | Closes every open socket the predicate matches and returns how many it closed. Also applied to sockets still upgrading when they open (kept up to 30 seconds, at most `maxPendingRevocations`). Write predicates against `ws.data` only. |
+| `register(path, endpoint, options?)` | Registers a `WsEndpoint` at an exact path (no `:` or `*` segments). Upgrades to that path reach it even when a parametric or wildcard `GET` route (`/ws/:id`, `/*`) covers the path. Throws `HttpConfigError` for a duplicate path, a registration after `listen()`, or invalid options. |
+| `closeWhere(predicate, code = 1008, reason = 'Connection revoked')` | Closes every open socket for which the predicate returns a truthy value and returns how many it closed. Also applied to sockets still upgrading when they open (kept up to 30 seconds, at most `maxPendingRevocations`). Write predicates against `ws.data` only. |
 | `closeAll(code = 1001, reason = 'Server shutting down')` | Closes every open socket. |
 | `openSockets` | The number of open sockets. |
 | `maxPendingRevocations` | The `websocket.maxPendingRevocations` limit in effect. |
@@ -396,13 +399,16 @@ modules register endpoints here). Inject it with `inject(WsRegistry)`.
 
 #### WsServerOptions
 
-`listen({ websocket })`. The defaults are in `WS_DEFAULTS`, a frozen object.
+`listen({ websocket })`. The defaults are in `WS_DEFAULTS`, a frozen object; an option passed as
+`undefined` keeps its default. The connection slot of an upgrade whose socket has not opened after
+30 seconds is given back; a socket that opens later takes a slot again, or is closed with `1013`
+when none is free.
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `maxPayloadLength` | `number` | `262144` (256 KiB) | Largest message in bytes; a larger one drops the connection. |
 | `backpressureLimit` | `number` | `1048576` (1 MiB) | Bytes buffered for a slow reader before backpressure applies. |
-| `closeOnBackpressureLimit` | `boolean` | `true` | Close a socket over `backpressureLimit`. |
+| `closeOnBackpressureLimit` | `boolean` | `true` | Close a socket over `backpressureLimit`. A non-boolean is an `HttpConfigError`. |
 | `idleTimeout` | `number` | `120` | Seconds without traffic before a socket is closed. |
 | `maxConnectionsPerIp` | `number \| false` | `100` | Open sockets per client IP; more upgrades get `429`. |
 | `ipv6Subnet` | `number` | `64` | IPv6 prefix length the per-IP limit groups by, 1 to 128. |

@@ -52,6 +52,8 @@ export interface SubscriptionCtx<A = {}, P = unknown> extends ResolverCtx<A, P> 
 export class OperationContext {
   readonly state: Record<PropertyKey, unknown> = {};
   readonly #loaders = new Map<Function, DataLoader<unknown, unknown>>();
+  /** `ctx.loader` per module injector, so a ctx does not allocate a closure per field. */
+  readonly #loaderFns = new Map<ModuleInjector, ResolverCtx['loader']>();
   /** The operation to run (checked against `allowedOperations` before execution). */
   operationName: string | undefined;
   /** Set when the executed document's operation was not allowed on this transport. */
@@ -71,6 +73,16 @@ export class OperationContext {
   resetForEvent(): void {
     this.#loaders.clear();
     for (const key of Reflect.ownKeys(this.state)) delete this.state[key];
+  }
+
+  /** @internal The `ctx.loader` function of resolvers in `injector`'s module. */
+  loaderFor(injector: ModuleInjector): ResolverCtx['loader'] {
+    let fn = this.#loaderFns.get(injector);
+    if (!fn) {
+      fn = (cls) => this.loader(cls, injector);
+      this.#loaderFns.set(injector, fn);
+    }
+    return fn;
   }
 
   loader<K, V>(cls: Type<BatchLoader<K, V>>, injector: ModuleInjector): DataLoader<K, V> {
@@ -104,6 +116,6 @@ export function createResolverCtx(
     http: op.http,
     state: op.state,
     meta,
-    loader: (cls) => op.loader(cls, injector),
+    loader: op.loaderFor(injector),
   };
 }

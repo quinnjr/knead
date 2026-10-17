@@ -20,7 +20,7 @@ import {
   ROUTES,
 } from './metadata.js';
 import type { HostMatcher } from './net.js';
-import { compileMatcher, joinPaths, routeShape } from './path.js';
+import { compilePathIndex, joinPaths, routeShape } from './path.js';
 import {
   composeMiddleware,
   createErrorHandler,
@@ -28,7 +28,7 @@ import {
   type Handler,
   runGuards,
 } from './pipeline.js';
-import { requestUrl } from './request.js';
+import { requestPathname } from './request.js';
 import { resolveFilter, resolveGuard, resolveMiddleware } from './resolve.js';
 import { toResponse, withHeaders } from './response.js';
 import type { ExceptionFilter, Guard, HttpMethod, Middleware, RouteInfo } from './types.js';
@@ -184,19 +184,35 @@ export function compileApplication(input: CompileInput): CompiledApp {
     return true;
   };
   const cacheControl = input.defaultCacheControl;
-  const withCacheDefault = (res: Response): Response =>
-    cacheControl === undefined || res.headers.has('cache-control')
-      ? res
-      : withHeaders(res, { 'cache-control': cacheControl });
+  /** Gives every answer of `handler` the default Cache-Control (an accepted upgrade has none). */
+  const withCacheDefault = (handler: BunHandler): BunHandler =>
+    cacheControl === undefined
+      ? handler
+      : async (req, server) => {
+          const res = await handler(req, server);
+          return res === undefined || res.headers.has('cache-control')
+            ? res
+            : withHeaders(res, { 'cache-control': cacheControl });
+        };
   const checkForwarded = forwardedWarning(net, logger);
   const globalOnError = createErrorHandler(input.globalFilters, logger, development);
   const routes: CompiledApp['routes'] = {};
   const table: RouteTableEntry[] = [];
   const owners = new Map<string, string>();
   const shapes = new Map<string, string>();
-  const allowed = new Map<string, { matcher: RegExp; methods: Set<HttpMethod> }>();
+  const allowed = new Map<string, Set<HttpMethod>>();
+  // Bun hands WebSocket handshakes for a root "/*" route to fetch instead of the route, so one
+  // without an endpoint is dispatched to that route from fetch: an ordinary GET, as without the
+  // header.
+  let rootWildcard: BunHandler | undefined;
 
   const wsHandlers = new Map<string, Handler>();
+  /** Upgrades a handshake to the endpoint on its exact path; null when that path has none. */
+  const upgradeEndpoint = async (req: Request, server: Server<any>) => {
+    const pathname = requestPathname(req);
+    const ws = wsHandlers.get(pathname);
+    return ws ? runUpgrade(input.ws, pathname, ws, req, server, net) : null;
+  };
   for (const [path, endpoint] of input.ws.entries()) {
     wsHandlers.set(
       path,
@@ -253,6 +269,12 @@ export function compileApplication(input: CompileInput): CompiledApp {
         if (path.includes('*') && !path.endsWith('/*')) {
           throw new HttpConfigError(
             `Route ${path} has a "*" that is not the whole last segment (${label}); Bun only matches a trailing "/*".`,
+          );
+        }
+        const status = route.options.status;
+        if (status !== undefined && (!Number.isInteger(status) || status < 200 || status > 599)) {
+          throw new HttpConfigError(
+            `Route ${path} has status ${String(status)}; a route status must be an integer from 200 to 599 (${label}).`,
           );
         }
         const shape = routeShape(path);
@@ -321,36 +343,42 @@ export function compileApplication(input: CompileInput): CompiledApp {
           const ws = endpoint
             ? upgradeChain(path, endpoint, input.ws, chain, [...guards, ...authorize], onError)
             : undefined;
+          // A parametric or wildcard GET route can cover the exact path of an endpoint: its
+          // upgrades go to that endpoint (global middleware and guards, ctx.route null), as if no
+          // route matched, instead of being answered as an ordinary GET.
+          const covers = method === 'GET' && !ws && (path.includes(':') || path.includes('*'));
           let byMethod = routes[path];
           if (!byMethod) {
             byMethod = {};
             routes[path] = byMethod;
           }
-          byMethod[method] = async (req, server) => {
+          const dispatch: BunHandler = async (req, server) => {
             if (misdirected(req)) return misdirectedResponse();
             checkForwarded(req);
             if (ws && isUpgrade(req)) return runUpgrade(input.ws, path, ws, req, server, net, info);
-            return withCacheDefault(await handle(new RequestContext(req, server, info, net)));
+            if (covers && isUpgrade(req)) {
+              const upgraded = await upgradeEndpoint(req, server);
+              if (upgraded !== null) return upgraded;
+            }
+            return handle(new RequestContext(req, server, info, net));
           };
-          const entry = allowed.get(path) ?? {
-            matcher: compileMatcher(path),
-            methods: new Set<HttpMethod>(),
-          };
-          entry.methods.add(method);
-          allowed.set(path, entry);
+          if (path === '/*' && method === 'GET') rootWildcard = dispatch;
+          byMethod[method] = withCacheDefault(dispatch);
+          const methods = allowed.get(path) ?? new Set<HttpMethod>();
+          methods.add(method);
+          allowed.set(path, methods);
           table.push({ method, path, handler: label });
         }
       }
     }
   }
 
+  const allowedFor = compilePathIndex(allowed);
   const unmatched: Handler = async (ctx) => {
     try {
-      const pathname = requestUrl(ctx.req).pathname;
+      const pathname = requestPathname(ctx.req);
       const methods = new Set<string>();
-      for (const { matcher, methods: m } of allowed.values()) {
-        if (matcher.test(pathname)) for (const x of m) methods.add(x);
-      }
+      for (const m of allowedFor(pathname)) for (const x of m) methods.add(x);
       if (methods.size > 0) {
         if (methods.has('GET')) methods.add('HEAD');
         throw new MethodNotAllowedException(`${ctx.req.method} is not allowed on ${pathname}`, {
@@ -363,17 +391,16 @@ export function compileApplication(input: CompileInput): CompiledApp {
     }
   };
   const fallback = composeMiddleware(input.globalMiddleware, unmatched, globalOnError);
-
-  const fetch: BunHandler = async (req, server) => {
+  const fetch: BunHandler = withCacheDefault(async (req, server) => {
     if (misdirected(req)) return misdirectedResponse();
     checkForwarded(req);
     if (isUpgrade(req)) {
-      const pathname = requestUrl(req).pathname;
-      const ws = wsHandlers.get(pathname);
-      if (ws) return runUpgrade(input.ws, pathname, ws, req, server, net);
+      const upgraded = await upgradeEndpoint(req, server);
+      if (upgraded !== null) return upgraded;
+      if (rootWildcard) return rootWildcard(req, server);
     }
-    return withCacheDefault(await fallback(new RequestContext(req, server, null, net)));
-  };
+    return fallback(new RequestContext(req, server, null, net));
+  });
 
   return { routes, fetch, table };
 }

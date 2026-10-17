@@ -100,8 +100,12 @@ const FORBIDDEN_TOKEN = /[;,\r\n]/;
 
 const ONE_YEAR = 31_536_000;
 
+/**
+ * Characters a header value cannot carry: controls other than tab (CR, LF, NUL, ..., DEL) and
+ * anything above U+00FF, which Bun's Headers rejects, so every response would throw.
+ */
 // biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the point.
-const CONTROL_EXCEPT_TAB = /[\u0000-\u0008\u000a-\u001f\u007f]/;
+const UNSENDABLE = /[\u0000-\u0008\u000a-\u001f\u007f\u0100-\uffff]/;
 
 /** Options whose value is sent as a header as is, with their header names for error messages. */
 const HEADER_VALUES = [
@@ -138,16 +142,16 @@ function validateHsts(hsts: HstsOptions | false | undefined): void {
 /**
  * Rejects CSP config that could inject extra directives or header lines, invalid HSTS (a
  * non-integer or negative maxAge, or preload without includeSubDomains and a one-year maxAge) and
- * header values that are not strings or contain control characters other than tab (CR, LF, NUL,
- * ...), which would otherwise fail every response.
+ * header values (and CSP sources) that are not strings, contain control characters other than tab
+ * (CR, LF, NUL, ...) or contain characters above U+00FF, which would otherwise fail every response.
  */
 export function validateSecurityHeadersOptions(options: SecurityHeadersOptions): void {
   validateHsts(options.strictTransportSecurity);
   for (const [key, header] of HEADER_VALUES) {
     const value = options[key];
     if (value === undefined || value === false) continue;
-    // Headers rejects CR, LF and NUL, which would fail every response instead of startup.
-    if (typeof value !== 'string' || CONTROL_EXCEPT_TAB.test(value)) {
+    // Headers rejects CR, LF, NUL and non-Latin-1, which would fail every response instead of startup.
+    if (typeof value !== 'string' || UNSENDABLE.test(value)) {
       throw new HttpConfigError(`Invalid ${header}: ${JSON.stringify(value)}`);
     }
   }
@@ -168,7 +172,11 @@ export function validateSecurityHeadersOptions(options: SecurityHeadersOptions):
           typeof token === 'object' ? (token === null ? 'null' : 'object') : typeof token;
         throw new HttpConfigError(`Invalid CSP value for ${name}: expected a string, got ${label}`);
       }
-      if (FORBIDDEN_TOKEN.test(token) || (typeof value !== 'string' && /\s/.test(token))) {
+      if (
+        FORBIDDEN_TOKEN.test(token) ||
+        UNSENDABLE.test(token) ||
+        (typeof value !== 'string' && /\s/.test(token))
+      ) {
         throw new HttpConfigError(`Invalid CSP value for ${name}: ${JSON.stringify(token)}`);
       }
     }

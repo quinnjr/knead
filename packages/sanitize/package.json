@@ -1,7 +1,27 @@
 {
   "name": "@knead-js/sanitize",
-  "version": "0.2.1",
-  "description": "Opt-in allowlist HTML sanitization as a Standard Schema wrapper",
+  "version": "0.3.0",
+  "description": "Allowlist HTML sanitization as a Standard Schema wrapper for Knead, the NestJS-style web framework for Bun",
+  "keywords": [
+    "bun",
+    "bunjs",
+    "bun-framework",
+    "knead",
+    "web-framework",
+    "http-framework",
+    "typescript",
+    "sanitize",
+    "sanitize-html",
+    "html",
+    "xss",
+    "security",
+    "standard-schema",
+    "validation"
+  ],
+  "homepage": "https://quinnjr.github.io/knead/packages/sanitize/",
+  "bugs": {
+    "url": "https://github.com/quinnjr/knead/issues"
+  },
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",

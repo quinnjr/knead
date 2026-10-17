@@ -138,7 +138,9 @@ meta argument, so tests capture them too.
   `apikey`, ...) become `***`, in plain objects, class instances, `Map`s and `Headers`.
 - **Errors**, wherever they appear: outside development `Name: message`, redacted and capped at
   500 characters, with no stack, cause or properties. In development, the redacted stack, own
-  properties and up to 16 causes.
+  properties and up to 16 causes. An error's properties count toward the depth limit like any
+  other value, an error reached again through its own properties or causes is `"[Circular]"`,
+  and after 100 detailed errors in one record the rest are written as `Name: message`.
 
 Pass errors as meta (`log.error('payment failed', error)`) rather than interpolating them into the
 message, so the logger can apply these rules.
@@ -150,6 +152,8 @@ message, so the logger can apply these rules.
 | Depth | 4 levels below each meta argument | `"[Object]"` or `"[Array]"` |
 | Items per array, `Set`, `Map` or object | 1000 | The rest is summarized as omitted |
 | Values per record | 10000 | `"[Truncated]"` |
+| Errors per cause chain (development) | 16 | `Caused by: … (more causes omitted)` |
+| Detailed errors per record (development) | 100 | `Name: message`, as outside development |
 
 A value that throws when read becomes `"[unreadable]"`, a cycle `"[Circular]"`. A sink that
 throws or rejects is ignored, and the default sink adds a no-op `'error'` listener to stdout and

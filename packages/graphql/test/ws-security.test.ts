@@ -120,3 +120,47 @@ describe('WebSocket transport security', () => {
     expect(await upgradeStatus(s.app)).toBe(400);
   });
 });
+
+describe('subscribe before connection_init', () => {
+  function rawSocket(started: Started) {
+    const ws = new WebSocket(
+      `ws://127.0.0.1:${started.app.url.port}/graphql`,
+      'graphql-transport-ws',
+    );
+    const messages: unknown[] = [];
+    ws.onmessage = (e) => messages.push(JSON.parse(String(e.data)));
+    const opened = new Promise<void>((resolve) => {
+      ws.onopen = () => resolve();
+    });
+    const closed = new Promise<{ code: number; reason: string }>((resolve) => {
+      ws.onclose = (e) => resolve({ code: e.code, reason: e.reason });
+    });
+    return { ws, messages, opened, closed };
+  }
+
+  test('an over-long subscribe on an uninitialized socket closes it with 4401', async () => {
+    s = await startGraphQL([M], { maxQueryLength: 100 });
+    const socket = rawSocket(s);
+    await socket.opened;
+    socket.ws.send(
+      JSON.stringify({
+        id: '1',
+        type: 'subscribe',
+        payload: { query: `subscription { t }${' '.repeat(200)}` },
+      }),
+    );
+    const closed = await socket.closed;
+    expect(closed).toEqual({ code: 4401, reason: 'Unauthorized' });
+    expect(socket.messages).toEqual([]);
+  });
+
+  test('a short subscribe on an uninitialized socket closes it with 4401 too', async () => {
+    s = await startGraphQL([M], { maxQueryLength: 100 });
+    const socket = rawSocket(s);
+    await socket.opened;
+    socket.ws.send(
+      JSON.stringify({ id: '1', type: 'subscribe', payload: { query: 'subscription { t }' } }),
+    );
+    expect((await socket.closed).code).toBe(4401);
+  });
+});

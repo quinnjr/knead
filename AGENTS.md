@@ -135,8 +135,9 @@ deliberate decision and tests:
 - **Default limits stay on**: request body size, query/form parameter counts, GraphQL depth,
   complexity, tokens, fields and aliases, WebSocket payload size, message rate and connections per
   IP. New input paths need their own bounds.
-- **Untrusted input.** Query, form and JSON objects drop `__proto__`/`constructor`/`prototype`;
-  never `Object.assign` request data onto objects. Hosts, origins and `X-Forwarded-*` values are
+- **Untrusted input.** Query and form objects drop `__proto__`/`constructor`/`prototype`; JSON
+  drops `__proto__` at every depth and `constructor`/`prototype` holding objects; never
+  `Object.assign` request data onto objects. Hosts, origins and `X-Forwarded-*` values are
   validated before use (`allowedHosts`, same-origin WebSocket checks, `trustProxy`).
 - **Secrets.** Credentials never reach logs or responses: redaction covers URL userinfo,
   `key=value` secrets, Bearer/Basic and nested objects. Error messages to clients are masked in

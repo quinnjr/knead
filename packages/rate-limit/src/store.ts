@@ -1,3 +1,5 @@
+import type { Logger } from '@knead-js/http';
+
 export type Algorithm = 'sliding-window' | 'token-bucket';
 
 export interface RateLimitRule {
@@ -20,4 +22,9 @@ export interface ConsumeResult {
 export interface RateLimitStore {
   consume(key: string, rule: RateLimitRule): Promise<ConsumeResult>;
   close?(): void | Promise<void>;
+  /**
+   * Receives the application's LOGGER when RateLimitModule starts, for a store built outside
+   * dependency injection. Optional.
+   */
+  setLogger?(logger: Logger): void;
 }

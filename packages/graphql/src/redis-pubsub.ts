@@ -77,7 +77,9 @@ const MAX_SIGNATURE_AGE = 600_000;
 export interface RedisPubSubOptions {
   /**
    * Publisher connection (not closed by close()). The subscriber is always a dedicated duplicate.
-   * A supplied client bypasses the plaintext (`requireTls`) check: configure TLS on it yourself.
+   * A supplied client bypasses both construction-time checks, the plaintext (`requireTls`) check
+   * and the warning for a missing `signingKey` on a non-loopback server: configure TLS on it, and
+   * set `signingKey` when other clients can publish to its server, yourself.
    */
   client?: RedisClient;
   /**

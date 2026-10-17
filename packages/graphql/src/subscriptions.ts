@@ -454,6 +454,12 @@ export function createSubscriptionEndpoint(
         typeof parsed.payload?.query === 'string' &&
         parsed.payload.query.length > max
       ) {
+        // Leaven answers a subscribe on an uninitialized socket with 4401; so does an
+        // over-long one, rather than an error frame the protocol does not allow before init.
+        if (!(facade.data as WebSocketContext | undefined)?.initialized) {
+          ws.close(4401, 'Unauthorized');
+          return;
+        }
         ws.send(
           JSON.stringify({
             id: parsed.id,

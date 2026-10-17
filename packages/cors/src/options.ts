@@ -57,8 +57,27 @@ function hasTopLevelAlternation(source: string): boolean {
   return false;
 }
 
-/** @throws CorsConfigError for invalid options, including an unanchored RegExp origin. */
+/**
+ * @throws CorsConfigError for invalid options: an origin that is not a string, string array,
+ * RegExp or function, an unanchored RegExp origin, and more.
+ */
 export function validateCorsOptions(options: CorsOptions): void {
+  const origin: unknown = options.origin;
+  const validType =
+    typeof origin === 'string' ||
+    typeof origin === 'function' ||
+    origin instanceof RegExp ||
+    (Array.isArray(origin) && origin.every((o) => typeof o === 'string'));
+  if (!validType) {
+    throw new CorsConfigError(
+      'CORS origin must be a string, an array of strings, a RegExp or a function, got ' +
+        (Array.isArray(origin)
+          ? 'an array with a non-string entry'
+          : origin === null
+            ? 'null'
+            : typeof origin),
+    );
+  }
   if (Array.isArray(options.origin) && options.origin.includes('*')) {
     throw new CorsConfigError("Use origin: '*' instead of listing '*' among origins.");
   }

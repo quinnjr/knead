@@ -2,7 +2,7 @@ import { SkipAbility } from '@knead-js/casl';
 import { inject } from '@knead-js/core';
 import { ID, Query, ResolveField, Resolver, type ResolverCtx } from '@knead-js/graphql';
 import * as v from 'valibot';
-import { AuthorsById } from './blog.loaders.js';
+import { AuthorsById, CommentsByPost } from './blog.loaders.js';
 import { BlogService } from './blog.service.js';
 import { Author, Comment, Post, PostsArgs } from './blog.types.js';
 
@@ -31,8 +31,9 @@ export class PostResolver {
     return ctx.loader(AuthorsById).load(ctx.parent.authorId);
   }
 
+  /** Batched: every Post.comments in one operation tick becomes one CommentsByPost.batch() call. */
   @ResolveField(() => [Comment])
-  comments(ctx: ResolverCtx<{}, Post>): Comment[] {
-    return this.#blog.commentsFor(ctx.parent.id);
+  comments(ctx: ResolverCtx<{}, Post>): Promise<Comment[]> {
+    return ctx.loader(CommentsByPost).load(ctx.parent.id);
   }
 }

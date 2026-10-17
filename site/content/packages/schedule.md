@@ -33,7 +33,7 @@ module: a second import fails at bootstrap with `ScheduleConfigError`. Options a
 | `onError` | `(error: unknown, ctx: JobContext) => unknown` | `logger.error` with a redacted summary | Receives every failed run and every lock store error. May be async. |
 | `shutdownTimeout` | `Duration` | `'10s'` | How long shutdown waits for runs in progress before logging their names and continuing. |
 | `enabled` | `boolean` | `true` | `false` registers every job paused; `trigger()` and `resume()` still work. |
-| `logger` | `ScheduleLogger` | `console` | Receives the scheduler's warnings and the default `onError` reports, always as single redacted strings. |
+| `logger` | `ScheduleLogger` | the application's `LOGGER` | Receives the scheduler's warnings and the default `onError` reports, always as single redacted strings with control characters in job names escaped (`\n`), so a runtime job name cannot forge log lines. |
 
 The default `onError` logs `[knead:schedule] Job "<name>" failed: <Name>: <message>` through
 `logger.error`, where the message is redacted and capped at 500 characters, with no stack, cause or
@@ -61,7 +61,17 @@ defined, as do invalid patterns, time zones, durations and names. The method rec
 
 `Cron(pattern: string, options?: CronOptions)` runs the method on a cron pattern: 5 fields, or 6
 with seconds first, an optional 7th field for the year, and macros such as `@daily` and `@hourly`.
-See [cron patterns](/guide/scheduling/#cron-patterns).
+See [cron patterns](/guide/scheduling/#cron-patterns). A pattern longer than 1024 characters
+is a `ScheduleConfigError`, which bounds the work for runtime patterns that come from tenant data.
+
+Across daylight saving time changes in `timezone`:
+
+- **Spring forward.** A time in the skipped hour runs at the same minutes in the hour after:
+  `30 2 * * *` in `America/New_York` runs at 03:30 EDT on the day 02:00 jumps to 03:00, then at
+  02:30 again.
+- **Fall back.** A time in the repeated hour runs once, in its first occurrence: `30 1 * * *`
+  runs at 01:30 EDT and not again at 01:30 EST. A job armed during the second occurrence (started,
+  resumed or added then) runs at its next match in that occurrence, never at a time already past.
 
 `CronOptions` extends `JobOptions`:
 
@@ -81,7 +91,8 @@ of the previous run.
 
 `Timeout(after: Duration, options?: JobOptions)` runs the method once, `after` the application
 starts. The job is listed as `stopped` while its run is in progress and leaves the registry when the
-run settles (unless it was resumed or replaced meanwhile).
+run settles (unless it was resumed or replaced meanwhile, including by the handler itself before
+its first `await`).
 
 ### `JobOptions`
 
@@ -130,7 +141,7 @@ immediately (paused if `enabled` is `false`).
 Errors: an unknown name throws `ScheduleJobNotFoundError` from `pause()`, `resume()` and
 `trigger()` (`remove()` returns `false`). A duplicate or empty name, a handler that is not a
 function, an invalid pattern or duration, `lock` without a `lockStore`, and any change after
-shutdown throw `ScheduleConfigError`.
+shutdown (`remove()` included) throw `ScheduleConfigError`.
 
 ### `JobInfo`
 
@@ -163,6 +174,7 @@ The interface a lock store implements:
 | --- | --- | --- |
 | `acquire` | `(key: string, ttlMs: number) => Promise<boolean>` | Claims `key` for `ttlMs` milliseconds. |
 | `close` | `() => void \| Promise<void>` (optional) | Releases the store's connections. |
+| `setLogger` | `(logger: WarnLogger) => void` (optional) | Called once when `ScheduleModule` starts, with the scheduler's logger (the `logger` option, or the application's `LOGGER`), for a store built outside dependency injection. |
 
 `acquire()` must resolve `true` for exactly one caller per key until `ttlMs` has passed. The
 scheduler calls it with `<job name>:<scheduled time in epoch ms>` and never releases a lock. If
@@ -189,7 +201,7 @@ when Redis answers `OK`. Keys expire on their own and are never deleted. It conn
 | `client` | `RedisClient` (from `bun`) | none | An existing client. It is not closed by `close()` and skips the plaintext check. Pass `client` or `url`, not both. |
 | `prefix` | `string` | `'knead:schedule:'` | Key prefix. |
 | `requireTls` | `boolean` | `false` | Throw `ScheduleConfigError` at construction instead of warning when the URL is plaintext to a non-loopback host. |
-| `logger` | `{ warn(message: string): void }` | `console` | Where the plaintext warning goes. |
+| `logger` | `WarnLogger` | the scheduler's logger | Where the plaintext warning goes. Without it, the warning is held until `ScheduleModule` starts and passes its logger (`setLogger()`); a store used without the module sends it to a `ConsoleLogger` from `@knead-js/core` at its first `acquire()`. |
 | `commandTimeout` | `number` | `250` | Milliseconds an `acquire()` waits for Redis before rejecting; must be an integer of at least 1. |
 
 URL safety: when `url` (or `REDIS_URL`, then `VALKEY_URL`, if neither `url` nor `client` is given)

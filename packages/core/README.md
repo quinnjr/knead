@@ -159,8 +159,9 @@ arguments through `redactCredentials()` and `redactValue()` before printing:
   `DB_PASSWORD=`) and `Bearer`/`Basic` credentials are masked.
 - Values of sensitive keys (`authorization`, `cookie`, `password`, `token`, `apikey`, ...) in
   objects, `Headers`, `Map`s and Errors become `***`.
-- Control characters are escaped, so a logged value cannot forge a log line. The originals are
-  never modified, and logging never throws.
+- Control characters in the message and in string arguments are escaped, so a logged string
+  cannot forge a log line. Other arguments (objects, Errors) are only redacted, not escaped. The
+  originals are never modified, and logging never throws.
 
 `logError()` logs an error under a correlation id and returns the id: the full redacted error in
 development, only `Name: message` otherwise. Development mode is the `DEVELOPMENT` token: the

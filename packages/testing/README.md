@@ -67,7 +67,8 @@ the shutdown hooks.
 - **Request helpers.** `json` bodies, repeated `query` parameters, headers and raw bodies.
 - **GraphQL client.** `app.graphql()` for queries and mutations, `app.graphqlSubscribe()` for
   `graphql-transport-ws` subscriptions.
-- **HTTPS.** Test TLS servers with self-signed certificates.
+- **HTTPS.** Test TLS servers with self-signed certificates: `request()`, `graphql()` and
+  `graphqlSubscribe()` take `tls: { rejectUnauthorized: false }`.
 
 ## Overrides
 
@@ -177,7 +178,8 @@ test('queries stock over HTTP', async () => {
 ```
 
 `app.graphql()` POSTs `{ query, variables, operationName }` to `/graphql` (or `options.path`) and
-returns the parsed body with `status` and `headers`. `app.graphqlSubscribe()` returns an async
+returns the parsed body with `status` and `headers` (a non-JSON response rejects with its status
+and body text). `app.graphqlSubscribe()` returns an async
 iterator of payloads; the server may still be registering the subscription when it resolves, so
 publish events until one arrives (the [guide](https://quinnjr.github.io/knead/guide/testing/#subscriptions)
 shows a helper).

@@ -295,3 +295,57 @@ describe('redactValue cause chains', () => {
     expect(redactValue(error)).toBe(error);
   });
 });
+
+describe('redactValue depth and cycles of map-like objects', () => {
+  test('Headers beyond the depth limit become [Object], never the raw value', () => {
+    const out = redactValue({
+      a: { b: { c: { d: new Headers({ authorization: 'Bearer abcdefghijklmnop' }) } } },
+    });
+    expect(Bun.inspect(out)).not.toContain('abcdefghijklmnop');
+    expect(out).toEqual({ a: { b: { c: { d: '[Object]' } } } });
+  });
+
+  test('a Map containing itself becomes [Circular] and its credential is redacted', () => {
+    const map = new Map<string, unknown>([['authorization', 'Bearer abcdefghijklmnop']]);
+    map.set('self', map);
+    map.set('url', 'redis://u:mapsecret@h');
+    const out = redactValue(map);
+    const text = Bun.inspect(out);
+    expect(text).not.toContain('abcdefghijklmnop');
+    expect(text).not.toContain('mapsecret');
+    expect(out).toEqual({ authorization: '***', self: '[Circular]', url: 'redis://***@h' });
+  });
+
+  test('a Date and other class instances at the depth limit stay as they are', () => {
+    const date = new Date(0);
+    const input = { a: { b: { c: { d: date } } } };
+    expect(redactValue(input)).toBe(input);
+  });
+});
+
+describe('redactValue non-Error and aggregate causes', () => {
+  test('a plain object cause is walked and redacted', () => {
+    const error = new Error('boom', {
+      cause: { authorization: 'Bearer abcdefghijklmnop', url: 'redis://u:causesecret@h' },
+    });
+    const out = redactValue(error);
+    expect(typeof out).toBe('string');
+    expect(out as string).not.toContain('abcdefghijklmnop');
+    expect(out as string).not.toContain('causesecret');
+    expect(out as string).toContain('Caused by:');
+  });
+
+  test('an AggregateError cause has its errors walked', () => {
+    const error = new Error('boom', {
+      cause: new AggregateError([new Error('redis://u:aggsecret@h')], 'many'),
+    });
+    const out = redactValue(error);
+    expect(typeof out).toBe('string');
+    expect(out as string).not.toContain('aggsecret');
+  });
+
+  test('a plain object cause with nothing to redact keeps the Error unchanged', () => {
+    const error = new Error('boom', { cause: { code: 42 } });
+    expect(redactValue(error)).toBe(error);
+  });
+});

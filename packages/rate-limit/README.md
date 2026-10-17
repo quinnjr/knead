@@ -101,10 +101,11 @@ not counted. A request over the limit gets a `429 Too Many Requests` problem res
 | `middleware` | `true` | Install the global middleware. `false` counts only through `RateLimitGuard`. |
 
 `RateLimitModule.forRoot()` rejects with a `RangeError` a `limit` that is not a positive integer,
-an invalid or out-of-range `window`, an `ipv6Subnet` outside 1 to 128, and an unknown
-`onMissingKey`, `onStoreError` or `algorithm`. A typo such as `onStoreError: 'Deny'` is therefore
-an error at startup, not a limit that silently fails open. `@RateLimit()` validates its own
-`limit` and `window` when it is applied.
+an invalid or out-of-range `window`, an `ipv6Subnet` outside 1 to 128, an unknown
+`onMissingKey`, `onStoreError` or `algorithm`, a `store` without `consume()`, a `key` that is not a
+function and a `middleware` that is not a boolean. A typo such as `onStoreError: 'Deny'` is
+therefore an error at startup, not a limit that silently fails open. `@RateLimit()` validates its
+own `limit`, `window` and `key` when it is applied.
 
 ## Counters and keys
 
@@ -192,10 +193,16 @@ export function rateLimitModule(env: Record<string, string | undefined>) {
 - **Keyed hashes.** Set `hashSecret` (at least 32 bytes, the same on every instance). Without it,
   keys are plain SHA-256 hashes, which do not hide IP addresses, and a warning is logged once.
 - **Fail closed where it matters.** A Redis failure or a reply slower than `commandTimeout`
-  (250 ms) is a store error. Use `onStoreError: 'deny'` for login, password reset and one-time
+  (250 ms) is a store error. The store's own client has no offline queue, so nothing piles up
+  during an outage to be replayed later; give a `client` you pass in `enableOfflineQueue: false`
+  and a `connectionTimeout` too. Use `onStoreError: 'deny'` for login, password reset and one-time
   codes, where failing open would allow brute force during an outage.
 - **Least privilege.** Connect as an ACL user limited to the store's keys and commands:
   `ACL SETUSER ratelimit on >password resetkeys ~knead:rl:* -@all +evalsha +eval +get +incr +pexpire +hmget +hset +time`.
+- **Logging.** Under `RateLimitModule`, the store's warnings go to the application's `LOGGER`
+  unless you pass `logger`.
+- **Clocks.** Admission uses the Redis server's clock; the `RateLimit-Reset` and `Retry-After`
+  values are computed against the instance clock.
 - `RedisStore` does not support Redis Cluster.
 
 ## Responses

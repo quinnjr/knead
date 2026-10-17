@@ -19,11 +19,11 @@ afterEach(() => {
 /**
  * Runs the real script in a throwaway workspace with `pnpm` (and so `pnpm dlx npm@…`) and `sleep`
  * stubbed. `trusted` maps a package to what `npm trust list <pkg> --json` prints; `failList` makes
- * that call fail.
+ * that call fail, and `failCreate` makes `npm trust github <pkg>` fail.
  */
 function run(
   packages: string[],
-  stub: { trusted?: Record<string, string>; failList?: string[] } = {},
+  stub: { trusted?: Record<string, string>; failList?: string[]; failCreate?: string[] } = {},
   args: string[] = [],
 ) {
   const root = mkdtempSync(join(tmpdir(), 'knead-trust-test-'));
@@ -53,6 +53,9 @@ if [ "$1 $2" = "trust list" ]; then
   file=${JSON.stringify(responses)}/$(node -p 'encodeURIComponent(process.argv[1])' "$3")
   [ -f "$file" ] && cat "$file"
 fi
+if [ "$1 $2" = "trust github" ]; then
+  case " ${(stub.failCreate ?? []).join(' ')} " in *" $3 "*) echo "npm error E403" >&2; exit 1 ;; esac
+fi
 exit 0
 `,
   );
@@ -72,6 +75,7 @@ exit 0
   return {
     exitCode: r.exitCode,
     out: r.stdout.toString() + r.stderr.toString(),
+    calls,
     creates: calls.filter((c) => c.startsWith('trust github')),
   };
 }
@@ -130,4 +134,41 @@ describe('trust-npm-publishers.sh', () => {
     expect(r.creates).toEqual([expect.stringContaining('@knead-js/b --file release.yml')]);
     expect(r.creates[0]).toContain('--dry-run');
   });
+
+  test('logs out of npm when it finishes', () => {
+    const r = run(['@knead-js/a']);
+    expect(r.exitCode).toBe(0);
+    expect(r.calls.at(-1)).toBe('logout');
+    expect(r.out).toContain('logged out of npm');
+  });
+
+  test('logs out of npm even when a trust call fails', () => {
+    const r = run(['@knead-js/a', '@knead-js/b'], { failCreate: ['@knead-js/a'] });
+    expect(r.exitCode).not.toBe(0);
+    // The failing create stops the run before @knead-js/b, and the exit trap still logs out.
+    expect(r.creates).toEqual([expect.stringContaining('trust github @knead-js/a ')]);
+    expect(r.calls.at(-1)).toBe('logout');
+  });
+
+  test.each([
+    [['--env', 'npm-publish']],
+    [['--env=npm-publish']],
+    [['--environment', 'npm-publish']],
+    [['--environment=npm-publish']],
+  ])('%p forwards --env npm-publish to the create call', (args) => {
+    const r = run(['@knead-js/a'], {}, args);
+    expect(r.exitCode).toBe(0);
+    expect(r.creates).toHaveLength(1);
+    expect(r.creates[0]).toEndWith('--allow-publish --yes --env npm-publish');
+  });
+
+  test.each([[['--env']], [['--env=']], [['--env', '']], [['--env', '--dry-run']]])(
+    '%p without an environment name exits 2 before calling npm',
+    (args) => {
+      const r = run(['@knead-js/a'], {}, args);
+      expect(r.exitCode).toBe(2);
+      expect(r.out).toContain('needs an environment name');
+      expect(r.calls).toEqual([]);
+    },
+  );
 });

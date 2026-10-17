@@ -422,3 +422,69 @@ describe('GraphQLSubscriptions.closeWhere during the upgrade', () => {
     expect(ada.messages.some((m) => m.type === 'connection_ack')).toBe(false);
   });
 });
+
+describe('subscriptions.refreshContext fails closed', () => {
+  for (const [label, result] of [
+    ['undefined', undefined],
+    ['null', null],
+    ['true', true],
+    ['a string', 'ada'],
+  ] as const) {
+    test(`a result of ${label} ends the subscription with FORBIDDEN`, async () => {
+      s = await startGraphQL([M], {
+        subscriptions: { refreshContext: () => result as never },
+      });
+      const pubsub = s.mod.get(PUBSUB);
+      const sub = await s.app.graphqlSubscribe('subscription { checked }');
+      await Bun.sleep(30);
+      await pubsub.publish('checked', 1);
+      expect((await sub.next()).value?.errors?.[0]?.extensions?.code).toBe('FORBIDDEN');
+      expect((await sub.next()).done).toBe(true);
+      await sub.close();
+    });
+  }
+});
+
+describe('subscription argument validation', () => {
+  test('arguments are validated once per subscription; each event sees the validated ones', async () => {
+    let validations = 0;
+    const seen: unknown[] = [];
+    const lower = {
+      '~standard': {
+        version: 1 as const,
+        vendor: 'test',
+        validate: (value: unknown) => {
+          validations++;
+          return { value: String(value).toLowerCase() };
+        },
+      },
+    };
+    @Resolver()
+    class Room {
+      @Query(() => Int) q() {
+        return 1;
+      }
+      @Subscription(() => Int, {
+        args: { room: String },
+        validate: { room: lower },
+        topic: 'room',
+      })
+      room(ctx: ResolverCtx<{ room: string }>) {
+        seen.push(ctx.args.room);
+      }
+    }
+    @Module({ providers: [Room] })
+    class RoomModule {}
+    s = await startGraphQL([RoomModule]);
+    const pubsub = s.mod.get(PUBSUB);
+    const sub = await s.app.graphqlSubscribe('subscription { room(room: "LOBBY") }');
+    await Bun.sleep(30);
+    for (let i = 1; i <= 3; i++) {
+      await pubsub.publish('room', i);
+      expect((await sub.next()).value).toEqual({ data: { room: i } });
+    }
+    expect(seen).toEqual(['lobby', 'lobby', 'lobby']);
+    expect(validations).toBe(1);
+    await sub.close();
+  });
+});
