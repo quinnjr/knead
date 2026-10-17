@@ -15,7 +15,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-// Every test here runs the real publish step: bash, GNU tar over eleven tarballs and a node
+// Every test here runs the real publish step: bash, GNU tar over twelve tarballs and a node
 // process loading pacote. That normally takes 0.3-1 s, but under load (for example `pnpm test`
 // next to another `bun test scripts`) it exceeded bun's 5 s default and failed spuriously.
 setDefaultTimeout(60_000);
@@ -502,7 +502,7 @@ describe('release.yml publish step', () => {
       const r = publish('v1.2.3', []);
       expect(r.exitCode).toBe(0);
       expect(r.allPublishes).toHaveLength(ALLOWED.length);
-      expect(ALLOWED).toHaveLength(11);
+      expect(ALLOWED).toHaveLength(12);
     });
 
     test('publishes nothing when a package is missing from the artifact', () => {

@@ -247,7 +247,7 @@ export class WsRegistry {
   #reservedTotal = 0;
   readonly #log = {
     logger: inject(LOGGER),
-    development: inject(HTTP_DEVELOPMENT, { optional: true }) ?? false,
+    development: inject(HTTP_DEVELOPMENT),
   };
   #server: ResolvedServerOptions = resolveServerOptions({});
   #sealed = false;

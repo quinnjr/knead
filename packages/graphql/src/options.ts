@@ -88,13 +88,13 @@ export interface GraphQLModuleOptions {
   context?: (http: Ctx) => object | Promise<object>;
   /**
    * Serves GraphQL Playground to browsers. Default: the application is in development (the
-   * HTTP_DEVELOPMENT flag, else NODE_ENV === 'development'). An object enables
+   * HTTP_DEVELOPMENT flag). An object enables
    * it with options: `subscriptionEndpoint` is the WebSocket URL the page connects to (a
    * `ws://`/`wss://` URL or an absolute path). Without it, the URL is derived from the request's
    * Host header when that is a plain `host[:port]`, and is the relative path otherwise.
    */
   playground?: boolean | PlaygroundOptions;
-  /** Default: true in development (HTTP_DEVELOPMENT, else NODE_ENV), or when the playground is on. */
+  /** Default: true in development (HTTP_DEVELOPMENT), or when the playground is on. */
   introspection?: boolean;
   /**
    * Deepest selection allowed (fragments expanded). Selections inside `__schema` and `__type`
@@ -141,7 +141,7 @@ export interface GraphQLModuleOptions {
   cacheControl?: string | false;
   /** GET requests must carry one of `requiredHeaders` (default ['x-graphql-request']). */
   csrf?: { requiredHeaders?: readonly string[] } | false;
-  /** Default: true outside development (HTTP_DEVELOPMENT, else NODE_ENV). */
+  /** Default: true outside development (HTTP_DEVELOPMENT). */
   maskErrors?: boolean;
   /**
    * Maps an error thrown by resolver code, `hooks`, subscription filters or the `context` factory

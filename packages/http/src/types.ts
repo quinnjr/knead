@@ -89,7 +89,7 @@ export type GuardFn<C = Ctx> = (ctx: C) => boolean | Promise<boolean>;
 export type GuardRef<C = Ctx> = Type<Guard<C>> | Guard<C> | GuardFn<C>;
 
 export interface ExceptionFilter<E = unknown> {
-  catch(error: E, ctx: Ctx): Response | Promise<Response>;
+  catch(error: E, ctx: Ctx): Response | undefined | Promise<Response | undefined>;
 }
 export type FilterRef = Type<ExceptionFilter<any>> | ExceptionFilter<any>;
 

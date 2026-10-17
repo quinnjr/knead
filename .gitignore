@@ -3,6 +3,7 @@ dist/
 *.tsbuildinfo
 *.tgz
 coverage/
+packages/prisma/test/fixtures/generated/
 packages/*/LICENSE-MIT
 packages/*/LICENSE-APACHE
 .DS_Store

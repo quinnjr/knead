@@ -22,3 +22,8 @@ trustPolicy: no-downgrade
 strictDepBuilds: true
 # Transitive dependencies may only come from the registry (no git/tarball URLs).
 blockExoticSubdeps: true
+# Reviewed build scripts. Prisma's postinstall only prefetches engines; the CLI
+# fetches the schema engine on first use, so it stays off.
+allowBuilds:
+  '@prisma/engines': false
+  prisma: false
