@@ -223,7 +223,25 @@ Conditions are not evaluated then; they are enforced on every request, against t
   request and on subscription upgrades. It passes them when `GraphQLModule.forRoot({ guards })`
   includes `AbilityGuard` (or a subclass), because every root field is then checked against its own
   `@Can()`; otherwise the endpoint has no `@Can()` and is denied (fail closed). Other WebSocket
-  endpoints need `@Can()` or `@SkipAbility()` on the GET route they upgrade from.
+  endpoints declare their requirement when they register, with `canMeta()` or `skipAbilityMeta()`
+  (the meta forms of `@Can()` and `@SkipAbility()`); an endpoint with neither is denied:
+
+  ```ts
+  import { canMeta, skipAbilityMeta } from '@knead-js/casl';
+  import { inject, type OnModuleInit } from '@knead-js/core';
+  import { WsRegistry } from '@knead-js/http';
+
+  export class Gateway implements OnModuleInit {
+    readonly ws = inject(WsRegistry);
+    onModuleInit() {
+      const endpoint = { upgrade: () => ({}) };
+      this.ws.register('/feed', endpoint, { meta: canMeta('read', 'Post') });
+      this.ws.register('/status', endpoint, { meta: skipAbilityMeta() });
+    }
+  }
+  ```
+
+  An endpoint on the path of a GET route also gets that route's `@Can()`; its own `meta` wins.
 - **`AbilityService`** builds the caller's ability once per request (cached on `ctx.state`):
   `forCtx(ctx)` returns it (or throws `UnauthorizedException`), and `authorize(ctx, action,
   subject, field?)` throws `ForbiddenException` unless it allows the action. `@Can()` checks the

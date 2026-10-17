@@ -31,12 +31,14 @@ export class RequestContext implements Ctx<any> {
     readonly route: RouteInfo | null,
     private readonly net: NetConfig,
     readonly upgrade: UpgradeInfo | null = null,
+    /** An upgrade's meta: the endpoint's `meta`, merged over the GET route's meta if any. */
+    private readonly upgradeMeta?: Readonly<Record<PropertyKey, unknown>>,
   ) {
     this.params = (req as BunRequest).params ?? {};
   }
 
   get meta(): Readonly<Record<PropertyKey, unknown>> {
-    return this.route?.meta ?? EMPTY_META;
+    return this.upgradeMeta ?? this.route?.meta ?? EMPTY_META;
   }
 
   get query(): any {

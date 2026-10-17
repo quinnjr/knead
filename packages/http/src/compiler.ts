@@ -120,7 +120,9 @@ async function runUpgrade(
   net: NetConfig,
   route: RouteInfo | null = null,
 ): Promise<Response | undefined> {
-  const ctx = new RequestContext(req, server, route, net, Object.freeze({ path }));
+  const endpointMeta = registry.meta(path);
+  const meta = endpointMeta && Object.freeze({ ...route?.meta, ...endpointMeta });
+  const ctx = new RequestContext(req, server, route, net, Object.freeze({ path }), meta);
   registry.beginUpgrade(ctx);
   try {
     const res = await handler(ctx);
