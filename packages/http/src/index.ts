@@ -31,7 +31,7 @@ export {
 } from './net.js';
 export { defaultErrorResponse } from './pipeline.js';
 export { DEFAULT_MAX_PARAMS, requestUrl } from './request.js';
-export { assertGuardRef } from './resolve.js';
+export { assertGuardRef, resolveGuard } from './resolve.js';
 export { isHeaderValue, withHeaders } from './response.js';
 export { checkBunVersion, compareVersions, MIN_BUN_VERSION } from './runtime-version.js';
 export * from './tokens.js';

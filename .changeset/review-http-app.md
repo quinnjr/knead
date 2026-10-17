@@ -1,5 +1,5 @@
 ---
-'@knead-js/http': patch
+'@knead-js/http': minor
 ---
 
 Harden the HTTP application and pipeline: both listeners run with Bun's development mode set to
@@ -9,4 +9,4 @@ extensions that do not serialize (such as a `BigInt`); `listen()` rejects invali
 `maxRequestBodySize`, `idleTimeout` and `shutdownTimeout` values and invalid middleware and
 filter references with an `HttpConfigError`; only `GET` requests are treated as WebSocket
 upgrades; `close()` awaits the redirect listener's stop and logs its failure; `ctx.headers` drops
-`__proto__`, `constructor` and `prototype` keys.
+`__proto__`, `constructor` and `prototype` keys. `resolveGuard` is now exported.

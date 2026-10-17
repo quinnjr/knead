@@ -243,6 +243,13 @@ function, a function, or a class with `canActivate` on its prototype. Anything e
 throws `HttpConfigError: Invalid guard in <where>: ...`. Knead runs this check on every guard at
 `listen()`; packages that accept guards in their own options use it to fail the same way.
 
+### resolveGuard
+
+`resolveGuard(ref, injector, where = 'a guard list')` returns `Guard<any>`: it resolves a
+`GuardRef` in a `ModuleInjector` (a class is constructed through the injector, a function is
+adapted, an object is returned as is), after `assertGuardRef(ref, where)`. Used by
+`@knead-js/graphql` for resolver guards.
+
 ## Tokens
 
 | Token | Type | Description |
