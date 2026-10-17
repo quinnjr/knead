@@ -51,10 +51,10 @@ export class SecurityHeadersMiddleware implements Middleware {
   }
   readonly #cache = new WeakMap<object, SecurityHeadersOptions>();
   /** Built headers per effective options object, for plain and secure requests. */
-  readonly #compiled = new WeakMap<
-    SecurityHeadersOptions,
-    { plain?: CompiledHeaders; secure?: CompiledHeaders }
-  >();
+  readonly #compiled = {
+    plain: new WeakMap<SecurityHeadersOptions, CompiledHeaders>(),
+    secure: new WeakMap<SecurityHeadersOptions, CompiledHeaders>(),
+  };
   readonly #logger = inject(LOGGER, { optional: true });
   #warnedShortHsts = false;
 
@@ -87,24 +87,22 @@ export class SecurityHeadersMiddleware implements Middleware {
 
   /** The same list as buildHeaders(), built once per options and secure flag; only the nonce varies. */
   #headers(options: SecurityHeadersOptions, secure: boolean, nonce: string | undefined) {
-    let entry = this.#compiled.get(options);
-    if (!entry) {
-      entry = {};
-      this.#compiled.set(options, entry);
-    }
-    const key = secure ? 'secure' : 'plain';
-    let compiled = entry[key];
+    const cache = this.#compiled[secure ? 'secure' : 'plain'];
+    let compiled = cache.get(options);
     if (!compiled) {
-      const slot = nonceTargets(options.contentSecurityPolicy) ? NONCE_SLOT : undefined;
+      // use() generates a nonce exactly when the CSP has nonce targets.
+      const slot = nonce === undefined ? undefined : NONCE_SLOT;
       compiled = buildHeaders(options, { secure, nonce: slot }).map(
         ([name, value]) =>
           [name, slot && value.includes(slot) ? value.split(slot) : value] as const,
       );
-      entry[key] = compiled;
+      cache.set(options, compiled);
     }
+    // Without a nonce no value was split, so the list is sent as built.
+    if (nonce === undefined) return compiled as [string, string][];
     return compiled.map(([name, value]): [string, string] => [
       name,
-      typeof value === 'string' ? value : value.join(nonce ?? ''),
+      typeof value === 'string' ? value : value.join(nonce),
     ]);
   }
 

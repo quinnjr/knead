@@ -258,23 +258,20 @@ function isMapLike(value: object): boolean {
 }
 
 /**
- * The entries of a header or map-like object (Headers, Map, AxiosHeaders and other objects with
- * `entries()` or `toJSON()`) as a plain object, or undefined for anything else.
+ * The entries of a map-like object (see isMapLike) as a plain object, or undefined when its
+ * `toJSON()` returns something other than an object.
  */
 function entriesOf(value: object): Record<string, unknown> | undefined {
-  if (!isMapLike(value)) return undefined;
   const candidate = value as { entries?: unknown; toJSON?: unknown };
-  if (value instanceof Headers || value instanceof Map || typeof candidate.entries === 'function') {
+  // Headers and Map have entries(); the rest have entries() or toJSON() (isMapLike).
+  if (typeof candidate.entries === 'function') {
     const out: Record<string, unknown> = {};
     for (const [key, item] of (candidate.entries as () => Iterable<[unknown, unknown]>).call(value))
       out[String(key)] = item;
     return out;
   }
-  if (typeof candidate.toJSON === 'function') {
-    const json = (candidate.toJSON as () => unknown).call(value);
-    return typeof json === 'object' && json !== null ? { ...(json as object) } : undefined;
-  }
-  return undefined;
+  const json = (candidate.toJSON as () => unknown).call(value);
+  return typeof json === 'object' && json !== null ? { ...(json as object) } : undefined;
 }
 
 interface Walk {

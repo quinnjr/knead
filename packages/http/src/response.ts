@@ -1,3 +1,14 @@
+/** Whether `value` can be set as a header value (no CR, LF or NUL, Latin-1 only). */
+export function isHeaderValue(value: string): boolean {
+  if (/[\r\n]/.test(value)) return false;
+  try {
+    new Headers({ 'cache-control': value });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Adds headers to a response. If the response's headers are immutable, the response is
  * re-wrapped. `set-cookie` values are appended. With `overwrite = false`, headers already

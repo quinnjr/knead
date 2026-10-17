@@ -184,12 +184,16 @@ export function compileApplication(input: CompileInput): CompiledApp {
     return true;
   };
   const cacheControl = input.defaultCacheControl;
-  const withCacheDefault = (res: Response): Response =>
-    cacheControl === undefined || res.headers.has('cache-control')
-      ? res
-      : withHeaders(res, { 'cache-control': cacheControl });
-  /** A rejected upgrade's answer gets the default Cache-Control; an accepted one is undefined. */
-  const upgradeResult = (res: Response | undefined) => res && withCacheDefault(res);
+  /** Gives every answer of `handler` the default Cache-Control (an accepted upgrade has none). */
+  const withCacheDefault = (handler: BunHandler): BunHandler =>
+    cacheControl === undefined
+      ? handler
+      : async (req, server) => {
+          const res = await handler(req, server);
+          return res === undefined || res.headers.has('cache-control')
+            ? res
+            : withHeaders(res, { 'cache-control': cacheControl });
+        };
   const checkForwarded = forwardedWarning(net, logger);
   const globalOnError = createErrorHandler(input.globalFilters, logger, development);
   const routes: CompiledApp['routes'] = {};
@@ -197,8 +201,18 @@ export function compileApplication(input: CompileInput): CompiledApp {
   const owners = new Map<string, string>();
   const shapes = new Map<string, string>();
   const allowed = new Map<string, Set<HttpMethod>>();
+  // Bun hands WebSocket handshakes for a root "/*" route to fetch instead of the route, so one
+  // without an endpoint is dispatched to that route from fetch: an ordinary GET, as without the
+  // header.
+  let rootWildcard: BunHandler | undefined;
 
   const wsHandlers = new Map<string, Handler>();
+  /** Upgrades a handshake to the endpoint on its exact path; null when that path has none. */
+  const upgradeEndpoint = async (req: Request, server: Server<any>) => {
+    const pathname = requestPathname(req);
+    const ws = wsHandlers.get(pathname);
+    return ws ? runUpgrade(input.ws, pathname, ws, req, server, net) : null;
+  };
   for (const [path, endpoint] of input.ws.entries()) {
     wsHandlers.set(
       path,
@@ -338,23 +352,18 @@ export function compileApplication(input: CompileInput): CompiledApp {
             byMethod = {};
             routes[path] = byMethod;
           }
-          byMethod[method] = async (req, server) => {
-            if (misdirected(req)) return withCacheDefault(misdirectedResponse());
+          const dispatch: BunHandler = async (req, server) => {
+            if (misdirected(req)) return misdirectedResponse();
             checkForwarded(req);
-            if (ws && isUpgrade(req)) {
-              return upgradeResult(await runUpgrade(input.ws, path, ws, req, server, net, info));
-            }
+            if (ws && isUpgrade(req)) return runUpgrade(input.ws, path, ws, req, server, net, info);
             if (covers && isUpgrade(req)) {
-              const pathname = requestPathname(req);
-              const covered = wsHandlers.get(pathname);
-              if (covered) {
-                return upgradeResult(
-                  await runUpgrade(input.ws, pathname, covered, req, server, net),
-                );
-              }
+              const upgraded = await upgradeEndpoint(req, server);
+              if (upgraded !== null) return upgraded;
             }
-            return withCacheDefault(await handle(new RequestContext(req, server, info, net)));
+            return handle(new RequestContext(req, server, info, net));
           };
+          if (path === '/*' && method === 'GET') rootWildcard = dispatch;
+          byMethod[method] = withCacheDefault(dispatch);
           const methods = allowed.get(path) ?? new Set<HttpMethod>();
           methods.add(method);
           allowed.set(path, methods);
@@ -382,21 +391,16 @@ export function compileApplication(input: CompileInput): CompiledApp {
     }
   };
   const fallback = composeMiddleware(input.globalMiddleware, unmatched, globalOnError);
-  // Bun hands WebSocket handshakes for a root "/*" route to fetch instead of the route, so one
-  // without an endpoint is dispatched to that route here: an ordinary GET, as without the header.
-  const rootWildcard = routes['/*']?.GET;
-
-  const fetch: BunHandler = async (req, server) => {
-    if (misdirected(req)) return withCacheDefault(misdirectedResponse());
+  const fetch: BunHandler = withCacheDefault(async (req, server) => {
+    if (misdirected(req)) return misdirectedResponse();
     checkForwarded(req);
     if (isUpgrade(req)) {
-      const pathname = requestPathname(req);
-      const ws = wsHandlers.get(pathname);
-      if (ws) return upgradeResult(await runUpgrade(input.ws, pathname, ws, req, server, net));
+      const upgraded = await upgradeEndpoint(req, server);
+      if (upgraded !== null) return upgraded;
       if (rootWildcard) return rootWildcard(req, server);
     }
-    return withCacheDefault(await fallback(new RequestContext(req, server, null, net)));
-  };
+    return fallback(new RequestContext(req, server, null, net));
+  });
 
   return { routes, fetch, table };
 }

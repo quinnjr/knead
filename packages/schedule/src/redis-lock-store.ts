@@ -1,4 +1,9 @@
-import { ConsoleLogger, defaultRedisUrl, plaintextRedisHost } from '@knead-js/core';
+import {
+  ConsoleLogger,
+  defaultRedisUrl,
+  plaintextRedisHost,
+  sendRedisCommand,
+} from '@knead-js/core';
 import { RedisClient } from 'bun';
 import { ScheduleConfigError } from './errors.js';
 import { assertLockTtl, type ScheduleLockStore } from './lock-store.js';
@@ -73,37 +78,16 @@ export class RedisLockStore implements ScheduleLockStore {
   async acquire(key: string, ttlMs: number): Promise<boolean> {
     assertLockTtl(ttlMs);
     const args = [`${this.#prefix}${key}`, '1', 'NX', 'PX', String(ttlMs)];
-    let expired = false;
-    const reply = await withTimeout(
-      (async () => {
-        if (!this.#client.connected) await this.#client.connect();
-        // A SET sent after the timeout could claim a firing that was already reported skipped.
-        if (expired) return null;
-        return this.#client.send('SET', args);
-      })(),
+    // A SET sent after the timeout could claim a firing that was already reported skipped.
+    const reply = await sendRedisCommand(
+      this.#client,
+      () => this.#client.send('SET', args),
       this.#commandTimeout,
-    ).finally(() => {
-      expired = true;
-    });
+    );
     return reply === 'OK';
   }
 
   async close(): Promise<void> {
     if (this.#owned) this.#client.close();
-  }
-}
-
-/** Rejects with a timeout error when `promise` has not settled within `ms`. */
-async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`Redis did not answer within ${ms}ms`)), ms);
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
   }
 }

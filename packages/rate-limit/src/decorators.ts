@@ -30,8 +30,7 @@ export function RateLimit(options: RateLimitRouteOptions) {
     throw new RangeError(`Rate limit must be a positive integer, got ${String(options.limit)}.`);
   }
   if (options.key !== undefined && typeof options.key !== 'function') {
-    const got = options.key === null ? 'null' : typeof options.key;
-    throw new RangeError(`key must be a function, got ${got}.`);
+    throw new RangeError(`key must be a function, got ${typeOf(options.key)}.`);
   }
   const windowMs = options.window !== undefined ? parseDuration(options.window) : undefined;
   return rateLimitMeta(windowMs === undefined ? options : { ...options, windowMs });
@@ -39,4 +38,9 @@ export function RateLimit(options: RateLimitRouteOptions) {
 
 export function SkipRateLimit() {
   return skipMeta(true);
+}
+
+/** @internal `typeof`, with null told apart. */
+export function typeOf(value: unknown): string {
+  return value === null ? 'null' : typeof value;
 }
