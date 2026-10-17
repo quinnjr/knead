@@ -13,6 +13,8 @@ bun add @knead-js/core @knead-js/prisma @prisma/client @prisma/adapter-pg pg
 bun add -d prisma
 ```
 
+`@knead-js/core` is a peer dependency, so every package shares one copy; add `@knead-js/http` too if you use `@knead-js/prisma/http`.
+
 ```ts
 import { Module } from '@knead-js/core';
 import { PrismaModule } from '@knead-js/prisma';
@@ -121,7 +123,7 @@ class AppModule {}
 | `P1001`, `P1002`, `P2024` (unreachable, timeout, pool timeout), `PrismaClientInitializationError` | 503 | `ServiceUnavailableException` |
 | any other Prisma error | 500 | `InternalServerErrorException` |
 
-Security trade-off: each row has a fixed, generic `detail`. Prisma's `message` is never copied into a response body or a production log, because it can contain query fragments, column values and connection details; the original error travels only as `cause`. In development, responses additionally carry `extensions.prismaCode` and, for unique violations, `extensions.fields` (the constraint's field names, read from the driver adapter's `meta.driverAdapterError.cause.constraint.fields` or else `meta.target`; never values).
+Security trade-off: each 4xx and 503 row has a fixed, generic `detail` and the 500 row has none; outside development a 5xx response drops its `detail` (the 503 text included) and carries only a `correlationId`, as the default mapping does. Prisma's `message` is never copied into a response body or a production log, because it can contain query fragments, column values and connection details; the original error travels only as `cause`. In development, responses additionally carry `extensions.prismaCode` and, for unique violations, `extensions.fields` (the constraint's field names, read from the driver adapter's `meta.driverAdapterError.cause.constraint.fields` or else `meta.target`; never values).
 
 `map` overrides or adds mappers by code (`P2034`) or by error name, looked up as own keys only; a mapper that throws or returns something other than an `HttpException` becomes a masked 500. `map` must be a plain object whose values are all functions; anything else is a `KneadError` from `forRoot()`:
 
@@ -155,4 +157,6 @@ test('creates a user', async () => {
 
 The package's own Postgres suite runs with `pnpm --filter @knead-js/prisma test:db` and `KNEAD_PRISMA_TEST_DATABASE_URL` set (see AGENTS.md). It reads that dedicated variable, never `DATABASE_URL`, skips without it, and resets the target database, so point it at a disposable one.
 
-`bun add @knead-js/core @knead-js/prisma` (`@knead-js/core` is a peer dependency, so every package shares one copy; add `@knead-js/http` for `/http`). Licensed MIT OR Apache-2.0.
+## License
+
+Licensed MIT OR Apache-2.0.

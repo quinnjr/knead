@@ -25,7 +25,12 @@ const run = (cmd: string[], cwd: string) => {
 const required = ['LICENSE-MIT', 'LICENSE-APACHE', 'README.md', 'dist/index.js', 'dist/index.d.ts'];
 // Subpath entry points shipped by individual packages.
 const requiredByPackage: Record<string, string[]> = {
-  '@knead-js/prisma': ['dist/http/index.js', 'dist/testing/index.js'],
+  '@knead-js/prisma': [
+    'dist/http/index.js',
+    'dist/http/index.d.ts',
+    'dist/testing/index.js',
+    'dist/testing/index.d.ts',
+  ],
 };
 const forbidden = [/\.map$/, /\.tsbuildinfo$/, /\/src\//, /\/test\//];
 const problems: string[] = [];
@@ -320,6 +325,7 @@ try {
     app.get(Ticker).ticks > 0,
     app.get(SchedulerRegistry).get('Ticker.tick')?.state === 'scheduled',
     toHttpException(new Error('not prisma')) === undefined,
+    toHttpException({ name: 'PrismaClientValidationError' })?.status === 400,
   ];
   if (checks.includes(false)) throw new Error(\`checks failed: \${JSON.stringify(checks)}\`);
 } finally {
