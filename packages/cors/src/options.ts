@@ -57,9 +57,43 @@ function hasTopLevelAlternation(source: string): boolean {
   return false;
 }
 
+/** The serialized origin of `value` (what browsers send), or undefined if it has none. */
+function serializedOrigin(value: string): string | undefined {
+  try {
+    const origin = new URL(value).origin;
+    // Opaque origins (file:, data:, mailto:) serialize as 'null'.
+    return origin === 'null' ? undefined : origin;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Throws unless `origin` is `'*'`, `'null'` or exactly a serialized origin: an exact-match string
+ * such as `https://app.example/` (trailing slash) or `https://App.example` never equals the
+ * `Origin` header a browser sends, so it would silently allow nothing.
+ */
+function assertOriginString(origin: string): void {
+  if (origin === '*' || origin === 'null') return;
+  const canonical = serializedOrigin(origin);
+  if (canonical === undefined) {
+    throw new CorsConfigError(
+      `CORS origin ${JSON.stringify(origin)} is not an origin; write it as scheme://host[:port], ` +
+        "such as 'https://app.example'.",
+    );
+  }
+  if (canonical !== origin) {
+    throw new CorsConfigError(
+      `CORS origin ${JSON.stringify(origin)} never matches a browser's Origin header; ` +
+        `write it as ${JSON.stringify(canonical)}.`,
+    );
+  }
+}
+
 /**
  * @throws CorsConfigError for invalid options: an origin that is not a string, string array,
- * RegExp or function, an unanchored RegExp origin, and more.
+ * RegExp or function, a string origin that is not a serialized origin, an unanchored RegExp
+ * origin, a non-boolean credentials, and more.
  */
 export function validateCorsOptions(options: CorsOptions): void {
   const origin: unknown = options.origin;
@@ -80,6 +114,15 @@ export function validateCorsOptions(options: CorsOptions): void {
   }
   if (Array.isArray(options.origin) && options.origin.includes('*')) {
     throw new CorsConfigError("Use origin: '*' instead of listing '*' among origins.");
+  }
+  if (typeof options.origin === 'string') assertOriginString(options.origin);
+  else if (Array.isArray(options.origin)) for (const o of options.origin) assertOriginString(o);
+  const credentials: unknown = options.credentials;
+  // A string such as 'false' would be truthy, so credentials would be allowed.
+  if (credentials !== undefined && typeof credentials !== 'boolean') {
+    throw new CorsConfigError(
+      `CORS credentials must be a boolean, got ${credentials === null ? 'null' : typeof credentials}.`,
+    );
   }
   if (options.origin === '*' && options.credentials) {
     throw new CorsConfigError(

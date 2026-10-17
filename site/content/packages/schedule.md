@@ -71,7 +71,8 @@ Across daylight saving time changes in `timezone`:
   02:30 again.
 - **Fall back.** A time in the repeated hour runs once, in its first occurrence: `30 1 * * *`
   runs at 01:30 EDT and not again at 01:30 EST. A job armed during the second occurrence (started,
-  resumed or added then) runs at its next match in that occurrence, never at a time already past.
+  resumed or added then) skips the rest of it too and runs at its first match after the repeated
+  hour, so every instance computes the same firings and a `lock: true` job runs once.
 
 `CronOptions` extends `JobOptions`:
 

@@ -22,7 +22,10 @@ import {
 } from './decorators.js';
 import { type Duration, parseDuration } from './duration.js';
 import { maskIp } from './keys.js';
-import type { Algorithm, ConsumeResult, RateLimitStore } from './store.js';
+import type { Algorithm, ConsumeResult, RateLimitRule, RateLimitStore } from './store.js';
+
+/** During a store outage, at most one failure line per this interval. */
+const STORE_ERROR_LOG_INTERVAL_MS = 10_000;
 
 export interface RateLimitModuleOptions {
   limit: number;
@@ -137,6 +140,17 @@ export class RateLimiter implements OnModuleDestroy {
   readonly #defaultKey: KeyFn = (ctx) =>
     ctx.ip === undefined ? undefined : maskIp(ctx.ip, this.#ipv6Subnet);
   #warnedNoKey = false;
+  /**
+   * Store calls of one HTTP request, by store key, for checks without a `@RateLimit()` override:
+   * the guard on a nested GraphQL field runs once per resolved item, and with an HTTP-level guard
+   * as well, but the request counts once per scope.
+   */
+  readonly #perRequest = new WeakMap<Request, Map<string, Promise<ConsumeResult | undefined>>>();
+  /** Store failures since the outage began; 0 while the store works. */
+  #failures = 0;
+  /** Failures not logged since the last line, and when that line was logged. */
+  #unlogged = 0;
+  #loggedAt = 0;
 
   constructor() {
     // A store built outside DI (RedisStore) logs through the application's LOGGER from now on.
@@ -179,24 +193,30 @@ export class RateLimiter implements OnModuleDestroy {
       // A different separator than `${scope}|${key}`, so it never collides with a real key.
       storeKey = `${scope}#anonymous`;
     }
-    let result: ConsumeResult;
-    try {
-      result = await this.#store.consume(storeKey, {
-        limit,
-        windowMs,
-        algorithm: this.#options.algorithm ?? 'sliding-window',
-      });
-    } catch (error) {
-      logError(
-        { logger: this.#logger, development: this.#development },
-        'Rate limit store failed',
-        error,
-        'warn',
-      );
-      if (this.#options.onStoreError === 'deny')
-        throw new ServiceUnavailableException('Rate limiting is unavailable');
-      return undefined;
+    const rule: RateLimitRule = {
+      limit,
+      windowMs,
+      algorithm: this.#options.algorithm ?? 'sliding-window',
+    };
+    const req = (resolver?.http ?? ctx).req;
+    let result: ConsumeResult | undefined;
+    if (!override && req) {
+      let calls = this.#perRequest.get(req);
+      if (!calls) {
+        calls = new Map();
+        this.#perRequest.set(req, calls);
+      }
+      let call = calls.get(storeKey);
+      if (!call) {
+        call = this.#consume(storeKey, rule);
+        calls.set(storeKey, call);
+      }
+      result = await call;
+    } else {
+      result = await this.#consume(storeKey, rule);
     }
+    // The store failed and onStoreError is 'allow'.
+    if (!result) return undefined;
     const resetSeconds = Math.max(0, Math.ceil((result.resetAt - Date.now()) / 1000));
     const headers = {
       'ratelimit-limit': String(limit),
@@ -209,6 +229,43 @@ export class RateLimiter implements OnModuleDestroy {
       });
     }
     return headers;
+  }
+
+  /** The store's answer, or undefined when it failed and onStoreError allows the request. */
+  async #consume(storeKey: string, rule: RateLimitRule): Promise<ConsumeResult | undefined> {
+    let result: ConsumeResult;
+    try {
+      result = await this.#store.consume(storeKey, rule);
+    } catch (error) {
+      this.#logStoreError(error);
+      if (this.#options.onStoreError === 'deny')
+        throw new ServiceUnavailableException('Rate limiting is unavailable');
+      return undefined;
+    }
+    if (this.#failures > 0) {
+      this.#logger.warn(`Rate limit store recovered after ${this.#failures} failures.`);
+      this.#failures = 0;
+    }
+    return result;
+  }
+
+  /**
+   * An outage fails every request: the first failure is logged, then at most one line every
+   * STORE_ERROR_LOG_INTERVAL_MS with the count of failures not logged.
+   */
+  #logStoreError(error: unknown): void {
+    const now = Date.now();
+    const first = this.#failures++ === 0;
+    if (!first && now - this.#loggedAt < STORE_ERROR_LOG_INTERVAL_MS) {
+      this.#unlogged++;
+      return;
+    }
+    const message = first
+      ? 'Rate limit store failed'
+      : `Rate limit store still failing (${this.#unlogged} failures not logged)`;
+    logError({ logger: this.#logger, development: this.#development }, message, error, 'warn');
+    this.#unlogged = 0;
+    this.#loggedAt = now;
   }
 
   async onModuleDestroy(): Promise<void> {

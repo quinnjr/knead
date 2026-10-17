@@ -422,6 +422,60 @@ describe('oversized Origin headers', () => {
   });
 });
 
+describe('string origins must be serialized origins', () => {
+  test('a string that no browser sends is a configuration error naming the canonical form', () => {
+    for (const [origin, canonical] of [
+      ['https://app.example/', 'https://app.example'],
+      ['https://App.Example', 'https://app.example'],
+      ['https://app.example:443', 'https://app.example'],
+      ['https://app.example/path', 'https://app.example'],
+      ['https://bücher.example', 'https://xn--bcher-kva.example'],
+      [' https://app.example', 'https://app.example'],
+    ] as const) {
+      for (const option of [origin, ['https://ok.example', origin]]) {
+        expect(() => CorsModule.forRoot({ origin: option })).toThrow(CorsConfigError);
+        expect(() => CorsModule.forRoot({ origin: option })).toThrow(`"${canonical}"`);
+      }
+    }
+  });
+
+  test('a string that is not a URL is a configuration error', () => {
+    for (const origin of ['app.example', '', 'file:///etc/passwd', 'mailto:a@app.example']) {
+      expect(() => CorsModule.forRoot({ origin })).toThrow(CorsConfigError);
+      expect(() => CorsModule.forRoot({ origin })).toThrow('is not an origin');
+    }
+  });
+
+  test("canonical origins, '*' and 'null' are accepted", () => {
+    for (const origin of [
+      '*',
+      'null',
+      'https://app.example',
+      'http://localhost:3000',
+      'http://[::1]:8080',
+      ['null', 'https://xn--bcher-kva.example'],
+    ]) {
+      expect(() => CorsModule.forRoot({ origin })).not.toThrow();
+    }
+  });
+
+  test('credentials must be a boolean', () => {
+    for (const credentials of ['true', 1, null, {}]) {
+      expect(() =>
+        CorsModule.forRoot({
+          origin: 'https://app.example',
+          credentials,
+        } as unknown as CorsOptions),
+      ).toThrow('CORS credentials must be a boolean');
+    }
+    for (const credentials of [undefined, true, false]) {
+      expect(() =>
+        CorsModule.forRoot({ origin: 'https://app.example', credentials }),
+      ).not.toThrow();
+    }
+  });
+});
+
 describe('RegExp origins must be anchored', () => {
   test('an unanchored RegExp is a configuration error naming the option', () => {
     for (const origin of [/app\.example/, /^https:\/\/app\.example/, /app\.example$/, /^a\$/]) {

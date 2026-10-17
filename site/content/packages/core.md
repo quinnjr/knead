@@ -492,3 +492,29 @@ disconnected (a client without the offline queue rejects sends while disconnecte
 `Redis did not answer within <timeoutMs>ms` when no answer arrives in time, and never runs `send`
 after that, so a late command cannot act on an operation already reported as failed. The Redis
 stores of `@knead-js/rate-limit` and `@knead-js/schedule` send their commands through it.
+
+## Durations
+
+The duration parser behind `@knead-js/schedule` and `@knead-js/rate-limit`, for packages and
+applications that take the same duration options.
+
+### `Duration`
+
+``type Duration = number | `${number}${'ms' | 's' | 'm' | 'h' | 'd'}` ``: milliseconds, or a
+string such as `'500ms'`, `'1.5s'`, `'10m'`, `'1h'` or `'1d'`.
+
+### `parseDuration()` and `ParseDurationOptions`
+
+`parseDuration(value: Duration | string, options?: ParseDurationOptions): number` returns whole
+milliseconds, rounded up and at least 1. It throws for a malformed string, a value that is not
+positive or not finite, and anything over a year (`MAX_DURATION_MS`). The parse is linear in the
+length of the input.
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `label` | `string` | `'duration'` | Names the value in error messages: `Invalid lockTtl 366d: must be at most one year (365d).` |
+| `error` | `(message: string) => Error` | a `RangeError` | Builds the thrown error, so a package can throw its own configuration error class. |
+
+### `MAX_DURATION_MS`
+
+`31_536_000_000`: the longest accepted duration, 365 days in milliseconds.

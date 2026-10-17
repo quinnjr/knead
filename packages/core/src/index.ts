@@ -3,6 +3,12 @@ import './copy-guard.js';
 
 export { ApplicationContext, type CreateContextOptions } from './application-context.js';
 export * from './decorators.js';
+export {
+  type Duration,
+  MAX_DURATION_MS,
+  type ParseDurationOptions,
+  parseDuration,
+} from './duration.js';
 export { type ErrorLogOptions, logError } from './error-log.js';
 export {
   CircularDependencyError,
