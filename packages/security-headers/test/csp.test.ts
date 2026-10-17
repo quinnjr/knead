@@ -174,4 +174,17 @@ describe('validateSecurityHeadersOptions', () => {
       "default-src; script-src 'nonce-abc'",
     );
   });
+
+  // A directive set to true has no sources of its own: it must not inherit default-src's.
+  test('a script-src or style-src set to true takes the nonce alone, not the default-src sources', () => {
+    expect(serializeCsp({ 'default-src': ["'self'"], 'script-src': true }, 'abc')).toBe(
+      "default-src 'self'; script-src 'nonce-abc'",
+    );
+    expect(
+      serializeCsp({ 'default-src': ["'self'"], 'style-src': true }, 'abc', {
+        scripts: false,
+        styles: true,
+      }),
+    ).toBe("default-src 'self'; style-src 'nonce-abc'");
+  });
 });
