@@ -73,3 +73,18 @@ describe('parseDuration on adversarial strings', () => {
     expect(elapsed(() => parseDuration(input as never))).toBeLessThan(50);
   });
 });
+
+describe('cronSchedule in a repeated (fall-back) hour', () => {
+  const at = (iso: string) => Date.parse(iso);
+  const iso = (ms: number | null) => (ms === null ? null : new Date(ms).toISOString());
+
+  test.each([
+    // America/New_York, 2026-11-01: 02:00 EDT falls back to 01:00 EST (06:00Z to 07:00Z repeats).
+    ['30 1 * * *', 'America/New_York', '2026-11-01T06:10:00.000Z', '2026-11-02T06:30:00.000Z'],
+    ['*/15 * * * *', 'America/New_York', '2026-11-01T06:10:00.000Z', '2026-11-01T07:00:00.000Z'],
+    ['0 2 * * *', 'America/New_York', '2026-11-01T06:59:59.000Z', '2026-11-01T07:00:00.000Z'],
+  ])('%s in %s from %s runs next at %s', (pattern, timezone, from, expected) => {
+    const schedule = cronSchedule(pattern, timezone);
+    expect(iso(schedule.first(at(from)))).toBe(expected);
+  });
+});

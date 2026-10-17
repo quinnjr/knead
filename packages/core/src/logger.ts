@@ -30,11 +30,22 @@ export class DeferredLogger implements WarnLogger {
     this.#target = target;
   }
 
-  /** Sends held and future warnings to `logger`, unless a logger was already set. */
+  /**
+   * Sends held and future warnings to `logger`, unless a logger was already set. Every held
+   * warning is delivered even if `logger.warn` throws; the first error is rethrown afterwards.
+   */
   attach(logger: WarnLogger): void {
     if (this.#target !== undefined) return;
     this.#target = logger;
-    for (const message of this.#pending.splice(0)) logger.warn(message);
+    let failure: { error: unknown } | undefined;
+    for (const message of this.#pending.splice(0)) {
+      try {
+        logger.warn(message);
+      } catch (error) {
+        failure ??= { error };
+      }
+    }
+    if (failure) throw failure.error;
   }
 
   /** Called when the object is first used: nobody attached a logger, so use the fallback. */

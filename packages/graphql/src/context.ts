@@ -51,7 +51,8 @@ export interface SubscriptionCtx<A = {}, P = unknown> extends ResolverCtx<A, P> 
 /** @internal One per GraphQL operation; graphql-js passes it to every resolver as contextValue. */
 export class OperationContext {
   readonly state: Record<PropertyKey, unknown> = {};
-  readonly #loaders = new Map<Function, DataLoader<unknown, unknown>>();
+  /** DataLoaders per module injector, then per class: each module resolves its own batcher. */
+  readonly #loaders = new Map<ModuleInjector, Map<Function, DataLoader<unknown, unknown>>>();
   /** `ctx.loader` per module injector, so a ctx does not allocate a closure per field. */
   readonly #loaderFns = new Map<ModuleInjector, ResolverCtx['loader']>();
   /** The operation to run (checked against `allowedOperations` before execution). */
@@ -86,14 +87,19 @@ export class OperationContext {
   }
 
   loader<K, V>(cls: Type<BatchLoader<K, V>>, injector: ModuleInjector): DataLoader<K, V> {
-    let loader = this.#loaders.get(cls);
+    let loaders = this.#loaders.get(injector);
+    if (!loaders) {
+      loaders = new Map();
+      this.#loaders.set(injector, loaders);
+    }
+    let loader = loaders.get(cls);
     if (!loader) {
       const batcher = injector.resolveOrConstruct(cls);
       loader = new DataLoader<K, V>((keys) => batcher.batch(keys), batcher.options) as DataLoader<
         unknown,
         unknown
       >;
-      this.#loaders.set(cls, loader);
+      loaders.set(cls, loader);
     }
     return loader as DataLoader<K, V>;
   }

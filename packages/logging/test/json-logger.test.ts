@@ -212,6 +212,14 @@ describe('errors', () => {
     expect(err).toContain(' at ');
   });
 
+  test('an Error whose stack is not a string is written as `Name: message`', () => {
+    const { logger, records } = capture({ development: true });
+    const error = new TypeError('odd stack password=hunter2');
+    Object.defineProperty(error, 'stack', { value: 42 });
+    logger.error('x', error);
+    expect(records()[0]!.err).toBe('TypeError: odd stack password=***');
+  });
+
   test('the first Error is `err`, later ones go to `meta`', () => {
     const { logger, records } = capture({ development: false });
     logger.error('x', new Error('one'), new RangeError('two'));

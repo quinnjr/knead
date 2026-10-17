@@ -40,7 +40,11 @@ export interface GraphQLSubscribeOptions extends GraphQLRequestOptions {
   connectionParams?: Record<string, unknown>;
 }
 
-/** Yields each `next` payload; an `error` message is yielded as `{ errors }` and ends it. */
+/**
+ * Yields each `next` payload; an `error` message is yielded as `{ errors }` and ends it, as does
+ * `complete` or a normal (1000) close. A close with any other code before that, or a frame that is
+ * not JSON, makes `next()` reject (after the payloads already received).
+ */
 export interface GraphQLSubscription<TData = Record<string, unknown>>
   extends AsyncIterableIterator<GraphQLPayload<TData>> {
   /** Sends `complete` and closes the socket. */
@@ -57,18 +61,30 @@ export function subscribe<TData>(
     headers: options.headers,
     ...(options.tls ? { tls: options.tls } : {}),
   } as unknown as string[]);
+  interface Waiter {
+    resolve: (result: IteratorResult<GraphQLPayload<TData>>) => void;
+    reject: (error: Error) => void;
+  }
   const queue: GraphQLPayload<TData>[] = [];
-  const waiting: ((result: IteratorResult<GraphQLPayload<TData>>) => void)[] = [];
+  const waiting: Waiter[] = [];
   let finished = false;
+  /** Why the subscription ended abnormally; set once, then every later next() rejects with it. */
+  let failure: Error | undefined;
   const deliver = (payload: GraphQLPayload<TData>) => {
     const waiter = waiting.shift();
-    if (waiter) waiter({ value: payload, done: false });
+    if (waiter) waiter.resolve({ value: payload, done: false });
     else queue.push(payload);
   };
   const finish = () => {
     if (finished) return;
     finished = true;
-    for (const waiter of waiting.splice(0)) waiter({ value: undefined, done: true });
+    for (const waiter of waiting.splice(0)) waiter.resolve({ value: undefined, done: true });
+  };
+  const fail = (error: Error) => {
+    if (finished) return;
+    finished = true;
+    failure = error;
+    for (const waiter of waiting.splice(0)) waiter.reject(error);
   };
   const close = async () => {
     if (socket.readyState === WebSocket.OPEN && !finished) {
@@ -84,8 +100,9 @@ export function subscribe<TData>(
     next() {
       const payload = queue.shift();
       if (payload) return Promise.resolve({ value: payload, done: false });
+      if (failure) return Promise.reject(failure);
       if (finished) return Promise.resolve({ value: undefined, done: true });
-      return new Promise((resolve) => waiting.push(resolve));
+      return new Promise((resolve, reject) => waiting.push({ resolve, reject }));
     },
     async return() {
       await close();
@@ -98,7 +115,18 @@ export function subscribe<TData>(
       socket.send(JSON.stringify({ type: 'connection_init', payload: options.connectionParams }));
     };
     socket.onmessage = (event) => {
-      const message = JSON.parse(String(event.data)) as { type: string; payload?: unknown };
+      let message: { type: string; payload?: unknown };
+      try {
+        message = JSON.parse(String(event.data)) as typeof message;
+      } catch {
+        const text = String(event.data);
+        const shown = text.length > 1024 ? `${text.slice(0, 1024)}…` : text;
+        const error = new Error(`graphql-transport-ws message is not JSON: ${shown}`);
+        reject(error);
+        fail(error);
+        socket.close(4400, 'Invalid message');
+        return;
+      }
       switch (message.type) {
         case 'connection_ack':
           socket.send(
@@ -131,7 +159,10 @@ export function subscribe<TData>(
     };
     socket.onclose = (event) => {
       reject(new Error(`WebSocket closed before connection_ack: ${event.code} ${event.reason}`));
-      finish();
+      // Only `complete`, `error` or a normal close end it; anything else is a failure, not the
+      // end of the stream (a revoked socket, a server error).
+      if (event.code === 1000) finish();
+      else fail(new Error(`WebSocket closed: ${event.code} ${event.reason}`));
     };
     socket.onerror = () => reject(new Error('WebSocket connection failed'));
   });

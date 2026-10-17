@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { afterEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import type { ModuleImport } from '@knead-js/core';
 import { CorsModule } from '@knead-js/cors';
 import { Controller, type Ctx, Get } from '@knead-js/http';
@@ -120,6 +120,42 @@ describe('RateLimitModule', () => {
     await mod!.close();
     const closed = await serve({ store, onStoreError: 'deny' });
     expect((await closed.request('GET', '/r/global')).status).toBe(503);
+  });
+
+  test('a store outage logs the first failure, then one line per 10s, then the recovery', async () => {
+    let down = true;
+    const store: RateLimitStore = {
+      consume: async () => {
+        if (down) throw new Error('redis down');
+        return { allowed: true, remaining: 1, resetAt: Date.now() + 60_000 };
+      },
+    };
+    const app = await serve({ store });
+    const failures = () =>
+      mod!.logs.filter((e) => e.message.includes('Rate limit store')).map((e) => e.message);
+    let now = Date.now();
+    const clock = spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      for (let i = 0; i < 100; i++)
+        expect((await app.request('GET', '/r/global')).status).toBe(200);
+      expect(failures()).toHaveLength(1);
+      expect(failures()[0]).toContain('Rate limit store failed');
+      now += 9_999;
+      await app.request('GET', '/r/global');
+      expect(failures()).toHaveLength(1);
+      now += 1;
+      await app.request('GET', '/r/global');
+      expect(failures()).toHaveLength(2);
+      expect(failures()[1]).toContain('Rate limit store still failing (100 failures not logged)');
+      down = false;
+      await app.request('GET', '/r/global');
+      await app.request('GET', '/r/global');
+      expect(failures()).toHaveLength(3);
+      expect(failures()[2]).toContain('Rate limit store recovered after 102 failures');
+      expect(mod!.logs.at(-1)!.level).toBe('warn');
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   test('store failures are logged as a redacted summary outside development', async () => {

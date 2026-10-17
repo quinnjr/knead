@@ -3,6 +3,12 @@ import './copy-guard.js';
 
 export { ApplicationContext, type CreateContextOptions } from './application-context.js';
 export * from './decorators.js';
+export {
+  type Duration,
+  MAX_DURATION_MS,
+  type ParseDurationOptions,
+  parseDuration,
+} from './duration.js';
 export { type ErrorLogOptions, logError } from './error-log.js';
 export {
   CircularDependencyError,
@@ -21,7 +27,9 @@ export type {
   OnModuleInit,
 } from './lifecycle.js';
 export {
+  errorText,
   escapeControl,
+  isPlainObject,
   LOGGED_MESSAGE_LENGTH,
   logValue,
   MAX_LOGGED_VALUE_LENGTH,
@@ -44,8 +52,10 @@ export { MODULES, type ModuleRef } from './modules.js';
 export {
   defaultRedisUrl,
   isLoopbackHostname,
+  ownedRedisClientOptions,
   parseIp,
   plaintextRedisHost,
+  type RedisDeadline,
   sendRedisCommand,
 } from './net.js';
 export * from './providers.js';

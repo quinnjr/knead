@@ -405,3 +405,98 @@ describe('default LOGGER and DEVELOPMENT', () => {
     expect(ctx.get(Service).log).toBe(ctx.get(LOGGER));
   });
 });
+
+describe('review fixes', () => {
+  test('async factory overrides of LOGGER and DEVELOPMENT are awaited', async () => {
+    const logger = new MemoryLogger();
+    class UsesLogger {
+      readonly logger = inject(LOGGER);
+      readonly development = inject(DEVELOPMENT);
+    }
+    @Module({ providers: [UsesLogger] })
+    class M {}
+    const ctx = await ApplicationContext.create(M, {
+      overrides: [
+        [LOGGER, { provide: LOGGER, useFactory: async () => logger }],
+        [DEVELOPMENT, { provide: DEVELOPMENT, useFactory: async () => true }],
+      ],
+    });
+    expect(ctx.get(UsesLogger).logger).toBe(logger);
+    expect(ctx.get(UsesLogger).development).toBe(true);
+    await ctx.close();
+  });
+
+  test('close() during initializeLate starts no further hook and shuts the late instance down', async () => {
+    const log: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    class Late {
+      async onModuleInit() {
+        log.push('late:init');
+        await gate;
+      }
+      onApplicationBootstrap() {
+        log.push('late:bootstrap');
+      }
+      onModuleDestroy() {
+        log.push('late:destroy');
+      }
+    }
+    class Later {
+      onModuleInit() {
+        log.push('later:init');
+      }
+    }
+    @Module({})
+    class M {}
+    const ctx = await ApplicationContext.create(M);
+    ctx.root.injector.resolveOrConstruct(Late);
+    ctx.root.injector.resolveOrConstruct(Later);
+    const initializing = ctx.initializeLate();
+    await Bun.sleep(0);
+    const closing = ctx.close();
+    await closing;
+    expect(log).toEqual(['late:init']);
+    release();
+    await initializing;
+    expect(log).toEqual(['late:init', 'late:destroy']);
+  });
+
+  test('a startup hook that awaits close() does not deadlock', async () => {
+    const log: string[] = [];
+    let ctx!: ApplicationContext;
+    class SelfClosing {
+      async onModuleInit() {
+        await ctx.close();
+        log.push('init:done');
+      }
+      onModuleDestroy() {
+        log.push('destroy');
+      }
+    }
+    @Module({})
+    class M {}
+    ctx = await ApplicationContext.create(M);
+    ctx.root.injector.resolveOrConstruct(SelfClosing);
+    await ctx.initializeLate();
+    expect(log).toEqual(['init:done', 'destroy']);
+  });
+
+  test('initializeLate after close() runs no hooks', async () => {
+    const log: string[] = [];
+    class Late {
+      onModuleInit() {
+        log.push('late:init');
+      }
+    }
+    @Module({})
+    class M {}
+    const ctx = await ApplicationContext.create(M);
+    await ctx.close();
+    ctx.root.injector.resolveOrConstruct(Late);
+    await ctx.initializeLate();
+    expect(log).toEqual([]);
+  });
+});

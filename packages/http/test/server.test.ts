@@ -201,6 +201,56 @@ describe.skipIf(!hasOpenssl)('TLS', () => {
     expect(warnings.some((e) => e.message.includes('redirectHttp has no host'))).toBe(true);
     await app.close();
   });
+
+  test('both listeners mask errors that reach Bun and run without Bun development mode', async () => {
+    @Module({ controllers: [InfoController] })
+    class M {}
+    const serve = spyOn(Bun, 'serve');
+    let app: Awaited<ReturnType<typeof start>> | undefined;
+    try {
+      app = await start(M, { tls: makeCert('masked'), redirectHttp: { port: 0 } });
+      expect(serve).toHaveBeenCalledTimes(2);
+      for (const [options] of serve.mock.calls) {
+        const { development, error } = options as {
+          development?: unknown;
+          error?: (e: Error) => Response;
+        };
+        expect(development).toBe(false);
+        const res = error!(new Error('secret-in-error'));
+        expect(res.status).toBe(500);
+        expect(res.headers.get('content-type')).toBe('application/problem+json; charset=utf-8');
+        expect(await res.text()).not.toContain('secret-in-error');
+      }
+    } finally {
+      serve.mockRestore();
+      await app?.close();
+    }
+  });
+
+  test('close() waits for the redirect listener to stop, and logs a failed stop', async () => {
+    @Module({ controllers: [InfoController] })
+    class M {}
+    for (const fail of [false, true]) {
+      const serve = spyOn(Bun, 'serve');
+      const app = await start(M, { tls: makeCert('redirect-stop'), redirectHttp: { port: 0 } });
+      const redirect = serve.mock.results[1]!.value as { stop: (force?: boolean) => Promise<void> };
+      serve.mockRestore();
+      const stop = redirect.stop.bind(redirect);
+      let stopped = false;
+      redirect.stop = async (force) => {
+        await Bun.sleep(50);
+        await stop(force);
+        stopped = true;
+        if (fail) throw new Error('redirect stop failed');
+      };
+      await app.close();
+      expect(stopped).toBe(true);
+      const logged = (app.logger as MemoryLogger).entries.some(
+        (e) => e.level === 'error' && e.message.includes('redirect listener'),
+      );
+      expect(logged).toBe(fail);
+    }
+  });
 });
 
 test('reloadTls without TLS is a configuration error', async () => {

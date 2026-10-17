@@ -58,8 +58,10 @@ to every other origin carry no CORS headers, so the browser keeps them from the 
 - **Every response.** 404, 405, guard rejections and errors get CORS headers too, so the browser
   can read the error.
 - **Unsafe configurations fail at startup.** `'*'` with credentials, `'*'` inside a list,
-  unanchored RegExps and an `origin` of the wrong type (missing, a number, a list with a
-  non-string entry) are a `CorsConfigError` at `forRoot()`.
+  unanchored RegExps, an `origin` of the wrong type (missing, a number, a list with a
+  non-string entry), a string origin that can never match (`'https://app.example/'`; the error
+  names the canonical `'https://app.example'`) and a non-boolean `credentials` are a
+  `CorsConfigError` at `forRoot()`.
 - **Cache-safe.** Unless `origin` is `'*'`, every response gets `Vary: Origin`.
 - **WebSocket upgrades guarded.** An upgrade from a disallowed origin is rejected with 403.
 - **Bounded input.** An `Origin` header longer than 2048 characters is treated as disallowed.

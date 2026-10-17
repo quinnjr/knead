@@ -224,10 +224,10 @@ export async function bootstrap(
 | `redirectHttp` | none | A plain-HTTP listener answering `308` to HTTPS. Requires `tls`; set `host` to a canonical `host[:port]`. |
 | `allowedHosts` | development: loopback names; production: no check | Other `Host` headers get `421`. Set it to your public names in production. |
 | `trustProxy` | `false` | A list of proxy CIDRs (preferred) or a hop count, for `ctx.ip` and `ctx.secure`. |
-| `maxRequestBodySize` | 1 MiB | Larger bodies get `413`. |
+| `maxRequestBodySize` | 1 MiB | Larger bodies get `413`. An integer >= 1; a string such as an unparsed env var is an `HttpConfigError`. |
 | `maxParams` | `1000` | More query parameters get `400`, more form fields `413`. |
 | `defaultCacheControl` | none | Added to every response without `Cache-Control` (including 404s, `421`s and rejected upgrades), such as `'no-store'`. A value that is not a valid header value is an `HttpConfigError` at `listen()`. |
-| `shutdownTimeout` | `10000` | Milliseconds `close()` waits for in-flight requests. |
+| `shutdownTimeout` | `10000` | Milliseconds `close()` waits for in-flight requests (an integer >= 0). |
 
 - `enableShutdownHooks()` closes the application on `SIGTERM` or `SIGINT` and exits: `close()`
   stops accepting connections, drains in-flight requests, closes WebSockets with `1001` and runs

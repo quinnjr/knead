@@ -22,11 +22,12 @@ import {
   isLoopbackHostname,
   type TrustProxy,
 } from './net.js';
+import { internalErrorResponse } from './pipeline.js';
 import { DEFAULT_MAX_PARAMS, requestUrl } from './request.js';
 import { resolveFilter, resolveGuard, resolveMiddleware } from './resolve.js';
 import { isHeaderValue } from './response.js';
 import { checkBunVersion } from './runtime-version.js';
-import { APP_FILTER, APP_GUARD, APP_MIDDLEWARE, HTTP_DEVELOPMENT } from './tokens.js';
+import { APP_FILTER, APP_GUARD, APP_MIDDLEWARE } from './tokens.js';
 import type { FilterRef, GlobalMiddleware, GuardRef, MiddlewareRef } from './types.js';
 import type { ValidationOptions } from './validation.js';
 import { type WsData, WsRegistry, type WsServerOptions } from './ws.js';
@@ -35,9 +36,10 @@ import { type WsData, WsRegistry, type WsServerOptions } from './ws.js';
 export const DEFAULT_MAX_REQUEST_BODY_SIZE = 1024 * 1024;
 
 /**
- * Global module the factory registers: provides HTTP_DEVELOPMENT, WsRegistry and ErrorLog
- * everywhere. LOGGER comes from @knead-js/core's default (a ConsoleLogger), unless a global module
- * such as LoggingModule provides one, or the `logger` option replaces it.
+ * Global module the factory registers: provides WsRegistry and ErrorLog everywhere.
+ * HTTP_DEVELOPMENT (core's DEVELOPMENT) is provided by the ApplicationContext, from the
+ * `development` option. LOGGER comes from @knead-js/core's default (a ConsoleLogger), unless a
+ * global module such as LoggingModule provides one, or the `logger` option replaces it.
  */
 @Module({})
 export class HttpCoreModule {}
@@ -105,8 +107,8 @@ export interface ListenOptions {
   /**
    * Max time close() waits for in-flight requests before forcing connections closed, and for a
    * listen() that is still initializing. Default 10s. If that wait times out, the listen is
-   * abandoned (it rejects without binding) and classes whose onModuleInit was still running do
-   * not receive onModuleDestroy.
+   * abandoned (it rejects without binding); a class whose onModuleInit was still running receives
+   * its shutdown hooks once that onModuleInit finishes, if it ever does.
    */
   shutdownTimeout?: number;
 }
@@ -120,8 +122,8 @@ export class KneadFactory {
     const core = {
       module: HttpCoreModule,
       global: true,
-      providers: [{ provide: HTTP_DEVELOPMENT, useValue: development }, WsRegistry, ErrorLog],
-      exports: [HTTP_DEVELOPMENT, WsRegistry, ErrorLog],
+      providers: [WsRegistry, ErrorLog],
+      exports: [WsRegistry, ErrorLog],
     };
     // Overrides apply to every LOGGER provider, so the logger option is the LOGGER everywhere.
     const overrides: (readonly [Token, Provider])[] = options.logger
@@ -130,9 +132,28 @@ export class KneadFactory {
     const context = await ApplicationContext.create(root, {
       overrides: [...overrides, ...(options.overrides ?? [])],
       globalModules: [core],
+      development,
     });
     return new HttpApplication(context, context.get(LOGGER), development);
   }
+}
+
+/**
+ * Throws HttpConfigError unless `value` is undefined or a safe integer from `min` to `max`
+ * (a string from an environment variable, NaN or Infinity is rejected, not coerced).
+ */
+function assertIntegerOption(name: string, value: unknown, min: number, max?: number): void {
+  if (value === undefined) return;
+  if (
+    Number.isSafeInteger(value) &&
+    (value as number) >= min &&
+    (max === undefined || (value as number) <= max)
+  ) {
+    return;
+  }
+  const range = max === undefined ? `>= ${min}` : `from ${min} to ${max}`;
+  const got = typeof value === 'string' ? JSON.stringify(value) : String(value);
+  throw new HttpConfigError(`${name} must be an integer ${range}, got ${got}.`);
 }
 
 /** Loopback, including `*.localhost`. */
@@ -244,8 +265,7 @@ export class HttpApplication {
   #retired: Server<WsData>[] = [];
   #redirect: Server<undefined> | undefined;
   #closing: Promise<void> | undefined;
-  /** The in-flight listen(), so close() can wait for it to settle. */
-  /** Set from the start of listen() until it settles. */
+  /** The in-flight listen(), set from its start until it settles, so close() can wait for it. */
   #pendingListen: Promise<unknown> | undefined;
   readonly #signalHandlers: [NodeJS.Signals, () => void][] = [];
   #compiled: CompiledApp | undefined;
@@ -342,8 +362,8 @@ export class HttpApplication {
   /**
    * Graceful, idempotent shutdown. If listen() is still initializing (running onModuleInit of
    * middleware, guards or filters), close() waits up to shutdownTimeout for it; past that the
-   * listen is abandoned and rejects without binding, and classes whose onModuleInit was still
-   * running do not receive onModuleDestroy.
+   * listen is abandoned and rejects without binding. A class whose onModuleInit was still running
+   * receives its shutdown hooks once that onModuleInit finishes, if it ever does.
    */
   close(signal?: string): Promise<void> {
     this.#closing ??= this.#shutdown(signal);
@@ -400,12 +420,14 @@ export class HttpApplication {
             logError(this, 'Stopping a listener failed', error);
           });
         }
-        this.#redirect?.stop(true);
+        const redirectStopped = this.#redirect?.stop(true).catch((error: unknown) => {
+          logError(this, 'Stopping the redirect listener failed', error);
+        });
         const deadline = Date.now() + this.shutdownTimeout;
         const pending = () => servers.reduce((n, server) => n + server.pendingRequests, 0);
         while (pending() > 0 && Date.now() < deadline) await Bun.sleep(10);
         this.context.get(WsRegistry).closeAll(1001, 'Server shutting down');
-        await Promise.all(servers.map((server) => server.stop(true)));
+        await Promise.all([...servers.map((server) => server.stop(true)), redirectStopped]);
       }
     } catch (error) {
       failure = { error };
@@ -444,8 +466,12 @@ export class HttpApplication {
   }
 
   async #listen(options: ListenOptions): Promise<Server<WsData>> {
+    const { maxRequestBodySize, idleTimeout, shutdownTimeout } = options;
+    assertIntegerOption('shutdownTimeout', shutdownTimeout, 0);
     // Set first: a close() during the late-init await bounds its wait with this timeout.
-    this.shutdownTimeout = options.shutdownTimeout ?? 10_000;
+    this.shutdownTimeout = shutdownTimeout ?? 10_000;
+    assertIntegerOption('maxRequestBodySize', maxRequestBodySize, 1);
+    assertIntegerOption('idleTimeout', idleTimeout, 0, 255);
     if (options.redirectHttp && options.tls === undefined) {
       throw new HttpConfigError('redirectHttp requires tls.');
     }
@@ -456,10 +482,7 @@ export class HttpApplication {
         `defaultCacheControl must be a header value, got ${JSON.stringify(cc)}.`,
       );
     }
-    const maxParams = options.maxParams;
-    if (maxParams !== undefined && (!Number.isInteger(maxParams) || maxParams < 1)) {
-      throw new HttpConfigError(`maxParams must be an integer >= 1, got ${String(maxParams)}.`);
-    }
+    assertIntegerOption('maxParams', options.maxParams, 1);
     const canonicalHost = options.redirectHttp?.host;
     // Validated before anything binds; the origin is computed once the HTTPS port is known.
     if (canonicalHost !== undefined) canonicalOrigin(canonicalHost, 443);
@@ -467,8 +490,12 @@ export class HttpApplication {
     const entries = [
       ...this.context
         .collectEntries(APP_MIDDLEWARE)
-        .map(({ value, injector }) => ({ entry: value, injector })),
-      ...this.#extraMiddleware.map((entry) => ({ entry, injector: root })),
+        .map(({ value, injector }) => ({ entry: value, injector, where: 'APP_MIDDLEWARE' })),
+      ...this.#extraMiddleware.map((entry) => ({
+        entry,
+        injector: root,
+        where: 'useGlobalMiddleware()',
+      })),
     ]
       .map((item, index) => ({ ...item, index }))
       .sort((a, b) => (b.entry.priority ?? 0) - (a.entry.priority ?? 0) || a.index - b.index);
@@ -479,8 +506,8 @@ export class HttpApplication {
     const compiled = this.context.trackConstructed(() =>
       compileApplication({
         modules: this.context.modules,
-        globalMiddleware: entries.map(({ entry, injector }) =>
-          resolveMiddleware(entry.middleware, injector),
+        globalMiddleware: entries.map(({ entry, injector, where }) =>
+          resolveMiddleware(entry.middleware, injector, where),
         ),
         globalGuards: [
           ...this.context
@@ -491,8 +518,8 @@ export class HttpApplication {
         globalFilters: [
           ...this.context
             .collectEntries(APP_FILTER)
-            .map(({ value, injector }) => resolveFilter(value, injector)),
-          ...this.#extraFilters.map((f) => resolveFilter(f, root)),
+            .map(({ value, injector }) => resolveFilter(value, injector, 'APP_FILTER')),
+          ...this.#extraFilters.map((f) => resolveFilter(f, root, 'useGlobalFilters()')),
         ],
         logger: this.logger,
         development: this.development,
@@ -520,14 +547,19 @@ export class HttpApplication {
       routes: compiled.routes,
       fetch: compiled.fetch,
       websocket: ws.handler(),
+      // Bun's own development mode follows NODE_ENV !== 'production' and renders an HTML page
+      // with the error's message, stack and source; Knead's flag decides, and errors that reach
+      // Bun get a masked problem.
+      development: this.development,
+      error: this.#serverError,
     };
     if (options.tls !== undefined) {
       serveOptions.tls = options.tls;
       // Required by reloadTls(): a replacement listener binds the same port.
       serveOptions.reusePort = true;
     }
-    serveOptions.maxRequestBodySize = options.maxRequestBodySize ?? DEFAULT_MAX_REQUEST_BODY_SIZE;
-    if (options.idleTimeout !== undefined) serveOptions.idleTimeout = options.idleTimeout;
+    serveOptions.maxRequestBodySize = maxRequestBodySize ?? DEFAULT_MAX_REQUEST_BODY_SIZE;
+    if (idleTimeout !== undefined) serveOptions.idleTimeout = idleTimeout;
     const server = Bun.serve(serveOptions as unknown as Serve.Options<WsData, string>);
     let redirect: Server<undefined> | undefined;
     try {
@@ -595,6 +627,8 @@ export class HttpApplication {
     return Bun.serve({
       port: options.redirectHttp.port,
       hostname: options.redirectHttp.hostname ?? options.hostname ?? '0.0.0.0',
+      development: this.development,
+      error: this.#serverError,
       fetch: (req) => {
         if (origin !== undefined) return redirectTo(req, origin);
         if (hosts !== undefined && !hosts(req.headers.get('host'))) return misdirectedResponse();
@@ -602,6 +636,10 @@ export class HttpApplication {
       },
     });
   }
+
+  /** Bun's `error` handler: a rejection that escaped every handler, answered as a masked 500. */
+  readonly #serverError = (error: Error): Response =>
+    internalErrorResponse(error, this, 'Unhandled error reached the server');
 
   /** Global middleware, guards and filters are compiled by listen(): later calls would be lost. */
   #assertNotListening(method: string): void {

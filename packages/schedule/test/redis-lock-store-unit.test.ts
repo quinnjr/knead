@@ -134,12 +134,12 @@ describe('RedisLockStore commands', () => {
     expect(() => new RedisLockStore({ client, url: 'redis://localhost' })).toThrow(/client or url/);
   });
 
-  test('connects first, and never sends the SET once the timeout has passed', async () => {
+  test('a supplied client is not connected by the store', async () => {
     const sent: string[] = [];
-    let connect = () => Promise.resolve();
+    const connect = mock(() => Promise.resolve());
     const client = {
       connected: false,
-      connect: () => connect(),
+      connect,
       send: async (cmd: string) => {
         sent.push(cmd);
         return 'OK';
@@ -148,9 +148,18 @@ describe('RedisLockStore commands', () => {
     const store = new RedisLockStore({ client, commandTimeout: 20 });
     expect(await store.acquire('k', 1_000)).toBe(true);
     expect(sent).toEqual(['SET']);
-    connect = () => Bun.sleep(60);
-    await expect(store.acquire('k', 1_000)).rejects.toThrow('within 20ms');
-    await Bun.sleep(80);
-    expect(sent).toEqual(['SET']);
+    expect(connect).not.toHaveBeenCalled();
+  });
+
+  test('its own client connects first, and fails within commandTimeout when unreachable', async () => {
+    const store = new RedisLockStore({
+      url: 'redis://127.0.0.1:1',
+      commandTimeout: 50,
+      logger: { warn: () => {} },
+    });
+    const started = performance.now();
+    await expect(store.acquire('k', 1_000)).rejects.toThrow();
+    expect(performance.now() - started).toBeLessThan(1_000);
+    await store.close();
   });
 });

@@ -1,4 +1,5 @@
 import { MetadataKey, setMetadata } from './metadata.js';
+import { checkScope } from './provider-checks.js';
 import type { Provider, Scope } from './providers.js';
 import type { Token, Type } from './tokens.js';
 
@@ -10,8 +11,10 @@ export const INJECTABLE = new MetadataKey<{ scope: Scope }>('knead:injectable');
 
 /** Optional: classes are injectable without it. Use it to set a scope. */
 export function Injectable(options: InjectableOptions = {}) {
+  const scope =
+    options.scope === undefined ? 'singleton' : checkScope(options.scope, '@Injectable()');
   return (_target: Function, context: ClassDecoratorContext): void => {
-    setMetadata(context.metadata, INJECTABLE, { scope: options.scope ?? 'singleton' });
+    setMetadata(context.metadata, INJECTABLE, { scope });
   };
 }
 

@@ -168,7 +168,9 @@ caller. The grant is untrusted input:
 `CaslForbiddenFilter`, but does **not** make `AbilityGuard` a global guard: put it on controllers or
 routes with `@UseGuards(AbilityGuard)`. It decides in this order:
 
-1. `@SkipAbility()` passes without resolving an identity. It wins over `@Can()` when both apply.
+1. `@SkipAbility()` passes without resolving an identity. When both apply, the more specific one
+   wins: a method's `@Can()` overrides its controller's `@SkipAbility()` and the reverse. On the
+   same method or controller, `@SkipAbility()` wins.
 2. A route without `@Can()` is a `403` (fail closed), before `resolve()` runs.
 3. No identity is a `401`.
 4. Otherwise the route passes only if `ability.can(action, subject, field)` is `true`, else `403`.
@@ -281,7 +283,8 @@ export class TokenIssuer {
 ```
 
 Every action and subject pair of the requested levels must be something the user can do, and when a
-catalog rule names `fields`, every one of those fields too (a `cannot` on a field counts).
+catalog rule names `fields`, every one of those fields too (a `cannot` on a field counts, and so
+does an unconditional `cannot` on the pair that comes after its `can` rules).
 Conditions are **not** evaluated at issue time: a user who can do something only conditionally
 passes, and the conditions are enforced on every request, against the record.
 

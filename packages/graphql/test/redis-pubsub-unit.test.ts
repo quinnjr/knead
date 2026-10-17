@@ -626,3 +626,84 @@ describe('RedisPubSub hardening', () => {
     });
   });
 });
+
+describe('RedisPubSub connection loss', () => {
+  function watchedClient() {
+    const subscribers: {
+      onclose: ((error: Error) => void) | null;
+      onconnect: (() => void) | null;
+      closed: boolean;
+    }[] = [];
+    const client = {
+      duplicate: async () => {
+        const subscriber = {
+          onclose: null as ((error: Error) => void) | null,
+          onconnect: null as (() => void) | null,
+          connected: true,
+          closed: false,
+          subscribe: async () => 1,
+          unsubscribe: async () => {},
+          close() {
+            subscriber.closed = true;
+          },
+        };
+        subscribers.push(subscriber);
+        return subscriber;
+      },
+      publish: async () => 1,
+      close: () => {},
+    };
+    return { client: client as unknown as RedisClient, subscribers };
+  }
+
+  for (const event of ['onclose', 'onconnect'] as const) {
+    test(`a subscriber ${event} after SUBSCRIBE ends every subscription; the next subscribe reconnects`, async () => {
+      const fake = watchedClient();
+      const logger = new MemoryLogger();
+      const pubsub = new RedisPubSub({ client: fake.client, logger });
+      const errors: string[] = [];
+      pubsub.subscribe(
+        'a',
+        () => {},
+        () => errors.push('a1'),
+      );
+      pubsub.subscribe(
+        'a',
+        () => {},
+        () => errors.push('a2'),
+      );
+      pubsub.subscribe(
+        'b',
+        () => {},
+        () => errors.push('b'),
+      );
+      await until(() => pubsub.pendingOperations === 0);
+      const first = fake.subscribers[0]!;
+      expect(first.onclose).toBeFunction();
+      if (event === 'onclose') first.onclose!(new Error('Connection closed'));
+      else first.onconnect!();
+      expect(errors.sort()).toEqual(['a1', 'a2', 'b']);
+      expect(first.closed).toBe(true);
+      expect(logger.entries.some((e) => e.message.includes('lost its subscriber'))).toBe(true);
+      pubsub.subscribe('a', () => {});
+      await until(() => fake.subscribers.length === 2);
+      await pubsub.close();
+    });
+  }
+
+  test('close() does not report its own subscriber close as a loss', async () => {
+    const fake = watchedClient();
+    const pubsub = new RedisPubSub({ client: fake.client, logger: new MemoryLogger() });
+    const errors: Error[] = [];
+    pubsub.subscribe(
+      'a',
+      () => {},
+      (error) => errors.push(error),
+    );
+    await until(() => pubsub.pendingOperations === 0);
+    const first = fake.subscribers[0]!;
+    await pubsub.close();
+    first.onclose?.(new Error('Connection closed'));
+    expect(errors).toEqual([]);
+  });
+});

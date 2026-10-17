@@ -40,7 +40,15 @@ function cspParts(directives: CspDirectives, targets: NonceTargets | undefined):
     const extend = (name: string) => {
       const current = d.get(name);
       const fallback = d.get('default-src');
-      const base = Array.isArray(current) ? current : Array.isArray(fallback) ? [...fallback] : [];
+      // Only an absent directive falls back to default-src: one set to true has no sources.
+      const base =
+        current === true
+          ? []
+          : Array.isArray(current)
+            ? current
+            : Array.isArray(fallback)
+              ? [...fallback]
+              : [];
       d.set(name, [...base, NONCE]);
     };
     if (targets.scripts) extend('script-src');

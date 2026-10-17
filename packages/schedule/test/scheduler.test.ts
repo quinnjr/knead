@@ -553,6 +553,48 @@ describe('shutdown', () => {
     expect(() => scheduler.remove('missing')).toThrow(ScheduleConfigError);
     await expect(scheduler.trigger('a')).rejects.toThrow(ScheduleConfigError);
   });
+
+  test('an abort listener cannot add or resume jobs while the scheduler shuts down', async () => {
+    const { scheduler, clock } = setup();
+    const { handler } = recorder();
+    const gate = deferred();
+    const refused: unknown[] = [];
+    scheduler.add({ name: 'idle', schedule: intervalSchedule(100), handler, lock: noLock });
+    scheduler.pause('idle');
+    scheduler.add({
+      name: 'slow',
+      schedule: timeoutSchedule(100),
+      handler: async (ctx) => {
+        ctx.signal.addEventListener('abort', () => {
+          for (const change of [
+            () =>
+              scheduler.add({ name: 'late', schedule: timeoutSchedule(50), handler, lock: noLock }),
+            () => scheduler.resume('idle'),
+          ]) {
+            try {
+              change();
+            } catch (error) {
+              refused.push(error);
+            }
+          }
+        });
+        await gate.promise;
+      },
+      lock: noLock,
+    });
+    scheduler.start();
+    await clock.advance(100);
+    const closing = scheduler.shutdown();
+    expect(refused).toHaveLength(2);
+    for (const error of refused) expect(error).toBeInstanceOf(ScheduleConfigError);
+    expect(scheduler.get('late')).toBeUndefined();
+    expect(scheduler.get('idle')!.nextRunAt).toBeUndefined();
+    // Only the shutdownTimeout timer is armed.
+    expect(clock.pending).toBe(1);
+    gate.resolve();
+    await closing;
+    expect(clock.pending).toBe(0);
+  });
 });
 
 describe('review regressions', () => {
@@ -871,14 +913,46 @@ describe('daylight saving time', () => {
     for (const job of ['q', 'early']) {
       expect(scheduler.get(job)!.nextRunAt!.getTime()).toBeGreaterThan(clock.now());
     }
+    // Times in the repeated hour already ran in its first occurrence: the second one is skipped,
+    // as it is for an instance that was running through the first.
+    expect(scheduler.get('q')!.nextRunAt).toEqual(new Date('2026-11-01T07:00:00.000Z'));
+    expect(scheduler.get('early')!.nextRunAt).toEqual(new Date('2026-11-02T06:30:00.000Z'));
     await clock.advance(3_600_000);
     const times = runs.map((r) => `${r.name} ${r.scheduledAt.toISOString()}`);
     expect(times).toEqual([
-      'q 2026-11-01T06:15:00.000Z', // 01:15 EST
-      'early 2026-11-01T06:30:00.000Z', // 01:30 EST
-      'q 2026-11-01T06:30:00.000Z',
-      'q 2026-11-01T06:45:00.000Z',
       'q 2026-11-01T07:00:00.000Z', // 02:00 EST
+    ]);
+  });
+
+  test('fall back: an instance started inside the repeated hour does not repeat a locked run', async () => {
+    const lockStore = new MemoryLockStore();
+    const a = setup({ lockStore }, new ManualClock('2026-10-31T12:00:00.000Z'));
+    // Starts at 01:00 EST, after `a` ran the 01:30 EDT firing.
+    const b = setup({ lockStore }, new ManualClock('2026-11-01T06:00:00.000Z'));
+    const runs: string[] = [];
+    for (const [label, { scheduler }] of [
+      ['a', a],
+      ['b', b],
+    ] as const) {
+      scheduler.add({
+        name: 'early',
+        schedule: cronSchedule('30 1 * * *', NY),
+        handler: (ctx) => {
+          runs.push(`${label} ${ctx.scheduledAt.toISOString()}`);
+        },
+        lock: { ttl: undefined },
+      });
+    }
+    a.scheduler.start();
+    await a.clock.advance(18 * 3_600_000); // to 2026-11-01T06:00Z
+    b.scheduler.start();
+    await b.clock.advance(3_600_000);
+    expect(runs).toEqual(['a 2026-11-01T05:30:00.000Z']);
+    await a.clock.advance(86_400_000);
+    await b.clock.advance(86_400_000);
+    expect(runs.map((r) => r.slice(2))).toEqual([
+      '2026-11-01T05:30:00.000Z',
+      '2026-11-02T06:30:00.000Z',
     ]);
   });
 });

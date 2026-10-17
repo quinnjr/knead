@@ -1,4 +1,9 @@
-import { DeferredLogger, sendRedisCommand } from '@knead-js/core';
+import {
+  DeferredLogger,
+  ownedRedisClientOptions,
+  type RedisDeadline,
+  sendRedisCommand,
+} from '@knead-js/core';
 import {
   ConsoleLogger,
   defaultRedisUrl,
@@ -6,7 +11,7 @@ import {
   type Logger,
   plaintextRedisHost,
 } from '@knead-js/http';
-import { RedisClient, type RedisOptions } from 'bun';
+import { RedisClient } from 'bun';
 import { hashKey, hashSecretBytes } from './keys.js';
 
 /** Whether the unkeyed-hash warning was logged in this process. */
@@ -185,7 +190,7 @@ export class RedisStore implements RateLimitStore {
     this.#owned = options.client === undefined;
     // Without the offline queue, commands sent during an outage fail instead of piling up and
     // being replayed (consuming counters) when Redis comes back.
-    this.#client = options.client ?? new RedisClient(options.url, ownedClientOptions(timeout));
+    this.#client = options.client ?? new RedisClient(options.url, ownedRedisClientOptions(timeout));
     this.#prefix = options.prefix ?? 'knead:rl:';
   }
 
@@ -219,7 +224,7 @@ export class RedisStore implements RateLimitStore {
     // A script sent after the timeout would consume a counter for a request already handled.
     const reply = await sendRedisCommand(
       this.#client,
-      () => this.#run(algorithm, args),
+      (deadline) => this.#run(algorithm, args, deadline),
       this.#commandTimeout,
       this.#owned,
     );
@@ -231,11 +236,13 @@ export class RedisStore implements RateLimitStore {
     };
   }
 
-  async #run(algorithm: Algorithm, args: string[]): Promise<unknown> {
+  async #run(algorithm: Algorithm, args: string[], deadline: RedisDeadline): Promise<unknown> {
     try {
       return await this.#client.send('EVALSHA', [SHAS[algorithm], ...args]);
     } catch (error) {
       if (!String((error as Error | undefined)?.message).includes('NOSCRIPT')) throw error;
+      // consume() already failed with the timeout: an EVAL now would consume a counter for it.
+      if (deadline.expired) throw error;
       return this.#client.send('EVAL', [SCRIPTS[algorithm], ...args]);
     }
   }
@@ -243,9 +250,4 @@ export class RedisStore implements RateLimitStore {
   async close(): Promise<void> {
     if (this.#owned) this.#client.close();
   }
-}
-
-/** @internal The options of the client a RedisStore builds itself. */
-export function ownedClientOptions(commandTimeout: number): RedisOptions {
-  return { enableOfflineQueue: false, connectionTimeout: Math.max(commandTimeout, 1_000) };
 }

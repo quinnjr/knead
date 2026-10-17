@@ -56,7 +56,9 @@ startup, such as a transient provider resolved later through `ApplicationContext
 
 The HTTP layer creates guards, middleware and exception filters that are not registered as
 providers when the server starts listening, and runs their `onModuleInit` and
-`onApplicationBootstrap` at that point. They receive shutdown hooks like any other instance.
+`onApplicationBootstrap` at that point. They receive shutdown hooks like any other instance. If
+the application is closed while those hooks run, no further startup hook starts, and an instance
+whose `onModuleInit` completes after the close began receives its shutdown hooks right away.
 
 ## Errors at startup
 
@@ -67,8 +69,9 @@ If an `onModuleInit` or `onApplicationBootstrap` hook throws or rejects, startup
    every instance whose `onModuleInit` completed. The instance whose `onModuleInit` failed does
    not receive shutdown hooks.
 3. `ApplicationContext.create()` (and `KneadFactory.create()`) rejects with the original error.
-   Errors thrown by the shutdown hooks during this cleanup are discarded, so they never hide the
-   original error.
+   Errors thrown by the shutdown hooks during this cleanup never hide it: the cleanup's error (an
+   `AggregateError` when several hooks failed) is kept as the original error's `shutdownError`
+   property, when the original error is an object that has none yet.
 
 A provider that opens a connection in `onModuleInit` therefore gets the chance to close it even
 when a provider initialized after it fails.

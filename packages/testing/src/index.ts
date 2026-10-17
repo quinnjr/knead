@@ -148,8 +148,20 @@ export class TestApp {
     return this.app.url;
   }
 
-  request(method: string, path: string, init: TestRequestInit = {}): Promise<Response> {
-    const url = new URL(path, this.url);
+  /**
+   * `path` must start with `/`. It is appended to the test server's origin, so `//other/x` is
+   * sent to the test server as the path `//other/x`, never to another host.
+   */
+  #urlOf(path: string): URL {
+    if (typeof path !== 'string' || !path.startsWith('/')) {
+      throw new TypeError(`TestApp paths must start with '/', got ${JSON.stringify(path)}`);
+    }
+    return new URL(this.url.origin + path);
+  }
+
+  /** Sends a request to the test server. `path` must start with `/` (see above). */
+  async request(method: string, path: string, init: TestRequestInit = {}): Promise<Response> {
+    const url = this.#urlOf(path);
     for (const [key, value] of Object.entries(init.query ?? {})) {
       for (const v of typeof value === 'string' ? [value] : value) url.searchParams.append(key, v);
     }
@@ -190,11 +202,11 @@ export class TestApp {
    * Opens a graphql-transport-ws connection and subscribes. Resolves after connection_ack; the
    * server may still be registering the subscription, so wait for it before publishing.
    */
-  graphqlSubscribe<TData = Record<string, unknown>>(
+  async graphqlSubscribe<TData = Record<string, unknown>>(
     query: string,
     options: GraphQLSubscribeOptions = {},
   ): Promise<GraphQLSubscription<TData>> {
-    const url = new URL(options.path ?? '/graphql', this.url);
+    const url = this.#urlOf(options.path ?? '/graphql');
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
     return subscribe<TData>(url, query, options);
   }

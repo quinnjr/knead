@@ -69,6 +69,28 @@ describe('cidrMatcher', () => {
     expect(() => cidrMatcher(['10.0.0.0/33'])).toThrow(HttpConfigError);
     expect(() => cidrMatcher(['nope'])).toThrow(HttpConfigError);
   });
+
+  test('rejects loose prefixes that Number() would accept', () => {
+    // `Number('')` is 0, so an empty prefix used to become /0 and trust every address.
+    for (const entry of [
+      '10.0.0.0/',
+      '10.0.0.0/0x8',
+      '10.0.0.0/8/x',
+      '10.0.0.0/ 8',
+      '10.0.0.0/8 ',
+      '10.0.0.0/1e1',
+      '10.0.0.0/+8',
+      '10.0.0.0/8.0',
+      '10.0.0.0/0008',
+    ]) {
+      expect(() => cidrMatcher([entry]), entry).toThrow(HttpConfigError);
+    }
+  });
+
+  test('rejects non-string entries', () => {
+    expect(() => cidrMatcher([8 as unknown as string])).toThrow(HttpConfigError);
+    expect(() => cidrMatcher([null as unknown as string])).toThrow(HttpConfigError);
+  });
 });
 
 describe('resolveClientIp', () => {

@@ -71,7 +71,8 @@ Across daylight saving time changes in `timezone`:
   02:30 again.
 - **Fall back.** A time in the repeated hour runs once, in its first occurrence: `30 1 * * *`
   runs at 01:30 EDT and not again at 01:30 EST. A job armed during the second occurrence (started,
-  resumed or added then) runs at its next match in that occurrence, never at a time already past.
+  resumed or added then) skips the rest of it too and runs at its first match after the repeated
+  hour, so every instance computes the same firings and a `lock: true` job runs once.
 
 `CronOptions` extends `JobOptions`:
 
@@ -212,8 +213,10 @@ or throws that message as `ScheduleConfigError` with `requireTls: true`. The mes
 includes the URL's credentials. `rediss://`, `valkeys://` and Unix socket URLs pass.
 
 The store creates its own client with `enableOfflineQueue: false`, so a command that timed out is
-never sent later. Give a `client` you pass the same setting. `close()` closes a client the store
-created and does nothing for a supplied one.
+never sent later, and a `connectionTimeout` of `max(commandTimeout, 1000)` ms
+(`ownedRedisClientOptions()` from `@knead-js/core`), and connects it before sending. A `client`
+you pass is never connected by the store: create it with the same settings and connect it
+yourself. `close()` closes a client the store created and does nothing for a supplied one.
 
 Passing both `client` and `url` throws
 `ScheduleConfigError` (`Pass either client or url to RedisLockStore, not both.`).

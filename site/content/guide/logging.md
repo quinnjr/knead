@@ -141,19 +141,24 @@ apply them too.
 
 ### Credentials in text
 
-`redactCredentials(text)` replaces three kinds of credential with `***`:
+`redactCredentials(text)` replaces four kinds of credential with `***`:
 
 - **URL userinfo**: `redis://app:hunter2@cache:6379` becomes `redis://***@cache:6379`, for any
   scheme. The userinfo runs to the last `@` within the first 1024 characters of the URL, because
   passwords often contain an unencoded `@` or `/` (`postgres://app:p@ss/w0rd@db/shop` becomes
   `postgres://***@db/shop`). An `http(s)` URL that starts `host[:port]/` keeps an `@` in its path
   (`https://example.com/users/@ada` is unchanged), but credential URLs nested in it are still
-  redacted.
-- **Secret `key=value` pairs**: the value of any pair whose key contains `password`, `passwd`,
-  `pwd`, `secret`, `token`, `apikey`, `api_key` or `accountkey`, in any case and with any prefix
-  or suffix. The value ends at `&`, `;` or whitespace, so
+  redacted. The scheme starts at its first letter, so `-redis://u:p@h` is redacted too.
+- **Secret `key=value` pairs**: the value of any pair whose key is sensitive, with the same rules
+  as [sensitive keys in objects](#sensitive-keys-in-objects) (`client_secret`, `x-api-key`,
+  `SharedAccessKey`, `sig`, ...). An unquoted value ends at `&`, `;` or whitespace, so
   `/callback?code=1&client_secret=abc&state=2` becomes `/callback?code=1&client_secret=***&state=2`
-  and `DB_PASSWORD=hunter2` becomes `DB_PASSWORD=***`.
+  and `DB_PASSWORD=hunter2` becomes `DB_PASSWORD=***`; a quoted one runs to its closing quote
+  (`password="hunter 2"` becomes `password="***"`).
+- **Secret `key: value` pairs**: JSON (`{"password":"x"}` becomes `{"password":"***"}`), YAML and
+  inspected objects. A `key:` with an unquoted key counts only at the start of a line or after `{`
+  or `,`, so "Invalid token: expired" stays readable. An `Authorization:` or `Cookie:` line loses
+  its whole value whatever its shape (`Cookie: ***`, `Authorization: Token ***`).
 - **`Bearer` and `Basic` credentials**, in any case: `Bearer eyJhbGciOi.payload.sig` becomes
   `Bearer ***`. Only credential-shaped values are replaced (8 or more token characters, or a `:`
   or `=` between token characters), so prose such as "a basic mistake" stays readable.
@@ -173,15 +178,20 @@ levels deep:
 - The value of a sensitive key becomes `***`, whatever the value. The exact keys are
   `authorization`, `cookie`, `set-cookie`, `password`, `passwd`, `pwd`, `secret`, `token`,
   `apikey`, `api_key`, `accesstoken`, `refreshtoken`, `accountkey`, `privatekey` and
-  `connectionstring`, in any case.
+  `connectionstring`, in any case, and `pass`, `passphrase`, `jwt`, `sig`, `accesskey` and
+  `sharedaccesskey` once lowercased and stripped of `-` and `_`.
 - A key that contains one of the words `password`, `passwd`, `pwd`, `secret`, `token`, `apikey`,
   `accountkey`, `privatekey`, `connectionstring`, `authorization`, `cookie`, `credential` or
   `sessionid`, once lowercased and stripped of `-` and `_`, is sensitive too (`db_password`,
   `x-api-key`, `clientSecret`, `AWS_SECRET_ACCESS_KEY`, `sessionId`). For these keys, numbers and
   booleans are kept, so `maxTokens: 100` stays readable, while `token: 42` (an exact key) becomes
   `***`.
-- `Headers`, `Map` and other objects with `entries()` or `toJSON()` are walked as their entries.
+- A `URL` is walked as its `href`, a `Request` or `Response` as its method or status, URL and
+  headers, and `Headers`, `Map` and other objects with `entries()` or `toJSON()` as their entries.
+- Other class instances are walked as their own properties, into a copy with the same prototype.
+  Dates and binary data are kept as they are.
 - Cycles become `[Circular]`, and objects deeper than 4 levels become `[Object]` (or `[Array]`).
+  At most 20000 strings and objects are walked per value; the rest become `[Truncated]`.
 
 The original value is never modified, and a value with nothing to redact is returned as is.
 
