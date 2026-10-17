@@ -149,7 +149,7 @@ test('creates a user', async () => {
 });
 ```
 
-`moduleRef` is anything with `get(token)`, such as a `TestingModule` or `ApplicationContext`. Errors thrown by the function propagate unchanged; the default `timeout` is 30 seconds, because Prisma's 5 seconds is too short for tests. It uses `requiresNew`, so the pool needs at least 2 connections.
+`moduleRef` is anything with `get(token)`, such as a `TestingModule` or `ApplicationContext`. Errors thrown by the function propagate unchanged; the default `timeout` is 30 seconds, because Prisma's 5 seconds is too short for tests. It uses `requiresNew`, so the pool needs at least 2 connections. It fails closed: if the client never runs the function, or the transaction does not end in the rollback `withRollback` asked for, it throws a `KneadError` (`withRollback: rollback not confirmed`) instead of resolving.
 
 `withRollback` does not cover requests made through a real ephemeral server (`listen()` plus `fetch`). Those run in a separate async context, never see the test's transaction, and commit for real. Clean up after such tests yourself, or test controllers through service calls inside `withRollback`.
 
