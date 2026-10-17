@@ -162,10 +162,36 @@ function assertRate(name: string, rate: WsMessageRate | false | undefined): void
   assertInteger(`${name}.windowMs`, rate.windowMs, 1);
 }
 
+/** `value`, or `fallback` when it is undefined (a key written as `undefined` keeps its default). */
+function or<T>(value: T | undefined, fallback: T): T {
+  return value === undefined ? fallback : value;
+}
+
 function resolveServerOptions(options: WsServerOptions): ResolvedServerOptions {
-  const o = { ...WS_DEFAULTS, maxConnections: undefined, ...options };
+  const o: ResolvedServerOptions = {
+    maxPayloadLength: or(options.maxPayloadLength, WS_DEFAULTS.maxPayloadLength),
+    backpressureLimit: or(options.backpressureLimit, WS_DEFAULTS.backpressureLimit),
+    closeOnBackpressureLimit: or(
+      options.closeOnBackpressureLimit,
+      WS_DEFAULTS.closeOnBackpressureLimit,
+    ),
+    idleTimeout: or(options.idleTimeout, WS_DEFAULTS.idleTimeout),
+    // false disables the limit; undefined keeps the default.
+    maxConnectionsPerIp: or(options.maxConnectionsPerIp, WS_DEFAULTS.maxConnectionsPerIp),
+    ipv6Subnet: or(options.ipv6Subnet, WS_DEFAULTS.ipv6Subnet),
+    // undefined is the default: no limit.
+    maxConnections: options.maxConnections,
+    // false disables the rate; undefined keeps the default.
+    messageRate: or(options.messageRate, WS_DEFAULTS.messageRate),
+    maxPendingRevocations: or(options.maxPendingRevocations, WS_DEFAULTS.maxPendingRevocations),
+  };
   assertInteger('maxPayloadLength', o.maxPayloadLength, 1);
   assertInteger('backpressureLimit', o.backpressureLimit, 1);
+  if (typeof o.closeOnBackpressureLimit !== 'boolean') {
+    throw new HttpConfigError(
+      `WebSocket closeOnBackpressureLimit must be a boolean, got ${String(o.closeOnBackpressureLimit)}.`,
+    );
+  }
   assertInteger('idleTimeout', o.idleTimeout, 0);
   if (o.maxConnectionsPerIp !== false)
     assertInteger('maxConnectionsPerIp', o.maxConnectionsPerIp, 1);
@@ -261,6 +287,11 @@ export class WsRegistry {
   /** The pending upgrades that already reserved their socket data (between reserve and open). */
   readonly #withData = new Map<object, UpgradeEntry>();
   readonly #expiredUpgrades = new WeakMap<object, UpgradeEntry>();
+  /**
+   * Socket data whose slot was returned when its upgrade expired: a late open takes a slot
+   * again, or is closed with 1013 when none is free.
+   */
+  readonly #expiredSlots = new WeakMap<object, string | undefined>();
   #nextSweep = 0;
   /** closeWhere() calls issued while an upgrade was in progress, oldest first from #head. */
   #revocations: PendingRevocation[] = [];
@@ -336,23 +367,16 @@ export class WsRegistry {
   /**
    * @internal Takes a connection slot for an upgrade's data object right before the upgrade, or
    * throws 429 (per-IP limit) / 503 (total limit). The slot is returned when the socket closes,
-   * or by `release()` if the upgrade fails.
+   * by `release()` if the upgrade fails, or when the upgrade expires (its socket did not open
+   * within 30s); a socket that opens after that takes a slot again, or is closed with 1013.
    */
   reserve(data: object, ip: string | undefined, ctx?: object): void {
-    const { maxConnections, maxConnectionsPerIp } = this.#server;
-    if (maxConnections !== undefined && this.#reservedTotal >= maxConnections) {
-      throw new ServiceUnavailableException('Too many WebSocket connections.');
-    }
+    const { maxConnectionsPerIp } = this.#server;
     const key =
       maxConnectionsPerIp === false || ip === undefined
         ? undefined
         : maskIp(ip, this.#server.ipv6Subnet);
-    if (key !== undefined && (this.#perIp.get(key) ?? 0) >= (maxConnectionsPerIp as number)) {
-      throw new TooManyRequestsException('Too many WebSocket connections from this address.');
-    }
-    this.#reservedTotal++;
-    if (key !== undefined) this.#perIp.set(key, (this.#perIp.get(key) ?? 0) + 1);
-    this.#reserved.set(data, key);
+    this.#take(data, key);
     // The in-progress upgrade now follows its socket data, until the socket opens.
     if (ctx === undefined) return;
     const entry = this.#upgrades.get(ctx);
@@ -365,6 +389,34 @@ export class WsRegistry {
     }
     const expired = this.#expiredUpgrades.get(ctx);
     if (expired !== undefined) this.#expiredUpgrades.set(data, expired);
+  }
+
+  /** Takes a slot counted against `key` (the masked IP, if limited), or throws 429 / 503. */
+  #take(data: object, key: string | undefined): void {
+    const { maxConnections, maxConnectionsPerIp } = this.#server;
+    if (maxConnections !== undefined && this.#reservedTotal >= maxConnections) {
+      throw new ServiceUnavailableException('Too many WebSocket connections.');
+    }
+    if (key !== undefined && (this.#perIp.get(key) ?? 0) >= (maxConnectionsPerIp as number)) {
+      throw new TooManyRequestsException('Too many WebSocket connections from this address.');
+    }
+    this.#reservedTotal++;
+    if (key !== undefined) this.#perIp.set(key, (this.#perIp.get(key) ?? 0) + 1);
+    this.#reserved.set(data, key);
+  }
+
+  /** Returns the slot held by `data`, if any, and the key it counted against. */
+  #giveBack(data: object): { key: string | undefined } | undefined {
+    if (!this.#reserved.has(data)) return undefined;
+    const key = this.#reserved.get(data);
+    this.#reserved.delete(data);
+    this.#reservedTotal--;
+    if (key !== undefined) {
+      const count = (this.#perIp.get(key) ?? 1) - 1;
+      if (count > 0) this.#perIp.set(key, count);
+      else this.#perIp.delete(key);
+    }
+    return { key };
   }
 
   /** @internal Called by the compiler when an upgrade request arrives (before middleware). */
@@ -413,20 +465,38 @@ export class WsRegistry {
       this.#upgrades.delete(key);
       this.#withData.delete(key);
       this.#expiredUpgrades.set(key, entry);
+      // Its socket never opened: the slot is returned, so aborted upgrades cannot exhaust the
+      // limits. A late open takes one again (#retake).
+      if (entry.hasData) {
+        const slot = this.#giveBack(key);
+        if (slot !== undefined) this.#expiredSlots.set(key, slot.key);
+      }
+    }
+  }
+
+  /**
+   * A socket whose upgrade expired (and returned its slot) opens late: it takes a slot again.
+   * Returns false, after closing it with 1013, when none is free.
+   */
+  #retake(ws: WsSocket): boolean {
+    const data = ws.data;
+    if (!this.#expiredSlots.has(data)) return true;
+    const key = this.#expiredSlots.get(data);
+    this.#expiredSlots.delete(data);
+    try {
+      this.#take(data, key);
+      return true;
+    } catch {
+      ws.close(1013, 'Too many WebSocket connections');
+      return false;
     }
   }
 
   /** @internal Returns the connection slot held by an upgrade's data object, if any. */
   release(data: object): void {
     this.endUpgrade(data);
-    if (!this.#reserved.has(data)) return;
-    const key = this.#reserved.get(data);
-    this.#reserved.delete(data);
-    this.#reservedTotal--;
-    if (key === undefined) return;
-    const count = (this.#perIp.get(key) ?? 1) - 1;
-    if (count > 0) this.#perIp.set(key, count);
-    else this.#perIp.delete(key);
+    this.#expiredSlots.delete(data);
+    this.#giveBack(data);
   }
 
   get(path: string): WsEndpoint | undefined {
@@ -454,6 +524,12 @@ export class WsRegistry {
       closeOnBackpressureLimit: limits.closeOnBackpressureLimit,
       idleTimeout: limits.idleTimeout,
       open: async (ws) => {
+        // Sweep first, so an upgrade that expired just now returns its slot before it is taken.
+        this.#sweep(Date.now());
+        if (!this.#retake(ws)) {
+          this.endUpgrade(ws.data);
+          return;
+        }
         this.#sockets.set(ws, this.#openState(ws));
         // Revocations issued while this socket was upgrading are applied before the endpoint
         // sees it. Fail closed when one of them can no longer be checked.
@@ -486,7 +562,7 @@ export class WsRegistry {
   }
 
   /**
-   * Closes every open socket for which `predicate` returns true (for example, all sockets of a
+   * Closes every open socket for which `predicate` returns a truthy value (for example, all sockets of a
    * signed-out user, found through `ws.data.data`), and returns how many were closed. Predicates
    * should read only `ws.data`: for a socket still upgrading they may be evaluated against a
    * stand-in that has nothing else, and one that reads more makes that socket fail closed. Sockets
@@ -571,7 +647,8 @@ export class WsRegistry {
 
   #matches(revocation: PendingRevocation, ws: WsSocket): boolean {
     try {
-      return revocation.predicate(ws) === true;
+      // The same rule as for open sockets in closeWhere(): any truthy result revokes.
+      return Boolean(revocation.predicate(ws));
     } catch (error) {
       logError(
         this.#log,

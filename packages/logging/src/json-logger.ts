@@ -44,6 +44,8 @@ const MAX_ITEMS = 1000;
 const MAX_NODES = 10_000;
 /** Most errors of a cause chain written in development. */
 const MAX_CAUSES = 16;
+/** Most errors written in detail per record in development; later ones are summarized. */
+const MAX_ERRORS = 100;
 const UNREADABLE = '[unreadable]';
 const TRUNCATED = '[Truncated]';
 /** Error properties already part of its text. */
@@ -131,13 +133,17 @@ interface Settings {
   readonly now: () => Date;
 }
 
-/** The state of one copy: the objects on the current path and the values left to copy. */
+/**
+ * The state of one copy: the objects (and errors) on the current path, the values left to copy
+ * and the errors left to write in detail.
+ */
 interface Walk {
   readonly seen: WeakSet<object>;
   nodes: number;
+  errors: number;
 }
 
-const walk = (): Walk => ({ seen: new WeakSet(), nodes: MAX_NODES });
+const walk = (): Walk => ({ seen: new WeakSet(), nodes: MAX_NODES, errors: MAX_ERRORS });
 
 /** Lets child() hand its settings to a new JsonLogger; not exported, so options cannot forge it. */
 const INHERIT = Symbol('JsonLogger.inherit');
@@ -159,8 +165,9 @@ interface Inheritable {
  * outside development and their redacted text, own properties and cause chain in development,
  * wherever they appear. Class instances are written as their own enumerable properties (after
  * `toJSON()` when they have one), Maps and Headers as objects, Sets as arrays, bigints as
- * strings and cycles as `[Circular]`. Copies stop at 4 levels, 1000 items per collection and
- * 10000 values per record, so the work stays linear. JSON escaping keeps every record on one
+ * strings and cycles (including an error inside itself or its own cause chain) as `[Circular]`.
+ * Copies stop at 4 levels, 1000 items per collection and 10000 values per record, and a record
+ * writes at most 100 errors in detail (later ones are summarized), so the work stays linear. JSON escaping keeps every record on one
  * line, so logged values cannot forge records. Logging never throws.
  */
 export class JsonLogger implements Logger {
@@ -271,7 +278,7 @@ export class JsonLogger implements Logger {
     for (const item of meta) {
       try {
         if (isError(item) && err === undefined) {
-          err = this.#error(item, state);
+          err = this.#error(item, 0, state);
         } else if (isFieldsObject(item)) {
           for (const [key, value] of this.#entries(item, state)) record[key] = value;
         } else {
@@ -286,11 +293,15 @@ export class JsonLogger implements Logger {
     return stringify(record);
   }
 
-  /** An Error as a string: `Name: message` outside development, its redacted details in it. */
-  #error(error: Error, state: Walk): string {
-    if (!this.#settings.development) return summarizeError(error);
+  /**
+   * An Error found `depth` levels below a meta argument, as a string: `Name: message` outside
+   * development (and once the record's detailed-error budget is spent), its redacted details in it.
+   */
+  #error(error: Error, depth: number, state: Walk): string {
+    if (!this.#settings.development || state.errors <= 0) return summarizeError(error);
+    state.errors--;
     try {
-      return this.#errorDetail(error, state);
+      return this.#errorDetail(error, depth, state);
     } catch {
       return summarizeError(error);
     }
@@ -298,30 +309,46 @@ export class JsonLogger implements Logger {
 
   /**
    * The error's redacted text and own properties, then each cause's (`Caused by: ...`), up to 16
-   * errors. Built here rather than with Bun.inspect, so nothing unredacted is ever printed.
+   * errors. Built here rather than with Bun.inspect, so nothing unredacted is ever printed. Every
+   * error of the chain stays on the walk's path while it is written, so an error reached again
+   * through its own properties or causes is `[Circular]`, and properties are copied one level
+   * below the error, so nested errors use up the same depth limit as any other value.
    */
-  #errorDetail(error: Error, state: Walk): string {
+  #errorDetail(error: Error, depth: number, state: Walk): string {
     const parts: string[] = [];
+    const path: object[] = [];
     let current: unknown = error;
     let count = 0;
-    for (; current !== undefined && count < MAX_CAUSES; count++) {
-      const prefix = count === 0 ? '' : 'Caused by: ';
-      if (!isError(current)) {
-        parts.push(`${prefix}${JSON.stringify(redactValue(this.#copy(current, 1, state)))}`);
-        current = undefined;
-        break;
+    try {
+      for (; current !== undefined && count < MAX_CAUSES; count++) {
+        const prefix = count === 0 ? '' : 'Caused by: ';
+        if (typeof current === 'object' && current !== null && state.seen.has(current)) {
+          parts.push(`${prefix}[Circular]`);
+          current = undefined;
+          break;
+        }
+        if (!isError(current)) {
+          const copy = this.#copy(current, depth + 1, state);
+          parts.push(`${prefix}${JSON.stringify(redactValue(copy))}`);
+          current = undefined;
+          break;
+        }
+        state.seen.add(current);
+        path.push(current);
+        parts.push(`${prefix}${redactCredentials(errorText(current))}`);
+        const props = this.#errorProps(current, depth, state);
+        if (props !== undefined) parts.push(`  ${JSON.stringify(props)}`);
+        current = current.cause;
       }
-      parts.push(`${prefix}${redactCredentials(errorText(current))}`);
-      const props = this.#errorProps(current, state);
-      if (props !== undefined) parts.push(`  ${JSON.stringify(props)}`);
-      current = current.cause;
+    } finally {
+      for (const item of path) state.seen.delete(item);
     }
     if (current !== undefined) parts.push('Caused by: … (more causes omitted)');
     return parts.join('\n');
   }
 
   /** An Error's own enumerable properties (and AggregateError's `errors`), copied and redacted. */
-  #errorProps(error: Error, state: Walk): unknown {
+  #errorProps(error: Error, depth: number, state: Walk): unknown {
     const props: Record<string, unknown> = Object.create(null);
     let count = 0;
     for (const key of Object.keys(error)) {
@@ -333,7 +360,7 @@ export class JsonLogger implements Logger {
       props.errors = error.errors;
       count++;
     }
-    return count === 0 ? undefined : redactValue(this.#copy(props, 1, state));
+    return count === 0 ? undefined : redactValue(this.#copy(props, depth + 1, state));
   }
 
   #read(value: object, key: string): unknown {
@@ -351,8 +378,8 @@ export class JsonLogger implements Logger {
     if (typeof value !== 'object' || value === null) return value;
     if (state.nodes <= 0) return TRUNCATED;
     state.nodes--;
-    if (isError(value)) return this.#error(value, state);
     if (state.seen.has(value)) return '[Circular]';
+    if (isError(value)) return this.#error(value, depth, state);
     if (depth >= MAX_DEPTH) return Array.isArray(value) ? '[Array]' : '[Object]';
     state.seen.add(value);
     try {

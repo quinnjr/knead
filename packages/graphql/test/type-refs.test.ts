@@ -25,6 +25,38 @@ describe('type handles', () => {
     ]);
   });
 
+  test('defineEnum keeps numeric-looking names such as Infinity', () => {
+    const Bound = { Infinity: 'inf', NaN: 'nan', Zero: 0 } as const;
+    const handle = defineEnum(Bound, { name: 'Bound' });
+    expect(handle.graphql.getValues().map((v) => [v.name, v.value])).toEqual([
+      ['Infinity', 'inf'],
+      ['NaN', 'nan'],
+      ['Zero', 0],
+    ]);
+  });
+
+  test('defineEnum skips only true reverse mappings of a numeric enum', () => {
+    enum Mixed {
+      ONE = 1,
+      TWO = 'two',
+    }
+    expect(
+      defineEnum(Mixed, { name: 'Mixed' })
+        .graphql.getValues()
+        .map((v) => [v.name, v.value]),
+    ).toEqual([
+      ['ONE', 1],
+      ['TWO', 'two'],
+    ]);
+    // A string value naming another key with a number is not a reverse mapping unless it maps back.
+    const Pointer = { A: 'B', B: 1 } as const;
+    expect(
+      defineEnum(Pointer, { name: 'Pointer' })
+        .graphql.getValues()
+        .map((v) => v.name),
+    ).toEqual(['A', 'B']);
+  });
+
   test('defineEnum rejects an empty object', () => {
     expect(() => defineEnum({}, { name: 'Nothing' })).toThrow('Enum Nothing has no values.');
   });

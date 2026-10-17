@@ -518,6 +518,58 @@ describe('bootstrap errors', () => {
   });
 });
 
+describe('global registration during a pending listen()', () => {
+  test('useGlobal*() while listen() is pending throws instead of being ignored', async () => {
+    @Module({})
+    class M {}
+    const a = await KneadFactory.create(M, { logger: new MemoryLogger() });
+    const listening = a.listen({ port: 0, hostname: '127.0.0.1' });
+    expect(() => a.useGlobalGuards(() => false)).toThrow(HttpConfigError);
+    expect(() => a.useGlobalMiddleware(tag('late'))).toThrow(HttpConfigError);
+    expect(() => a.useGlobalFilters(new TeapotFilter())).toThrow(HttpConfigError);
+    await listening;
+    await a.close();
+  });
+
+  test('from the onModuleInit of a lazily constructed guard', async () => {
+    let caught: unknown;
+    let a: HttpApplication | undefined;
+    class LateGuard implements Guard<Ctx>, OnModuleInit {
+      onModuleInit() {
+        try {
+          a!.useGlobalGuards(() => false);
+        } catch (error) {
+          caught = error;
+        }
+      }
+      canActivate() {
+        return true;
+      }
+    }
+    @Controller('/g')
+    class C {
+      @Get('/', { guards: [LateGuard] }) get() {
+        return 'ok';
+      }
+    }
+    @Module({ controllers: [C] })
+    class M {}
+    a = await KneadFactory.create(M, { logger: new MemoryLogger() });
+    await a.listen({ port: 0, hostname: '127.0.0.1' });
+    expect(caught).toBeInstanceOf(HttpConfigError);
+    expect((await fetch(new URL('/g', a.url))).status).toBe(200);
+    await a.close();
+  });
+
+  test('after close() has started', async () => {
+    @Module({})
+    class M {}
+    const a = await KneadFactory.create(M, { logger: new MemoryLogger() });
+    await a.close();
+    expect(() => a.useGlobalGuards(() => false)).toThrow(HttpConfigError);
+  });
+});
+
 describe('lifecycle of lazily constructed classes', () => {
   test('a @UseMiddleware class gets onModuleInit at listen and onModuleDestroy at close', async () => {
     const log: string[] = [];
@@ -570,6 +622,41 @@ describe('lifecycle of lazily constructed classes', () => {
     const a = await KneadFactory.create(M, { logger: new MemoryLogger() });
     await expect(a.listen({ port: 0, hostname: '127.0.0.1' })).rejects.toThrow('guard init failed');
     expect(() => a.server).toThrow(HttpConfigError);
+  });
+});
+
+describe('lifecycle of transient providers resolved at listen()', () => {
+  test('a transient guard provider built at listen() gets init and destroy hooks; app.get() ones do not', async () => {
+    const log: string[] = [];
+    @core.Injectable({ scope: 'transient' })
+    class TransientGuard implements Guard<Ctx>, OnModuleInit, OnModuleDestroy {
+      onModuleInit() {
+        log.push('init');
+      }
+      onModuleDestroy() {
+        log.push('destroy');
+      }
+      canActivate() {
+        return true;
+      }
+    }
+    @Controller('/tg')
+    class C {
+      @Get('/', { guards: [TransientGuard] }) get() {
+        return 'ok';
+      }
+    }
+    @Module({ controllers: [C], providers: [TransientGuard] })
+    class M {}
+    const a = await KneadFactory.create(M, { logger: new MemoryLogger() });
+    expect(log).toEqual([]);
+    await a.listen({ port: 0, hostname: '127.0.0.1' });
+    expect(log).toEqual(['init']);
+    expect(await (await fetch(new URL('/tg', a.url))).text()).toBe('ok');
+    // Resolved at runtime: a new instance each time, neither kept nor given hooks.
+    expect(a.get(TransientGuard)).not.toBe(a.get(TransientGuard));
+    await a.close();
+    expect(log).toEqual(['init', 'destroy']);
   });
 });
 

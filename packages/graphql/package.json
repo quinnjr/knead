@@ -1,7 +1,29 @@
 {
   "name": "@knead-js/graphql",
   "version": "0.2.1",
-  "description": "Code-first GraphQL on Leaven for the Knead framework",
+  "description": "Code-first GraphQL server with subscriptions over WebSocket for Knead, the NestJS-style web framework for Bun",
+  "keywords": [
+    "bun",
+    "bunjs",
+    "bun-framework",
+    "knead",
+    "web-framework",
+    "http-framework",
+    "typescript",
+    "graphql",
+    "graphql-server",
+    "code-first",
+    "subscriptions",
+    "websocket",
+    "graphql-ws",
+    "dataloader",
+    "leaven",
+    "api"
+  ],
+  "homepage": "https://quinnjr.github.io/knead/packages/graphql/",
+  "bugs": {
+    "url": "https://github.com/quinnjr/knead/issues"
+  },
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",

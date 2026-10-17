@@ -1,7 +1,28 @@
 {
   "name": "@knead-js/rate-limit",
   "version": "0.2.1",
-  "description": "Rate limiting with memory and Redis stores for the Knead framework",
+  "description": "Rate limiting with memory and Redis stores for Knead, the NestJS-style web framework for Bun",
+  "keywords": [
+    "bun",
+    "bunjs",
+    "bun-framework",
+    "knead",
+    "web-framework",
+    "http-framework",
+    "typescript",
+    "rate-limit",
+    "rate-limiter",
+    "rate-limiting",
+    "throttle",
+    "redis",
+    "middleware",
+    "security",
+    "ddos"
+  ],
+  "homepage": "https://quinnjr.github.io/knead/packages/rate-limit/",
+  "bugs": {
+    "url": "https://github.com/quinnjr/knead/issues"
+  },
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",

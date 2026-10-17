@@ -88,7 +88,9 @@ aborts `signal` and waits for runs in progress.
 
 - `@Cron(pattern, { name?, timezone?, lock? })` runs on a cron pattern: 5 fields, or 6 with seconds
   first, an optional 7th for the year, and macros such as `@daily` and `@hourly`. `timezone` is an
-  IANA name; the default is the process time zone.
+  IANA name; the default is the process time zone. Patterns are at most 1024 characters. Across
+  daylight saving time changes, a time in the skipped hour runs an hour later that day, and a time
+  in the repeated hour runs once, in its first occurrence.
 - `@Interval(every, { name? })` runs every `every`. The first run is one period after startup.
 - `@Timeout(after, { name? })` runs once. While that run is in progress the job is listed as
   `stopped`; when it settles, the job leaves the registry.
@@ -197,6 +199,7 @@ cron job per tenant.
   `addTimeout(name, after, handler)` add a job. Jobs added before bootstrap start with the
   decorated ones; jobs added later start immediately.
 - `remove(name)` disarms and forgets a job and returns whether it existed; runs in progress finish.
+  Like every change, it throws `ScheduleConfigError` after shutdown.
 - `list()` and `get(name)` return `JobInfo` snapshots: `name`, `kind`, `state`, `nextRunAt` and
   `running` (runs in progress).
 - `pause(name)` disarms a job; `resume(name)` re-arms it from now, so missed firings do not run.
@@ -213,7 +216,7 @@ cron job per tenant.
 | `onError` | redacted `logger.error` | Receives every failed run and every lock store error. |
 | `shutdownTimeout` | `'10s'` | How long shutdown waits for runs in progress before logging their names and continuing. |
 | `enabled` | `true` | `false` registers every job paused (web-only replicas, tests); `trigger()` and `resume()` still work. |
-| `logger` | `console` | Receives the scheduler's warnings and the default error reports. Any Knead `Logger` fits. |
+| `logger` | the application's `LOGGER` | Receives the scheduler's warnings and the default error reports, with control characters in job names escaped. Any Knead `Logger` fits. |
 
 Options are validated when `forRoot()` is called, so a mistake throws `ScheduleConfigError` before
 the application starts.

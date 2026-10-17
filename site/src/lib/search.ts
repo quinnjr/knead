@@ -27,8 +27,32 @@ function terms(query: string): string[] {
     .slice(0, 8);
 }
 
-function excerpt(text: string, term: string): string {
-  const at = text.toLowerCase().indexOf(term);
+/** A search entry with its lowercased fields, computed once when the index loads. */
+export interface PreparedEntry extends SearchEntry {
+  readonly lower: {
+    readonly title: string;
+    readonly description: string;
+    readonly text: string;
+    readonly headings: readonly string[];
+    /** Title, description, headings and text together, for the every-term check. */
+    readonly everywhere: string;
+  };
+}
+
+/** Lowercases every entry once, so a search per keystroke does not redo it. */
+export function prepareIndex(entries: readonly SearchEntry[]): PreparedEntry[] {
+  return entries.map((entry) => {
+    const title = entry.title.toLowerCase();
+    const description = entry.description.toLowerCase();
+    const text = entry.text.toLowerCase();
+    const headings = entry.headings.map((h) => h.text.toLowerCase());
+    const everywhere = `${title} ${description} ${headings.join(' ')} ${text}`;
+    return { ...entry, lower: { title, description, text, headings, everywhere } };
+  });
+}
+
+function excerpt(text: string, lowerText: string, term: string): string {
+  const at = lowerText.indexOf(term);
   if (at < 0) return '';
   const start = Math.max(0, at - 50);
   const end = Math.min(text.length, at + term.length + 90);
@@ -36,16 +60,12 @@ function excerpt(text: string, term: string): string {
 }
 
 /** Ranks pages and headings for a query. Every term must occur somewhere in the page. */
-export function search(entries: readonly SearchEntry[], query: string): SearchResult[] {
+export function search(entries: readonly PreparedEntry[], query: string): SearchResult[] {
   const words = terms(query);
   if (!words.length) return [];
   const results: SearchResult[] = [];
   for (const entry of entries) {
-    const title = entry.title.toLowerCase();
-    const description = entry.description.toLowerCase();
-    const text = entry.text.toLowerCase();
-    const headings = entry.headings.map((h) => h.text.toLowerCase());
-    const everywhere = `${title} ${description} ${headings.join(' ')} ${text}`;
+    const { title, description, text, headings, everywhere } = entry.lower;
     if (!words.every((w) => everywhere.includes(w))) continue;
 
     let pageScore = 0;
@@ -71,7 +91,7 @@ export function search(entries: readonly SearchEntry[], query: string): SearchRe
         hash: heading.id,
         title: heading.text,
         context: entry.title,
-        excerpt: excerpt(entry.text, words[0]!) || entry.description,
+        excerpt: excerpt(entry.text, text, words[0]!) || entry.description,
         score: matched * 12 + (matched === words.length ? 10 : 0) + pageScore / 4,
       });
     });

@@ -60,8 +60,8 @@ Both register a controller with `POST` and `GET` routes at the path, and provide
 | `cache` | Leaven `ExecutorConfig['cache']` | `{ maxSize: 100 }` | Parsed-document cache; `false` disables it. Each entry keeps a whole AST. |
 | `compilerOptions` | Leaven `CompilerOptions` | none | Passed to Leaven's compiler. A `complexityCalculator` here replaces the one built from `complexity` options. |
 | `hooks` | Leaven `ExecutionHooks` | none | Leaven's extension point. An error a hook throws goes through `mapError`; a mapped `HttpException` keeps its code, anything else is logged and becomes a masked `INTERNAL_SERVER_ERROR`. A throwing `onError` is only logged. |
-| `cacheControl` | `string \| false` | `'no-store'` | `Cache-Control` of GraphQL responses; `false` sends none. |
-| `csrf` | `{ requiredHeaders?: readonly string[] } \| false` | `{ requiredHeaders: ['x-graphql-request'] }` | A `GET` must carry one of these headers. An empty list is an `HttpConfigError`; `false` disables the check. |
+| `cacheControl` | `string \| false` | `'no-store'` | `Cache-Control` of GraphQL responses; `false` sends none. A value that is not a valid header value is an `HttpConfigError`. |
+| `csrf` | `{ requiredHeaders?: readonly string[] } \| false` | `{ requiredHeaders: ['x-graphql-request'] }` | A `GET` must carry one of these headers. An empty list, or an entry that is not a header name, is an `HttpConfigError`; `false` disables the check. |
 | `maskErrors` | `boolean` | `true` outside development | Replaces unexpected error messages with `MASKED_MESSAGE`. |
 | `mapError` | `(error: unknown) => HttpException \| undefined` | none | Maps errors from resolver code, hooks, subscription filters and the WebSocket `context` factory before masking. |
 | `emitSchemaFile` | `string \| false` | `'schema.graphql'` in development, else `false` | Writes the sorted SDL at bootstrap. |
@@ -81,25 +81,26 @@ The `subscriptions` option (exported under this name; it is `SubscriptionOptions
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `onConnect` | `(http: Ctx, params: ConnectionParams) => boolean \| ConnectContext \| Promise<...>` | none | Runs on `connection_init`. `false` (or a throw, which is logged) closes the socket with `4403`; an object is merged into every operation's context on the socket. |
-| `refreshContext` | `({ http, context }) => ConnectContext \| false \| Promise<...>` | none | Runs before every recheck of a `recheckGuards: true` subscription. An object is merged over the context; `false` ends the subscription with `FORBIDDEN`. |
-| `connectionInitTimeout` | `number` (ms) | `3000` (Leaven) | Time allowed for `connection_init`. |
-| `keepAliveInterval` | `number` (ms) | `12000` (Leaven) | Server pings; `0` disables them. |
-| `maxSubscriptionsPerConnection` | `number` | `100` (Leaven) | Concurrent subscriptions per socket. |
+| `refreshContext` | `({ http, context }) => ConnectContext \| false \| Promise<...>` | none | Runs before every recheck of a `recheckGuards: true` subscription. An object is merged over the context; anything else (`false`, but also `undefined`, `null` or `true`) ends the subscription with `FORBIDDEN`. |
+| `connectionInitTimeout` | `number` (ms) | `3000` (Leaven) | Time allowed for `connection_init`, an integer from 1 to 2147483647. |
+| `keepAliveInterval` | `number` (ms) | `12000` (Leaven) | Server pings, an integer up to 2147483647; `0` disables them. |
+| `maxSubscriptionsPerConnection` | `number` | `100` (Leaven) | Concurrent subscriptions per socket, a positive integer. |
 | `allowedOrigins` | `readonly string[] \| '*'` | same origin only | Browser origins allowed to open a socket besides the server's own. Upgrades without `Origin` are allowed; others get `403`. |
 | `messageRate` | `WsMessageRate \| false` | the server's, 100 messages per 10 s | Per-socket token bucket; exceeding it closes the socket with `1008`. |
 | `maxConnectionLifetime` | `number` (ms) | no limit | Closes every socket with `4408` after this long. |
 
 Other socket rules: the client must offer the `graphql-transport-ws` subprotocol (`400`
 otherwise); a second `connection_init` closes the socket with `4429`; a `subscribe` or `complete`
-whose id does not match `^[A-Za-z0-9_.:-]{1,64}$` closes it with `4400`; a `subscribe` whose query
-is longer than `maxQueryLength` gets an `error` message; queries and mutations get an `error` and
-never run.
+whose id does not match `^[A-Za-z0-9_.:-]{1,64}$` closes it with `4400`; a `subscribe` before the
+connection is acknowledged closes it with `4401`; a `subscribe` whose query is longer than
+`maxQueryLength` gets an `error` message; queries and mutations get an `error` and never run. The
+timing and count options above are checked at bootstrap (`HttpConfigError`).
 
 ### `PlaygroundOptions`
 
 | Property | Type | Description |
 | --- | --- | --- |
-| `subscriptionEndpoint` | `string` | WebSocket URL the page connects to: a `ws://` or `wss://` URL or an absolute path. Without it, the URL is derived from a plain `host[:port]` `Host` header, else the relative path. |
+| `subscriptionEndpoint` | `string` | WebSocket URL the page connects to: a `ws://` or `wss://` URL or an absolute path. A URL's origin (`wss://host[:port]`) is added to the page's CSP `connect-src`, so another origin works. Without it, the URL is derived from a plain `host[:port]` `Host` header, else the relative path. |
 
 ### `ConnectionParams`
 
@@ -455,7 +456,8 @@ subscriptions end, and the next subscriber retries.
 
 - `new RedisPubSub(options?: RedisPubSubOptions)` validates the options (`HttpConfigError`), and
   warns at construction when there is no `signingKey` and the server is not on loopback, or when the
-  URL is plaintext `redis://` or `valkey://` to a non-loopback host.
+  URL is plaintext `redis://` or `valkey://` to a non-loopback host. With a supplied `client` both
+  checks are skipped (there is no URL to check).
 - `publish(topic, payload): Promise<void>` never rejects: a failure is logged and the event is lost.
 - `publishOrThrow(topic, payload): Promise<void>` rejects when the payload is not JSON-serializable,
   the message is larger than `maxMessageBytes`, or Redis does not answer within `publishTimeout`.
@@ -471,7 +473,7 @@ are deep-frozen.
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `client` | `RedisClient` | none | Publisher connection, not closed by `close()`. Bypasses the TLS check; give it `enableOfflineQueue: false` and a `connectionTimeout`. |
+| `client` | `RedisClient` | none | Publisher connection, not closed by `close()`. Bypasses the TLS check and the missing-`signingKey` warning; give it `enableOfflineQueue: false` and a `connectionTimeout`. |
 | `url` | `string` | Bun's default (`REDIS_URL`, `VALKEY_URL`, else localhost) | Used when no `client` is given. |
 | `requireTls` | `boolean` | `false` | Throw instead of warning for a plaintext URL to a non-loopback host. |
 | `prefix` | `string` | `'knead:gql:'` | Channel prefix. |
@@ -518,6 +520,12 @@ skipped. When nothing matched, a debug entry is logged.
 `{ readonly http: Ctx; readonly context: Readonly<Record<PropertyKey, unknown>> }`: the upgrade
 request and the connection's identity, the `context` factory result (computed once at connection
 init) with the `onConnect` result over it. Empty before `connection_init`.
+
+Over WebSocket the `context` factory runs once at connection init, for this identity, and again
+for every `subscribe`, for the operation's resolvers. The two can drift: if the factory reads
+something that changes (a session store, the clock), `closeWhere` predicates see the init-time
+result while resolvers see the per-subscribe one. Key revocation on values that do not change for
+the socket's life (a session id, the `onConnect` result).
 
 ## Errors
 
@@ -611,14 +619,17 @@ checks, once, that Leaven's reference page references only assets with a pinned 
 inline scripts match `scriptHashes`. If not, it logs an error and `available` is `false`.
 `serve(endpoint, subscriptionEndpoint?)` returns the page (`200`, with `Content-Security-Policy`,
 `Cache-Control: no-store`, `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`), or
-a plain-text `503` when unavailable.
+a plain-text `503` when unavailable. Rendered pages are cached per subscription endpoint (the 16
+most recently used, since the endpoint can come from the `Host` header).
 
 ### `playgroundPage()`
 
 `playgroundPage(endpoint, subscriptionEndpoint?, assets = PLAYGROUND_ASSETS): { html, csp }`
-renders Leaven's page with `integrity` and `crossorigin` on its assets, and a CSP that allows its
-inline scripts by sha256 hash and only the exact asset URLs it loads (`default-src 'self'`,
-`font-src 'self' data:`, `connect-src 'self'`, `frame-ancestors 'none'`, `object-src 'none'`;
+renders Leaven's page with `integrity` and `crossorigin` on its scripts and stylesheets, and a CSP
+that allows its inline scripts by sha256 hash and only the exact asset URLs it loads (the favicon
+by its URL in `img-src`; `default-src 'self'`, `font-src 'self' data:`, `connect-src 'self'` plus
+the origin of an absolute `ws://`/`wss://` `subscriptionEndpoint`, `frame-ancestors 'none'`,
+`object-src 'none'`;
 `style-src` includes `'unsafe-inline'` because the bundle injects styles). It throws
 `PlaygroundAssetError` for an asset without a hash.
 

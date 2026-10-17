@@ -1,7 +1,7 @@
 import { inject } from '@knead-js/core';
 import type { BatchLoader } from '@knead-js/graphql';
 import { BlogService } from './blog.service.js';
-import type { Author, Post } from './blog.types.js';
+import type { Author, Comment, Post } from './blog.types.js';
 
 /**
  * Authors by id. `ctx.loader(AuthorsById)` gives each operation its own DataLoader over this
@@ -26,5 +26,16 @@ export class PostsByAuthor implements BatchLoader<string, Post[]> {
   async batch(ids: readonly string[]): Promise<Post[][]> {
     this.batchCalls++;
     return this.#blog.postsByAuthorIds(ids);
+  }
+}
+
+/** Comments by post id, batched the same way. */
+export class CommentsByPost implements BatchLoader<string, Comment[]> {
+  readonly #blog = inject(BlogService);
+  batchCalls = 0;
+
+  async batch(ids: readonly string[]): Promise<Comment[][]> {
+    this.batchCalls++;
+    return this.#blog.commentsByPostIds(ids);
   }
 }

@@ -176,12 +176,12 @@ Injectable, provided by `CaslModule`.
 
 | Method | Description |
 | --- | --- |
-| `forCtx(ctx: AbilityCtx): Promise<AppAbility>` | The caller's ability: the user's rules intersected with the grant's (`intersectRules()`). Throws `UnauthorizedException` when `resolve()` returns `undefined` or `null`. A malformed grant gives an ability with no rules. |
+| `forCtx(ctx: AbilityCtx): Promise<AppAbility>` | The caller's ability: the user's rules intersected with the grant's (`intersectRules()`). Throws `UnauthorizedException` when `resolve()` returns `undefined` or `null`. A malformed or missing grant gives an ability with no rules, without calling `defineUserAbility()`. |
 | `authorize(ctx: AbilityCtx, action: string, subject: string \| object, field?: string): Promise<void>` | Throws `ForbiddenException` unless `ability.can(action, subject, field)` is `true` (and `UnauthorizedException` without an identity). `subject` is a type name or a record tagged with `asSubject()`. |
 | `validateGrant(user: unknown, input: unknown): Promise<GrantValidation>` | Checks that a requested grant does not exceed `user`, before you issue a credential with it. |
 
 **Caching.** `forCtx()` caches the ability on `ctx.state`, so a request (or a GraphQL operation)
-calls `resolve()` and `defineUserAbility()` once, whoever asks first. The cache is bound to the
+calls `resolve()` and `defineUserAbility()` at most once, whoever asks first. The cache is bound to the
 state object it was stored on: a spread copy of that state does not reuse it. A build that rejects
 is not cached. A GraphQL subscription root field is never cached, so every guard run rebuilds its
 ability.

@@ -362,6 +362,48 @@ describe('UseFieldGuards', () => {
     expect(await pending).toBe(8);
   });
 
+  test('field guards see plain own-property ctx objects; the loader function is per operation', async () => {
+    const seen: FieldCtx[] = [];
+    const record = (ctx: FieldCtx) => {
+      seen.push(ctx);
+      return true;
+    };
+    @ObjectType()
+    @UseFieldGuards(record)
+    class Item {
+      @Field(() => Int) id!: number;
+    }
+    @Resolver()
+    class R {
+      @Query(() => [Item]) items() {
+        return [{ id: 1 }, { id: 2 }];
+      }
+    }
+    @Module({ providers: [R] })
+    class M {}
+    s = await startGraphQL([M], { context: () => ({ tenant: 't1' }) });
+    expect((await s.app.graphql('{ items { id } }')).data).toEqual({
+      items: [{ id: 1 }, { id: 2 }],
+    });
+    expect(seen).toHaveLength(2);
+    const [a, b] = seen as [FieldCtx, FieldCtx];
+    expect(Object.keys(a)).toEqual([
+      'tenant',
+      'args',
+      'parent',
+      'info',
+      'http',
+      'state',
+      'meta',
+      'loader',
+    ]);
+    expect({ ...a }).toMatchObject({ tenant: 't1', parent: { id: 1 } });
+    expect(b.parent).toEqual({ id: 2 });
+    expect(a).not.toBe(b);
+    expect(a.loader).toBe(b.loader);
+    expect(a.state).toBe(b.state);
+  });
+
   test('class guards resolve from the root module injector', async () => {
     const ALLOW = new InjectionToken<boolean>('ALLOW');
     class Allow {

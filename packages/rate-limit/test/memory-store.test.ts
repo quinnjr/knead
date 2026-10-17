@@ -143,6 +143,21 @@ describe('validation', () => {
   test.each([0, -1, 1.5, Number.NaN])('rejects maxKeys %p', (maxKeys) => {
     expect(() => new MemoryStore({ maxKeys, sweepIntervalMs: 0 })).toThrow(RangeError);
   });
+
+  // A negative or NaN interval used to disable the sweep silently.
+  test.each([-1, Number.NaN, Number.POSITIVE_INFINITY, '1000', {}])(
+    'rejects sweepIntervalMs %p',
+    (sweepIntervalMs) => {
+      expect(() => new MemoryStore({ sweepIntervalMs: sweepIntervalMs as never })).toThrow(
+        RangeError,
+      );
+    },
+  );
+
+  test('accepts sweepIntervalMs 0 (no timer) and positive intervals', () => {
+    new MemoryStore({ sweepIntervalMs: 0 }).close();
+    new MemoryStore({ sweepIntervalMs: 1.5 }).close();
+  });
 });
 
 describe('clock skew', () => {

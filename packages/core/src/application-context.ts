@@ -81,6 +81,7 @@ export class ApplicationContext {
     }
     const context = new ApplicationContext(graph.modules, graph.root, state);
     await context.#initializePending();
+    state.bootstrapping = false;
     return context;
   }
 
@@ -91,6 +92,21 @@ export class ApplicationContext {
    */
   initializeLate(): Promise<void> {
     return this.#initializePending();
+  }
+
+  /**
+   * @internal Runs `fn` with every instance it constructs tracked, transients included, as during
+   * create(), so a following initializeLate() gives them lifecycle hooks. HttpApplication.listen()
+   * builds its middleware, guards and filters inside it.
+   */
+  trackConstructed<T>(fn: () => T): T {
+    const previous = this.state.bootstrapping;
+    this.state.bootstrapping = true;
+    try {
+      return fn();
+    } finally {
+      this.state.bootstrapping = previous;
+    }
   }
 
   async #initializePending(): Promise<void> {
@@ -114,7 +130,7 @@ export class ApplicationContext {
 
   get<T>(token: Token<T>): T {
     const visible = this.root.injector.lookup(token);
-    if (visible) return this.root.injector.get(token) as T;
+    if (visible) return this.root.injector.resolveRecords(visible) as T;
     for (const m of this.modules) {
       if (m.injector.records.has(token)) return m.injector.get(token) as T;
     }

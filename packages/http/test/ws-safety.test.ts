@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, mock, setSystemTime, test } from 'bun:test';
 import { ApplicationContext, inject, Module, type OnModuleInit } from '@knead-js/core';
 import type { HttpApplication, ListenOptions } from '../src/application.js';
+import { Controller, Get, Post } from '../src/decorators.js';
 import { HttpConfigError, TooManyRequestsException } from '../src/exceptions.js';
 import { APP_GUARD, originAllowed } from '../src/index.js';
 import { LOGGER, MemoryLogger } from '../src/logger.js';
@@ -778,5 +779,242 @@ describe('closeWhere re-application at open (fail closed)', () => {
     } finally {
       setSystemTime();
     }
+  });
+});
+
+describe('WebSocket endpoints covered by a parametric or wildcard GET route', () => {
+  const opened: string[] = [];
+  const gateway = (path: string) => {
+    class Gateway implements OnModuleInit {
+      readonly ws = inject(WsRegistry);
+      onModuleInit() {
+        this.ws.register(path, { upgrade: () => ({}), open: () => void opened.push(path) });
+      }
+    }
+    return Gateway;
+  };
+
+  test('a SPA @Get("/*") does not swallow the upgrade of an endpoint', async () => {
+    @Controller('/')
+    class Spa {
+      @Get('/*') page() {
+        return 'spa';
+      }
+    }
+    @Module({ controllers: [Spa], providers: [gateway('/ws/live')] })
+    class M {}
+    app = await start(M);
+    expect(await upgradeStatus(app, '/ws/live')).toContain('101');
+    // Plain GETs still reach the route.
+    expect(await (await fetch(new URL('/ws/live', app.url))).text()).toBe('spa');
+  });
+
+  test('a handshake to a root @Get("/*") path without an endpoint is an ordinary GET', async () => {
+    @Controller('/')
+    class Spa {
+      @Get('/*') page() {
+        return 'spa';
+      }
+    }
+    @Module({ controllers: [Spa], providers: [gateway('/ws/live')] })
+    class M {}
+    app = await start(M);
+    // Bun hands handshakes for a root "/*" to fetch, not to the route.
+    expect(await upgradeStatus(app, '/other')).toContain('200');
+    expect(await upgradeStatus(app, '/a/b')).toContain('200');
+    expect(await upgradeStatus(app, '/ws/live')).toContain('101');
+  });
+
+  test('a handshake to a root @Post("/*") path is still 405 without GET', async () => {
+    @Controller('/')
+    class Sink {
+      @Post('/*') take() {
+        return 'ok';
+      }
+    }
+    @Module({ controllers: [Sink], providers: [gateway('/ws/live')] })
+    class M {}
+    app = await start(M);
+    expect(await upgradeStatus(app, '/other')).toContain('405');
+  });
+
+  test('a prefixed wildcard @Get("/ws/*") does not swallow the upgrade of an endpoint', async () => {
+    @Controller('/ws')
+    class Files {
+      @Get('/*') file() {
+        return 'file';
+      }
+    }
+    @Module({ controllers: [Files], providers: [gateway('/ws/live')] })
+    class M {}
+    app = await start(M);
+    expect(await upgradeStatus(app, '/ws/live')).toContain('101');
+    expect(await (await fetch(new URL('/ws/live', app.url))).text()).toBe('file');
+    // An upgrade to a covered path without an endpoint is still an ordinary GET of the route.
+    expect(await upgradeStatus(app, '/ws/other')).toContain('200');
+  });
+
+  test('a GET /ws/:id route does not swallow the upgrade of /ws/live', async () => {
+    @Controller('/ws')
+    class Rooms {
+      @Get('/:id') room(ctx: { params: { id: string } }) {
+        return ctx.params.id;
+      }
+    }
+    @Module({ controllers: [Rooms], providers: [gateway('/ws/live')] })
+    class M {}
+    app = await start(M);
+    expect(await upgradeStatus(app, '/ws/live')).toContain('101');
+    expect(await (await fetch(new URL('/ws/live', app.url))).text()).toBe('live');
+  });
+
+  test('the covering route guards do not apply; global guards still do', async () => {
+    let allow = false;
+    @Controller('/', { guards: [() => false] })
+    class Spa {
+      @Get('/:page') page() {
+        return 'spa';
+      }
+    }
+    @Module({
+      controllers: [Spa],
+      providers: [gateway('/live'), { provide: APP_GUARD, multi: true, useValue: () => allow }],
+    })
+    class M {}
+    app = await start(M);
+    expect(await upgradeStatus(app, '/live')).toContain('403');
+    allow = true;
+    expect(await upgradeStatus(app, '/live')).toContain('101');
+  });
+});
+
+describe('explicit undefined WebSocket options keep their defaults', () => {
+  test('messageRate, closeOnBackpressureLimit and the other limits', async () => {
+    const ws = await registry();
+    ws.configure({
+      messageRate: undefined,
+      closeOnBackpressureLimit: undefined,
+      maxPayloadLength: undefined,
+      backpressureLimit: undefined,
+      idleTimeout: undefined,
+      maxConnectionsPerIp: undefined,
+      ipv6Subnet: undefined,
+      maxConnections: undefined,
+      maxPendingRevocations: undefined,
+    });
+    expect(ws.handler()).toMatchObject({
+      maxPayloadLength: 256 * 1024,
+      backpressureLimit: 1024 * 1024,
+      closeOnBackpressureLimit: true,
+      idleTimeout: 120,
+    });
+    expect(ws.maxPendingRevocations).toBe(10_000);
+    const seen: string[] = [];
+    ws.register('/a', { upgrade: () => ({}), message: (_s, m) => void seen.push(String(m)) });
+    const socket = fakeSocket('/a');
+    await ws.handler().open!(socket);
+    for (let i = 0; i < 101; i++) await ws.handler().message!(socket, `m${i}`);
+    expect(seen).toHaveLength(100);
+    expect(socket.close).toHaveBeenCalledWith(1008, 'Message rate exceeded');
+    const datas = Array.from({ length: 100 }, () => ({}));
+    for (const data of datas) ws.reserve(data, '10.0.0.1');
+    expect(() => ws.reserve({}, '10.0.0.1')).toThrow(TooManyRequestsException);
+  });
+
+  test('closeOnBackpressureLimit must be a boolean', async () => {
+    const ws = await registry();
+    for (const closeOnBackpressureLimit of ['yes', 1, null]) {
+      expect(() =>
+        ws.configure({ closeOnBackpressureLimit } as unknown as {
+          closeOnBackpressureLimit: boolean;
+        }),
+      ).toThrow(HttpConfigError);
+    }
+    ws.configure({ closeOnBackpressureLimit: false });
+    expect(ws.handler().closeOnBackpressureLimit).toBe(false);
+  });
+});
+
+describe('slots of upgrades that never open', () => {
+  const later = (ms: number) => setSystemTime(new Date(Date.now() + ms));
+
+  const reserved = async () => {
+    const ws = await registry();
+    ws.configure({ maxConnectionsPerIp: 1, maxConnections: 1 });
+    const opened: unknown[] = [];
+    ws.register('/x', { upgrade: () => ({}), open: (s) => void opened.push(s) });
+    const ctx = {};
+    const data: WsData = { endpoint: '/x', data: null, ip: '1.2.3.4' };
+    ws.beginUpgrade(ctx);
+    ws.reserve(data, '1.2.3.4', ctx);
+    const socket = { data, close: mock(() => {}) } as unknown as WsSocket & {
+      close: ReturnType<typeof mock>;
+    };
+    return { ws, opened, socket };
+  };
+
+  test('are released when the upgrade expires', async () => {
+    const { ws } = await reserved();
+    expect(() => ws.reserve({}, '1.2.3.4')).toThrow();
+    later(31_000);
+    try {
+      expect(ws.upgradesInProgress).toBe(0);
+      ws.reserve({}, '1.2.3.4');
+    } finally {
+      setSystemTime();
+    }
+  });
+
+  test('a late open re-takes its slot, which its close returns', async () => {
+    const { ws, opened, socket } = await reserved();
+    later(31_000);
+    try {
+      expect(ws.upgradesInProgress).toBe(0);
+      await ws.handler().open!(socket);
+      expect(socket.close).not.toHaveBeenCalled();
+      expect(opened).toHaveLength(1);
+      expect(() => ws.reserve({}, '1.2.3.4')).toThrow();
+      await ws.handler().close!(socket, 1000, '');
+      ws.reserve({}, '1.2.3.4');
+    } finally {
+      setSystemTime();
+    }
+  });
+
+  test('a late open whose slot was taken meanwhile is closed with 1013', async () => {
+    const { ws, opened, socket } = await reserved();
+    later(31_000);
+    try {
+      expect(ws.upgradesInProgress).toBe(0);
+      const other = {};
+      ws.reserve(other, '1.2.3.4');
+      await ws.handler().open!(socket);
+      expect(socket.close).toHaveBeenCalledWith(1013, 'Too many WebSocket connections');
+      expect(opened).toEqual([]);
+      // Its close does not return the slot it does not hold.
+      await ws.handler().close!(socket, 1013, '');
+      expect(() => ws.reserve({}, '1.2.3.4')).toThrow();
+      ws.release(other);
+      ws.reserve({}, '1.2.3.4');
+    } finally {
+      setSystemTime();
+    }
+  });
+});
+
+describe('closeWhere: one rule for open and upgrading sockets', () => {
+  test('a truthy (non-boolean) predicate result closes an upgrading socket at open', async () => {
+    const ws = await registry();
+    ws.register('/x', { upgrade: () => ({}) });
+    const ctx = {};
+    const data: WsData = { endpoint: '/x', data: null };
+    ws.beginUpgrade(ctx);
+    ws.reserve(data, '1.2.3.4', ctx);
+    const socket = { data, close: mock(() => {}) } as unknown as WsSocket & {
+      close: ReturnType<typeof mock>;
+    };
+    ws.closeWhere((() => 1) as unknown as (s: WsSocket) => boolean);
+    await ws.handler().open!(socket);
+    expect(socket.close).toHaveBeenCalledWith(1008, 'Connection revoked');
   });
 });

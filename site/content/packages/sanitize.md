@@ -20,7 +20,9 @@ when you render it instead. For request schemas in general, see
 ## `sanitize()`
 
 `sanitize(html: string, policy: SanitizePolicy | PresetName = 'basic'): string` returns `html`
-with everything outside the policy removed.
+with everything outside the policy removed. A string `policy` must be one of the preset names,
+exactly (`'Basic'` or `'toString'` are not): any other name throws a `TypeError` that starts with
+`Unknown sanitize preset`.
 
 <<< security/sanitize.ts#function
 
@@ -85,8 +87,9 @@ mutated after its first use is caught too.
 Standard Schema whose input is `inner`'s input and whose output is a `string`. It validates the
 value with `inner`; if that fails, its issues are returned unchanged. Otherwise it sanitizes the
 output with `policy`. An `inner` that outputs something other than a string produces the issue
-`sanitizedHtml() requires the inner schema to output a string`. A custom policy is checked when
-`sanitizedHtml()` is called, so a bad policy fails at startup.
+`sanitizedHtml() requires the inner schema to output a string`. The policy is checked when
+`sanitizedHtml()` is called, so a bad policy, or a preset name that is not one of `'strict'`,
+`'basic'` and `'rich'`, fails at startup.
 
 It works as a whole route schema, for example a body sent as `text/plain`:
 

@@ -126,7 +126,7 @@ steps:
    two names mapping to one key in the same source throw `ConfigKeyCollisionError`.
 2. Merge `env`, then each loader result in order, then `values`, later sources winning per key.
 3. Validate the merged object with the schema once; issues throw `ConfigValidationError`.
-4. Wrap the output in a deep-frozen `Config`.
+4. Wrap the output in a deep-frozen `Config` (see below for what freezing covers).
 
 ## Reading configuration
 
@@ -142,7 +142,9 @@ class Config<T> {
 ```
 
 The validated configuration. The constructor deep-freezes `data` in place (cycles are handled),
-so `new Config({ ... })` is also how a test builds a replacement value.
+so `new Config({ ... })` is also how a test builds a replacement value. Freezing covers each object
+and array and the values of their own enumerable properties at any depth; the contents of a `Map`,
+`Set` or `Date` (for example from a schema transform) are not properties, so they stay mutable.
 
 | Member | Description |
 | --- | --- |

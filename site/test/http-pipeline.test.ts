@@ -375,7 +375,7 @@ describe('middleware', () => {
   test('useGlobalMiddleware after listen() is a configuration error', async () => {
     await serve({ imports: [MiddlewareApp] });
     expect(() => moduleRef!.app.useGlobalMiddleware(() => new Response())).toThrow(
-      'useGlobalMiddleware() must be called before listen().',
+      'useGlobalMiddleware() must be called before listen() and close().',
     );
   });
 });

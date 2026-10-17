@@ -14,6 +14,14 @@ test.each([
   expect(parseDuration(input)).toBe(ms);
 });
 
-test.each([0, -1, Number.NaN, '', '10', '1w', 'abc', '0s'])('parseDuration(%p) throws', (input) => {
-  expect(() => parseDuration(input as never)).toThrow(RangeError);
+test.each([0, -1, Number.NaN, '', '10', '1w', 'abc', '0s', null, {}, true])(
+  'parseDuration(%p) throws',
+  (input) => {
+    expect(() => parseDuration(input as never)).toThrow(RangeError);
+  },
+);
+
+test('parseDuration(undefined) and parseDuration([]) throw a RangeError', () => {
+  expect(() => parseDuration(undefined as never)).toThrow(RangeError);
+  expect(() => parseDuration([] as never)).toThrow(RangeError);
 });

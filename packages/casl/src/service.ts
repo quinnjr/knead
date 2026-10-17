@@ -125,9 +125,10 @@ export class AbilityService {
   async #build(ctx: AbilityCtx): Cached {
     const identity = await this.#options.resolve(ctx);
     if (identity == null) return null;
-    const userRules = await this.#userRules(identity.user);
+    // Parse first: a malformed or missing grant denies everything, so skip defineUserAbility.
     const grant = parseGrant(identity.grant, this.#options.permissions);
     if (!grant) return createAppAbility([]);
+    const userRules = await this.#userRules(identity.user);
     return createAppAbility(
       intersectRules(userRules, grantRules(grant, this.#options.permissions)),
     );

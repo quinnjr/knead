@@ -59,3 +59,9 @@ describe('plaintextRedisHost', () => {
     }
   });
 });
+
+test('plaintextRedisHost returns undefined for a URL with no host', () => {
+  expect(plaintextRedisHost('redis://')).toBeUndefined();
+  expect(plaintextRedisHost('redis:///0')).toBeUndefined();
+  expect(plaintextRedisHost('valkey://')).toBeUndefined();
+});

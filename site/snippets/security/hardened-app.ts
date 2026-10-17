@@ -4,6 +4,7 @@ import { Controller, Get, Post } from '@knead-js/http';
 import { RateLimit, RateLimitModule, SkipRateLimit } from '@knead-js/rate-limit';
 import { SecurityHeadersModule } from '@knead-js/security-headers';
 
+// #region module
 @Controller('/')
 export class ApiController {
   @Get('/health')
@@ -24,7 +25,6 @@ export class ApiController {
   }
 }
 
-// #region module
 @Module({
   imports: [
     // Priority 1100: outermost, so every response below carries the headers.

@@ -7,7 +7,13 @@ import {
   faTriangleExclamation,
 } from '@fortawesome/free-solid-svg-icons';
 import { docHref } from '#lib/links.js';
-import { type SearchEntry, type SearchResult, search } from '#lib/search.js';
+import {
+  type PreparedEntry,
+  prepareIndex,
+  type SearchEntry,
+  type SearchResult,
+  search,
+} from '#lib/search.js';
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
 import Icon from './Icon.svelte';
@@ -17,7 +23,7 @@ let input = $state<HTMLInputElement>();
 let list = $state<HTMLUListElement>();
 let query = $state('');
 let active = $state(0);
-let entries = $state<SearchEntry[]>();
+let entries = $state.raw<PreparedEntry[]>();
 let failed = $state(false);
 let loading = $state(false);
 let isMac = $state(false);
@@ -38,7 +44,7 @@ async function load() {
   try {
     const res = await fetch(resolve('/search.json'));
     if (!res.ok) throw new Error(String(res.status));
-    entries = await res.json();
+    entries = prepareIndex((await res.json()) as SearchEntry[]);
   } catch {
     failed = true;
   } finally {

@@ -37,6 +37,7 @@ build one internally; use it directly for applications without HTTP. See
 | `close` | `close(signal?: string): Promise<void>` | Runs `beforeApplicationShutdown(signal)` then `onModuleDestroy` on every initialized instance, in reverse creation order. Idempotent: later calls return the same promise. Rejects with the only hook error, or an `AggregateError` (`Application shutdown failed`) for several. |
 | `closed` | `boolean` | `true` once `close()` has started. |
 | `initializeLate` | `initializeLate(): Promise<void>` | Internal to `@knead-js/http`: runs the startup hooks on instances created after `create()` (lazily built guards, middleware and filters) so they also receive shutdown hooks. |
+| `trackConstructed` | `trackConstructed<T>(fn: () => T): T` | Internal to `@knead-js/http`: tracks every instance `fn` constructs (transients included), so the following `initializeLate()` gives them lifecycle hooks. Outside it, transients resolved after `create()` are not tracked. |
 
 ### `CreateContextOptions`
 
@@ -106,7 +107,8 @@ meant for library code:
 | `resolveOrConstruct(cls)` | Returns `cls` from the module if it is a visible provider; otherwise creates it once per module in this module's injection context, honoring overrides. `@knead-js/http` uses it for guards, middleware and filters. |
 
 Its other public members (`records`, `imports`, `exported`, `state`, `addProvider()`,
-`ownRecords()`, `instantiate()`, `noProvider()`) are internal to the container.
+`ownRecords()`, `resolveRecords()`, `instantiate()`, `noProvider()`) are internal to the
+container.
 
 ## Injection
 
@@ -225,7 +227,9 @@ internal shape the container uses:
 ```
 
 It throws `ProviderConfigError` for anything that is not a class or an object with `provide`, and
-for an object without `useClass`, `useValue`, `useFactory` or `useExisting`.
+for an object without `useClass`, `useValue`, `useFactory` or `useExisting`. The message describes an
+invalid object by its keys only (never its values, which may be credentials), and any other value
+redacted and capped at 64 characters.
 
 ## Lifecycle hooks
 
@@ -398,10 +402,12 @@ object).
   replaced by `***` too, except numbers, booleans, bigints, `null` and `undefined`
   (`maxTokens: 100` stays). Keys longer than 128 characters are not checked for these words.
 - `Headers`, `Map` and other objects with an `entries()` or `toJSON()` method are walked as their
-  entries, and replaced by a plain object only when something in them was redacted.
+  entries, and replaced by a plain object only when something in them was redacted. Like plain
+  objects, one past the depth limit becomes `[Object]` and one in a cycle becomes `[Circular]`.
 - An `Error` whose message, stack, cause chain or own properties (including
   `AggregateError.errors`) need redacting becomes a string: its redacted stack, each cause as a
-  `Caused by:` line, and its redacted own properties. An error with a cause chain longer than 16
+  `Caused by:` line (followed by the cause's own redacted properties, or, for a cause that is not
+  an Error, the redacted cause itself), and its redacted own properties. An error with a cause chain longer than 16
   is always turned into this string, ending with `Caused by: … (more causes omitted)`. Other
   errors are returned unchanged.
 - Other class instances are returned as is. A property whose getter throws becomes
@@ -453,7 +459,8 @@ IPv4-mapped forms.
 
 `plaintextRedisHost(url: string | undefined): string | undefined`. The `host[:port]` of a
 `redis://` or `valkey://` URL whose host is not loopback, otherwise `undefined`: TLS URLs
-(`rediss://`, `valkeys://`), Unix sockets, loopback hosts, unparseable URLs, `undefined` and `''`.
+(`rediss://`, `valkeys://`), Unix sockets, loopback hosts, URLs with no host (`redis://`),
+unparseable URLs, `undefined` and `''`.
 Packages use it to warn about unencrypted connections to remote Redis servers.
 
 ### `defaultRedisUrl()`

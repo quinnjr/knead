@@ -143,8 +143,8 @@ export class PostsController {
 ```
 
 Limit the length before sanitizing, as above: the request body limit caps the size, but a smaller
-field limit keeps sanitizing cheap. A custom policy given to `sanitizedHtml()` is checked when the
-schema is created, so a bad policy fails at startup.
+field limit keeps sanitizing cheap. A policy given to `sanitizedHtml()` is checked when the
+schema is created, so a bad policy, or an unknown preset name, fails at startup.
 
 ## Documentation
 

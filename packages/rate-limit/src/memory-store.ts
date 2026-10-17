@@ -13,7 +13,7 @@ export interface MemoryStoreOptions {
    * limits: size this for your key cardinality, or use the RedisStore.
    */
   maxKeys?: number;
-  /** Expired-entry sweep interval; 0 disables the timer. Default 60 000. */
+  /** Expired-entry sweep interval (finite, >= 0); 0 disables the timer. Default 60 000. */
   sweepIntervalMs?: number;
   /**
    * Store keyed hashes (HMAC-SHA256 under a random per-process secret, 32 hex characters)
@@ -54,6 +54,12 @@ export class MemoryStore implements RateLimitStore {
     }
     this.#maxKeys = maxKeys;
     const interval = options.sweepIntervalMs ?? 60_000;
+    // A negative or NaN interval would silently disable the sweep.
+    if (typeof interval !== 'number' || !Number.isFinite(interval) || interval < 0) {
+      throw new RangeError(
+        `sweepIntervalMs must be a finite number >= 0 (ms), got ${String(interval)}.`,
+      );
+    }
     if (interval > 0) {
       this.#timer = setInterval(() => this.sweep(), interval);
       this.#timer.unref?.();

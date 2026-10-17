@@ -24,8 +24,9 @@ export class PostVisibleGuard implements Guard<ResolverCtx<{ postId: string }>> 
 }
 
 /**
- * Subscribers are authenticated once, by `subscriptions.onConnect` (see app.module.ts), and need
- * `read` on what they subscribe to.
+ * Subscribers are authenticated by `subscriptions.onConnect` (see app.module.ts) and need `read`
+ * on what they subscribe to. Rechecked subscriptions (`commentAdded`) re-verify the token through
+ * `subscriptions.refreshContext` before each event, so a revoked session stops receiving them.
  */
 @Resolver()
 export class BlogSubscriptions {

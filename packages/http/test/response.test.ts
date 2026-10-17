@@ -73,6 +73,20 @@ describe('toResponse', () => {
   });
 });
 
+describe('toResponse with a null-body status', () => {
+  test('204, 205 and 304 drop the returned value', async () => {
+    for (const status of [204, 205, 304]) {
+      for (const value of ['text', { a: 1 }, new Uint8Array([1])]) {
+        const res = toResponse(value, status, draft());
+        expect(res.status).toBe(status);
+        expect(res.body).toBeNull();
+        expect(res.headers.has('content-type')).toBe(false);
+        expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+      }
+    }
+  });
+});
+
 describe('toResponse extras', () => {
   test('unserializable values throw TypeError', () => {
     expect(() => toResponse(() => 1, undefined, draft())).toThrow(

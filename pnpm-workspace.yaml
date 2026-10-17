@@ -12,7 +12,6 @@ minimumReleaseAge: 1440
 # npm registry; each line says when it may be removed (UTC).
 minimumReleaseAgeExclude:
   - '@leaven-graphql/core@0.2.3' # published 2026-10-16T19:41Z, remove after 2026-10-17T19:42Z
-  - '@leaven-graphql/playground@0.2.2' # published 2026-10-16T17:36Z, remove after 2026-10-17T17:37Z
   - '@leaven-graphql/ws@0.2.3' # published 2026-10-16T19:39Z, remove after 2026-10-17T19:40Z
 # Refuse a version whose publish trust evidence (provenance / trusted
 # publisher) is weaker than an earlier version of the same package.

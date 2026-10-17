@@ -16,6 +16,22 @@ describe('PrismaModule', () => {
     expect(() => PrismaModule.forRoot({ client: 42 } as never)).toThrow(KneadError);
   });
 
+  test('forRootAsync validates its options eagerly', () => {
+    const bad: unknown[] = [
+      undefined,
+      null,
+      42,
+      {},
+      { useFactory: 'nope' },
+      { useFactory: () => ({}), imports: 'nope' },
+      { useFactory: () => ({}), imports: {} },
+    ];
+    for (const options of bad) {
+      expect(() => PrismaModule.forRootAsync(options as never)).toThrow(KneadError);
+    }
+    expect(() => PrismaModule.forRootAsync({ useFactory: () => ({}) as never })).not.toThrow();
+  });
+
   test('connects on init and disconnects on close (factory = owned)', async () => {
     const fake = createFakeClient();
     const ctx = await ApplicationContext.create(PrismaModule.forRoot({ client: () => fake }));

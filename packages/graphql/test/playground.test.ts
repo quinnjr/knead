@@ -75,3 +75,77 @@ describe('playground subresource integrity', () => {
     expect(logger.entries).toEqual([]);
   });
 });
+
+const connectSrc = (csp: string) =>
+  csp
+    .split('; ')
+    .find((d) => d.startsWith('connect-src '))
+    ?.split(' ')
+    .slice(1);
+
+describe('playground CSP connect-src', () => {
+  test('an absolute ws(s) subscription endpoint adds exactly its origin to connect-src', () => {
+    expect(connectSrc(playgroundPage('/graphql', 'wss://api.example/graphql').csp)).toEqual([
+      "'self'",
+      'wss://api.example',
+    ]);
+    expect(
+      connectSrc(playgroundPage('/graphql', 'ws://API.Example:8080/graphql?x=1#y').csp),
+    ).toEqual(["'self'", 'ws://api.example:8080']);
+    // Userinfo and the default port are not part of the origin.
+    expect(connectSrc(playgroundPage('/graphql', 'wss://u:p@api.example:443/g').csp)).toEqual([
+      "'self'",
+      'wss://api.example',
+    ]);
+    expect(connectSrc(playgroundPage('/graphql', 'ws://[::1]:4000/g').csp)).toEqual([
+      "'self'",
+      'ws://[::1]:4000',
+    ]);
+  });
+
+  test('a relative endpoint, or none, leaves connect-src at self', () => {
+    expect(connectSrc(playgroundPage('/graphql').csp)).toEqual(["'self'"]);
+    expect(connectSrc(playgroundPage('/graphql', '/graphql').csp)).toEqual(["'self'"]);
+  });
+
+  test('the served page carries the endpoint origin in its CSP header', () => {
+    const gate = new PlaygroundGate(new MemoryLogger());
+    const res = gate.serve('/graphql', 'wss://api.example/graphql');
+    expect(connectSrc(res.headers.get('content-security-policy')!)).toEqual([
+      "'self'",
+      'wss://api.example',
+    ]);
+  });
+
+  test('nothing that could break out of the directive reaches the CSP', () => {
+    for (const endpoint of ['wss://a.example;script-src *', "wss://a.example'/g", 'wss://a b/g']) {
+      const csp = playgroundPage('/graphql', endpoint).csp;
+      expect(csp).not.toContain('script-src *');
+      for (const source of connectSrc(csp)!) {
+        expect(source === "'self'" || /^wss?:\/\/[a-z0-9.:[\]-]+$/.test(source)).toBe(true);
+      }
+    }
+  });
+});
+
+describe('PlaygroundGate page cache', () => {
+  test('pages are rendered once per subscription endpoint, at most 16 kept', () => {
+    const gate = new PlaygroundGate(new MemoryLogger());
+    const first = gate.serve('/graphql', 'ws://a.example/graphql');
+    const again = gate.serve('/graphql', 'ws://a.example/graphql');
+    expect(again.headers.get('content-security-policy')).toBe(
+      first.headers.get('content-security-policy'),
+    );
+    expect(gate.cachedPages).toBe(1);
+    for (let i = 0; i < 40; i++) gate.serve('/graphql', `ws://h${i}.example/graphql`);
+    expect(gate.cachedPages).toBe(16);
+  });
+
+  test('every response has its own readable body', async () => {
+    const gate = new PlaygroundGate(new MemoryLogger());
+    const a = await gate.serve('/graphql').text();
+    const b = await gate.serve('/graphql').text();
+    expect(a).toBe(b);
+    expect(a).toContain('<script');
+  });
+});

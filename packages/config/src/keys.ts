@@ -12,7 +12,10 @@ export function toCamelCase(key: string): string | undefined {
     .join('');
 }
 
-/** Converts `jwtSecret` to `JWT_SECRET`. Used only to name a missing key in errors. */
+/**
+ * Converts `jwtSecret` to `JWT_SECRET`. Names a missing key in errors, and lets defineConfig check
+ * that a declared key round-trips from an environment name and build camelCase suggestions.
+ */
 export function toScreamingSnake(camel: string): string {
   return camel.replace(/[A-Z]/g, (c) => `_${c}`).toUpperCase();
 }

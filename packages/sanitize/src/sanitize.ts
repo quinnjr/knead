@@ -93,9 +93,21 @@ function schemeAllowlist(policy: SanitizePolicy): string[] {
   return [...SAFE_SCHEMES, ...(policy.extraSchemes ?? []).map((s) => s.toLowerCase())];
 }
 
+/** Looks up a preset by name (own keys only, so `'toString'` is not a preset) or returns the policy. */
+export function resolvePolicy(policy: SanitizePolicy | PresetName): SanitizePolicy {
+  if (typeof policy !== 'string') return policy;
+  if (!Object.hasOwn(POLICIES, policy)) {
+    const names = Object.keys(POLICIES).map((name) => `'${name}'`);
+    throw new TypeError(
+      `Unknown sanitize preset ${JSON.stringify(policy)}: use ${names.slice(0, -1).join(', ')} or ${names.at(-1)}`,
+    );
+  }
+  return POLICIES[policy];
+}
+
 /** Allowlist sanitization. Links always get rel="noopener noreferrer". */
 export function sanitize(html: string, policy: SanitizePolicy | PresetName = 'basic'): string {
-  const p = typeof policy === 'string' ? POLICIES[policy] : policy;
+  const p = resolvePolicy(policy);
   assertSafePolicy(p);
   const allowedAttributes: Record<string, string[]> = {};
   for (const [tag, attrs] of Object.entries(p.allowedAttributes))

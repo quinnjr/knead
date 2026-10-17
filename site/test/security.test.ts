@@ -14,6 +14,7 @@ import {
   HttpConfigError,
   type ListenOptions,
   MemoryLogger,
+  Post,
   UseGuards,
 } from '@knead-js/http';
 import {
@@ -150,13 +151,11 @@ describe('security: cors', () => {
 
   test('a predicate receives the context; configured headers and methods are used verbatim', async () => {
     const { app } = await corsApp(corsSnippet.tenantCors);
+    // A browser-shaped preflight: browsers never send author headers such as x-tenant on it.
     const ok = await app.request(
       'OPTIONS',
       '/api/projects',
-      preflight('https://acme.example.com', {
-        'x-tenant': 'acme',
-        'access-control-request-headers': 'x-other',
-      }),
+      preflight('https://acme.example.com', { 'access-control-request-headers': 'x-tenant' }),
     );
     expect(ok.headers.get('access-control-allow-origin')).toBe('https://acme.example.com');
     expect(ok.headers.get('access-control-allow-headers')).toBe(
@@ -164,10 +163,21 @@ describe('security: cors', () => {
     );
     expect(ok.headers.get('access-control-allow-methods')).toBe('GET, POST');
     expect(ok.headers.get('vary')).toBe('Origin');
+    const unknown = await app.request(
+      'OPTIONS',
+      '/api/projects',
+      preflight('https://evil.example', { 'access-control-request-headers': 'x-tenant' }),
+    );
+    expect(unknown.headers.get('access-control-allow-origin')).toBeNull();
+    const withHeader = await app.request('GET', '/api/projects', {
+      headers: { origin: 'https://acme.example.com', 'x-tenant': 'acme' },
+    });
+    expect(withHeader.headers.get('access-control-allow-origin')).toBe('https://acme.example.com');
     const noHeader = await app.request('GET', '/api/projects', {
       headers: { origin: 'https://acme.example.com' },
     });
     expect(noHeader.headers.get('access-control-allow-origin')).toBeNull();
+    expect(noHeader.headers.get('access-control-allow-credentials')).toBeNull();
   });
 
   test("origin '*' sends * without Vary, and never answers an oversized Origin", async () => {
@@ -591,12 +601,35 @@ describe('security: hardened app', () => {
       q(ctx: Ctx) {
         return { keys: Object.keys(ctx.query) };
       }
+
+      @Post('/j')
+      async j(ctx: Ctx) {
+        const body = (await ctx.json()) as Record<string, Record<string, unknown>>;
+        const target = Object.assign({}, body);
+        return {
+          keys: Object.keys(body),
+          nested: Object.keys(body.nested ?? {}),
+          polluted: Object.getPrototypeOf(target) !== Object.prototype,
+          ctor: body.ctor,
+        };
+      }
     }
     @Module({ controllers: [C] })
     class App {}
     const { app } = await serve([App]);
-    const res = await app.request('GET', '/q?__proto__=x&constructor=y&name=z');
+    const res = await app.request('GET', '/q?__proto__=x&constructor=y&prototype=w&name=z');
     expect(await res.json()).toEqual({ keys: ['name'] });
+    const json = await app.request('POST', '/j', {
+      headers: { 'content-type': 'application/json' },
+      // The second key spells __proto__ with \u escapes, which the filter decodes too.
+      body: '{"__proto__":{"admin":true},"\\u005f\\u005fproto\\u005f\\u005f":{"admin":true},"constructor":{"prototype":{"admin":true}},"prototype":{"a":1},"name":"z","nested":{"__proto__":{"admin":true},"ok":1},"ctor":{"constructor":"kept"}}',
+    });
+    expect(await json.json()).toEqual({
+      keys: ['name', 'nested', 'ctor'],
+      nested: ['ok'],
+      polluted: false,
+      ctor: { constructor: 'kept' },
+    });
   });
 });
 

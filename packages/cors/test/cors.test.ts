@@ -136,6 +136,21 @@ describe('preflight', () => {
     expect(res.headers.get('vary')).toBe('Origin');
   });
 
+  test('wildcard preflights without allowedHeaders vary on Access-Control-Request-Headers', async () => {
+    const a = await serve({ origin: '*' });
+    const res = await a.request(
+      'OPTIONS',
+      '/api/data',
+      preflight('https://any.example', { 'access-control-request-headers': 'x-api-key' }),
+    );
+    expect(res.headers.get('access-control-allow-origin')).toBe('*');
+    expect(res.headers.get('access-control-allow-headers')).toBe('x-api-key');
+    expect(res.headers.get('vary')).toBe('Access-Control-Request-Headers');
+    const fixed = await serve({ origin: '*', allowedHeaders: ['content-type'] });
+    const r2 = await fixed.request('OPTIONS', '/api/data', preflight('https://any.example'));
+    expect(r2.headers.get('vary')).toBeNull();
+  });
+
   test('disallowed preflight is a bare 204', async () => {
     const a = await serve({ origin: 'https://app.example' });
     const res = await a.request('OPTIONS', '/api/data', preflight('https://evil.example'));
@@ -201,6 +216,61 @@ describe('origin matchers', () => {
     const res = await a.request('GET', '/api/data', { headers: { origin: 'https://f.example' } });
     expect(res.headers.get('access-control-allow-origin')).toBe('https://f.example');
   });
+
+  test.each([1, 'yes', {}])(
+    'a predicate returning truthy non-true %p is not an allow (fails closed)',
+    async (value) => {
+      for (const origin of [
+        () => value as unknown as boolean,
+        async () => value as unknown as boolean,
+      ]) {
+        const a = await serve({ origin, credentials: true });
+        const simple = await a.request('GET', '/api/data', {
+          headers: { origin: 'https://f.example' },
+        });
+        const pre = await a.request('OPTIONS', '/api/data', preflight('https://f.example'));
+        for (const r of [simple, pre]) {
+          expect(r.headers.get('access-control-allow-origin')).toBeNull();
+          expect(r.headers.get('access-control-allow-credentials')).toBeNull();
+        }
+        await a.close();
+        app = undefined;
+      }
+    },
+  );
+
+  test('exact-string semantics for origin lists', async () => {
+    const a = await serve({ origin: ['https://a.example', 'https://b.example'] });
+    for (const [o, ok] of [
+      ['https://a.example', true],
+      ['https://A.example', false],
+      ['https://a.example/', false],
+      ['https://a.exampl', false],
+    ] as const) {
+      const res = await a.request('GET', '/api/data', { headers: { origin: o } });
+      expect(res.headers.get('access-control-allow-origin') !== null).toBe(ok);
+    }
+  });
+
+  test('the configured strings are reused unchanged on every request', async () => {
+    const a = await serve({
+      origin: 'https://app.example',
+      methods: ['GET'],
+      allowedHeaders: ['a', 'b'],
+      exposedHeaders: ['x-total', 'x-page'],
+      maxAge: 0,
+    });
+    for (let i = 0; i < 2; i++) {
+      const pre = await a.request('OPTIONS', '/api/data', preflight('https://app.example'));
+      expect(pre.headers.get('access-control-allow-methods')).toBe('GET');
+      expect(pre.headers.get('access-control-allow-headers')).toBe('a, b');
+      expect(pre.headers.get('access-control-max-age')).toBe('0');
+      const res = await a.request('GET', '/api/data', {
+        headers: { origin: 'https://app.example' },
+      });
+      expect(res.headers.get('access-control-expose-headers')).toBe('x-total, x-page');
+    }
+  });
 });
 
 describe('configuration validation', () => {
@@ -215,6 +285,20 @@ describe('configuration validation', () => {
     expect(() => CorsModule.forRoot({ origin: 'https://a.example', maxAge: -1 })).toThrow(
       CorsConfigError,
     );
+  });
+
+  test('an origin that is not a string, string array, RegExp or function is rejected', () => {
+    for (const origin of [undefined, null, 42, true, {}, [42], ['https://a.example', null]]) {
+      expect(() => CorsModule.forRoot({ origin } as unknown as CorsOptions)).toThrow(
+        CorsConfigError,
+      );
+      expect(() => CorsModule.forRoot({ origin } as unknown as CorsOptions)).toThrow(
+        'CORS origin must be',
+      );
+    }
+    for (const origin of ['https://a.example', [], ['https://a.example'], () => true]) {
+      expect(() => CorsModule.forRoot({ origin } as CorsOptions)).not.toThrow();
+    }
   });
 });
 
@@ -276,6 +360,15 @@ describe('WebSocket upgrades', () => {
   test('a disallowed Origin is rejected with 403', async () => {
     const a = await serveWs({ origin: 'https://app.example' });
     expect(await rawUpgrade(a, 'https://evil.example')).toMatch(/^HTTP\/1\.1 403/);
+  });
+
+  test('a predicate returning a truthy non-true value does not let an upgrade through', async () => {
+    for (const value of [1, {}]) {
+      const a = await serveWs({ origin: () => value as unknown as boolean });
+      expect(await rawUpgrade(a, 'https://f.example')).toMatch(/^HTTP\/1\.1 403/);
+      await a.close();
+      app = undefined;
+    }
   });
 
   test('an allowed Origin and a missing Origin are upgraded', async () => {

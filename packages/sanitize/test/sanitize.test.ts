@@ -226,3 +226,14 @@ describe('hardened policy checks', () => {
     );
   });
 });
+
+describe('preset names', () => {
+  test('an unknown preset name is a TypeError naming it', () => {
+    for (const name of ['Basic', 'toString', '__proto__', 'constructor', 'nope']) {
+      expect(() => sanitize('<b>x</b>', name as 'basic')).toThrow(TypeError);
+      expect(() => sanitize('<b>x</b>', name as 'basic')).toThrow(
+        `Unknown sanitize preset ${JSON.stringify(name)}`,
+      );
+    }
+  });
+});

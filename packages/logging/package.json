@@ -1,7 +1,26 @@
 {
   "name": "@knead-js/logging",
   "version": "0.2.1",
-  "description": "JSON structured logging for the Knead framework",
+  "description": "JSON structured logging with credential redaction for Knead, the NestJS-style web framework for Bun",
+  "keywords": [
+    "bun",
+    "bunjs",
+    "bun-framework",
+    "knead",
+    "web-framework",
+    "http-framework",
+    "typescript",
+    "logging",
+    "logger",
+    "json-logger",
+    "structured-logging",
+    "json",
+    "observability"
+  ],
+  "homepage": "https://quinnjr.github.io/knead/packages/logging/",
+  "bugs": {
+    "url": "https://github.com/quinnjr/knead/issues"
+  },
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",

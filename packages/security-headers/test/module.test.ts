@@ -124,6 +124,33 @@ describe('SecurityHeadersModule', () => {
     expect(res.headers.get('content-security-policy')).toBeNull();
   });
 
+  test('two requests produce identical headers except the nonce', async () => {
+    const app = await serve(
+      { contentSecurityPolicy: { nonce: { scripts: true, styles: true } } },
+      { trustProxy: ['127.0.0.1'] },
+    );
+    const snapshot = async (secure: boolean) => {
+      const res = await app.request('GET', '/page', {
+        headers: secure ? { 'x-forwarded-proto': 'https' } : {},
+      });
+      const nonce = /nonce="([^"]+)"/.exec(await res.text())![1]!;
+      const all = [...res.headers]
+        .filter(([name]) => name !== 'date' && name !== 'content-length')
+        .map(([name, value]) => [name, value.replaceAll(nonce, 'NONCE')]);
+      return { nonce, all };
+    };
+    for (const secure of [false, true]) {
+      const a = await snapshot(secure);
+      const b = await snapshot(secure);
+      expect(a.nonce).not.toBe(b.nonce);
+      expect(a.all).toEqual(b.all);
+      expect(Object.fromEntries(a.all)['strict-transport-security'] !== undefined).toBe(secure);
+      expect(Object.fromEntries(a.all)['content-security-policy']).toBe(
+        "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; upgrade-insecure-requests; script-src 'self' 'nonce-NONCE'; style-src 'self' 'nonce-NONCE'",
+      );
+    }
+  });
+
   test('route with CSP disabled under a nonce module has no CSP and no nonce', async () => {
     const app = await serve({ contentSecurityPolicy: { nonce: true } });
     const res = await app.request('GET', '/state');

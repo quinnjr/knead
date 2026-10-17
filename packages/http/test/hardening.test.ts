@@ -10,6 +10,7 @@ import {
 import type { MemoryLogger } from '../src/logger.js';
 import { HTTP_DEVELOPMENT } from '../src/tokens.js';
 import type { Ctx } from '../src/types.js';
+import { WsRegistry } from '../src/ws.js';
 import { makeCtx, start } from './helpers.js';
 
 let app: HttpApplication | undefined;
@@ -355,9 +356,76 @@ describe('listen({ defaultCacheControl })', () => {
     expect((await fetch(new URL('/c/plain', app.url))).headers.get('cache-control')).toBeNull();
     await app.close();
     app = undefined;
-    for (const defaultCacheControl of ['', 'no-store\r\nx: 1']) {
+    for (const defaultCacheControl of ['', 'no-store\r\nx: 1', 'no\0store', 'max-age=\u0100']) {
       await expect(start(CModule, { defaultCacheControl })).rejects.toThrow(HttpConfigError);
     }
+  });
+});
+
+describe('defaultCacheControl on early answers', () => {
+  test('421 misdirected and rejected WebSocket upgrades get it too', async () => {
+    class Gateway {
+      readonly ws = inject(WsRegistry);
+      onModuleInit() {
+        this.ws.register('/live', { upgrade: () => false });
+      }
+    }
+    @Controller('/c')
+    class C {
+      @Get('/') get() {
+        return 'ok';
+      }
+    }
+    @Module({ controllers: [C], providers: [Gateway] })
+    class M {}
+    app = await start(M, { defaultCacheControl: 'no-store', allowedHosts: ['127.0.0.1'] });
+    const misdirected = await fetch(new URL('/c', app.url), { headers: { host: 'evil.test' } });
+    expect(misdirected.status).toBe(421);
+    expect(misdirected.headers.get('cache-control')).toBe('no-store');
+    const unknown = await fetch(new URL('/nope', app.url), { headers: { host: 'evil.test' } });
+    expect(unknown.status).toBe(421);
+    expect(unknown.headers.get('cache-control')).toBe('no-store');
+    const upgrade = await fetch(new URL('/live', app.url), {
+      headers: {
+        upgrade: 'websocket',
+        connection: 'Upgrade',
+        'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==',
+        'sec-websocket-version': '13',
+      },
+    });
+    expect(upgrade.status).toBe(403);
+    expect(upgrade.headers.get('cache-control')).toBe('no-store');
+  });
+});
+
+describe('route status is validated at listen()', () => {
+  test('a status that is not an integer from 200 to 599 is a configuration error', async () => {
+    for (const status of [199, 600, 101, 200.5, Number.NaN, '201' as unknown as number]) {
+      @Controller('/s')
+      class S {
+        @Get('/', { status }) get() {
+          return 'ok';
+        }
+      }
+      @Module({ controllers: [S] })
+      class M {}
+      await expect(start(M)).rejects.toThrow(HttpConfigError);
+    }
+  });
+
+  test('a 204 route that returns a value answers without a body', async () => {
+    @Controller('/s')
+    class S {
+      @Get('/', { status: 204 }) get() {
+        return { ignored: true };
+      }
+    }
+    @Module({ controllers: [S] })
+    class M {}
+    app = await start(M);
+    const res = await fetch(new URL('/s', app.url));
+    expect(res.status).toBe(204);
+    expect(await res.text()).toBe('');
   });
 });
 

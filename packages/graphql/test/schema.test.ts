@@ -1,15 +1,17 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { Module } from '@knead-js/core';
 import { Test } from '@knead-js/testing';
 import { GraphQLScalarType } from 'graphql';
 import {
   ArgsType,
   defineScalar,
+  defineUnion,
   Field,
   GraphQLModule,
   ID,
   InputType,
   Int,
+  InterfaceType,
   ObjectType,
   Query,
   ResolveField,
@@ -17,7 +19,13 @@ import {
   SchemaBuildError,
 } from '../src/index.js';
 import { BlogModule } from './fixtures/blog.js';
-import { sdlOf } from './helpers.js';
+import { type Started, sdlOf, startGraphQL } from './helpers.js';
+
+let s: Started | undefined;
+afterEach(async () => {
+  await s?.mod.close();
+  s = undefined;
+});
 
 async function bootError(providers: Function[], orphanedTypes: Function[] = []): Promise<Error> {
   @Module({ providers: providers as never })
@@ -284,5 +292,105 @@ describe('schema build', () => {
     expect((await bootError([R])).message).toContain(
       'Invalid GraphQL schema:\n  - Type Empty must define one or more fields.',
     );
+  });
+});
+
+describe('default resolveType', () => {
+  test('an interface field resolves class instances, subclasses included, without rescanning', async () => {
+    let implementsCalls = 0;
+    @InterfaceType()
+    class Animal {
+      @Field(() => String) name!: string;
+    }
+    @ObjectType({
+      implements: () => {
+        implementsCalls++;
+        return [Animal];
+      },
+    })
+    class Dog extends Animal {
+      @Field(() => Int) barks!: number;
+    }
+    @ObjectType({ implements: () => [Animal] })
+    class Puppy extends Dog {
+      @Field(() => Int) age!: number;
+    }
+    /** Not an @ObjectType of its own: resolves as its nearest decorated ancestor, Dog. */
+    class Corgi extends Dog {}
+    const make = <T extends Animal>(cls: new () => T, fields: Partial<T>): T =>
+      Object.assign(new cls(), fields);
+    let count = 1;
+    @Resolver()
+    class Zoo {
+      @Query(() => [Animal]) animals() {
+        return Array.from({ length: count }, (_, i) =>
+          i % 3 === 0
+            ? make(Dog, { name: `d${i}`, barks: i })
+            : i % 3 === 1
+              ? make(Puppy, { name: `p${i}`, barks: i, age: 1 })
+              : make(Corgi, { name: `c${i}`, barks: i }),
+        );
+      }
+    }
+    @Module({ providers: [Zoo] })
+    class ZooModule {}
+    s = await startGraphQL([ZooModule], { orphanedTypes: [Dog, Puppy] });
+    const query = '{ animals { __typename name ... on Puppy { age } } }';
+    count = 3;
+    expect((await s.app.graphql(query)).data).toEqual({
+      animals: [
+        { __typename: 'Dog', name: 'd0' },
+        { __typename: 'Puppy', name: 'p1', age: 1 },
+        { __typename: 'Dog', name: 'c2' },
+      ],
+    });
+    const before = implementsCalls;
+    count = 60;
+    const res = await s.app.graphql(query);
+    expect(res.errors).toBeUndefined();
+    expect((res.data as { animals: unknown[] }).animals).toHaveLength(60);
+    // The implementations are computed once, not once per resolved value.
+    expect(implementsCalls).toBe(before);
+  });
+
+  test('a union resolves its members without calling types() per value', async () => {
+    @ObjectType()
+    class Cat {
+      @Field(() => String) meow!: string;
+    }
+    @ObjectType()
+    class Cow {
+      @Field(() => String) moo!: string;
+    }
+    let typesCalls = 0;
+    const Pet = defineUnion({
+      name: 'Pet',
+      types: () => {
+        typesCalls++;
+        return [Cat, Cow];
+      },
+    });
+    let count = 2;
+    @Resolver()
+    class Pets {
+      @Query(() => [Pet]) pets() {
+        return Array.from({ length: count }, (_, i) =>
+          i % 2 === 0
+            ? Object.assign(new Cat(), { meow: 'm' })
+            : Object.assign(new Cow(), { moo: 'o' }),
+        );
+      }
+    }
+    @Module({ providers: [Pets] })
+    class PetModule {}
+    s = await startGraphQL([PetModule]);
+    const query = '{ pets { __typename } }';
+    expect((await s.app.graphql(query)).data).toEqual({
+      pets: [{ __typename: 'Cat' }, { __typename: 'Cow' }],
+    });
+    const before = typesCalls;
+    count = 60;
+    expect((await s.app.graphql(query)).errors).toBeUndefined();
+    expect(typesCalls).toBe(before);
   });
 });

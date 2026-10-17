@@ -28,12 +28,25 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Installs the version in package.json `packageManager`. The action ignores the +sha512
+      # suffix (corepack verifies it), so check at least that the expected version arrived.
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - name: Check pnpm version
+        run: |
+          want="$(jq -r .packageManager package.json | sed -E 's/^pnpm@([^+]+).*/\1/')"
+          if [ "$(pnpm --version)" != "$want" ]; then
+            echo "::error::pnpm is $(pnpm --version), expected $want"; exit 1
+          fi
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           package-manager-cache: false
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
+      - name: Check Node version
+        run: |
+          if [ "$(node --version)" != "v$NODE_VERSION" ]; then
+            echo "::error::node is $(node --version), expected v$NODE_VERSION"; exit 1
+          fi
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: ${{ env.BUN_VERSION }}
@@ -43,16 +56,19 @@ jobs:
             echo "::error::bun is $(bun --revision), expected $BUN_REVISION"; exit 1
           fi
       - run: pnpm install --frozen-lockfile
-      # Snippets are typechecked against the packages; content tests check links, snippet
-      # includes and that every package export is documented; the build fails on any broken
-      # internal link or #fragment.
-      - run: pnpm typecheck
+      # Snippets are typechecked against the packages' sources (the rest of `pnpm typecheck` runs
+      # in ci.yml); content tests check links, snippet includes and that every package export is
+      # documented; the build fails on any broken internal link or #fragment.
+      - name: Typecheck snippets
+        run: pnpm exec tsc -p site/tsconfig.snippets.json
       - run: pnpm --filter @knead-js/docs check
       - run: pnpm --filter @knead-js/docs test
       - run: pnpm --filter @knead-js/docs build
         env:
           BASE_PATH: /${{ github.event.repository.name }}
-      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+      # Only runs that can deploy need the Pages artifact; pull requests just build.
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: site/build
 

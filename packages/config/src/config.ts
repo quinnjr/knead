@@ -1,5 +1,11 @@
 const INSPECT = Symbol.for('nodejs.util.inspect.custom');
 
+/**
+ * Freezes `value` and, recursively, the values of its own enumerable properties (cycles are
+ * handled). Plain objects, arrays and class instances end up immutable; the internal contents of
+ * a Map, Set or Date (for example from a schema transform) are not properties, so they stay
+ * mutable through the object's own methods.
+ */
 function deepFreeze<V>(value: V, seen = new WeakSet<object>()): V {
   if (value !== null && typeof value === 'object' && !seen.has(value)) {
     seen.add(value);
@@ -9,7 +15,10 @@ function deepFreeze<V>(value: V, seen = new WeakSet<object>()): V {
   return value;
 }
 
-/** Validated configuration. Never reveals values through JSON or inspection. */
+/**
+ * Validated configuration, deep-frozen (see deepFreeze: Map, Set and Date contents are not frozen).
+ * Never reveals values through JSON or inspection.
+ */
 export class Config<T> {
   readonly #data: Readonly<T>;
 

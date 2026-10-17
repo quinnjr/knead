@@ -1,4 +1,4 @@
-import { defaultRedisUrl, plaintextRedisHost } from '@knead-js/core';
+import { ConsoleLogger, defaultRedisUrl, plaintextRedisHost } from '@knead-js/core';
 import { RedisClient } from 'bun';
 import { ScheduleConfigError } from './errors.js';
 import { assertLockTtl, type ScheduleLockStore } from './lock-store.js';
@@ -18,7 +18,10 @@ export interface RedisLockStoreOptions {
    * `valkey://` URL to a non-loopback host. Without it, that only logs a warning. Default false.
    */
   requireTls?: boolean;
-  /** Where warnings go. Default: console. */
+  /**
+   * Where warnings go. Default: a `ConsoleLogger` (the store is built outside dependency
+   * injection, so it cannot reach the application's LOGGER; pass it here).
+   */
   logger?: { warn(message: string): void };
   /**
    * Milliseconds an acquire() waits for Redis before failing; the firing is then skipped and the
@@ -58,7 +61,7 @@ export class RedisLockStore implements ScheduleLockStore {
         `RedisLockStore connects to ${remote} over plaintext redis://, so credentials cross the ` +
         'network unencrypted. Use rediss:// (TLS) with an ACL user.';
       if (options.requireTls) throw new ScheduleConfigError(problem);
-      (options.logger ?? console).warn(`[knead:schedule] ${problem}`);
+      (options.logger ?? new ConsoleLogger()).warn(`[knead:schedule] ${problem}`);
     }
     this.#owned = options.client === undefined;
     // Without the offline queue a timed-out SET is never sent later, after the firing was

@@ -1,6 +1,7 @@
 import {
   type DynamicModule,
   inject,
+  KneadError,
   Module,
   type ModuleImport,
   type Provider,
@@ -16,6 +17,20 @@ export interface PrismaModuleAsyncOptions {
   useFactory: () => PrismaModuleOptions | Promise<PrismaModuleOptions>;
 }
 
+/** Checks the shape forRootAsync() needs; the factory's result is validated at bootstrap. */
+function assertAsyncOptions(options: unknown): asserts options is PrismaModuleAsyncOptions {
+  if (typeof options !== 'object' || options === null) {
+    throw new KneadError('PrismaModule.forRootAsync() options must be an object.');
+  }
+  const { useFactory, imports } = options as { useFactory?: unknown; imports?: unknown };
+  if (typeof useFactory !== 'function') {
+    throw new KneadError('PrismaModule.forRootAsync() `useFactory` must be a function.');
+  }
+  if (imports !== undefined && !Array.isArray(imports)) {
+    throw new KneadError('PrismaModule.forRootAsync() `imports` must be an array.');
+  }
+}
+
 @Module({})
 export class PrismaModule {
   static forRoot(options: PrismaModuleOptions): DynamicModule {
@@ -24,6 +39,7 @@ export class PrismaModule {
   }
 
   static forRootAsync(options: PrismaModuleAsyncOptions): DynamicModule {
+    assertAsyncOptions(options);
     return PrismaModule.#define(
       [
         {

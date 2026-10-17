@@ -71,7 +71,7 @@ post-validation guards:
 | `headers` | `StandardSchemaV1` | Schema for `ctx.headers`. |
 | `body` | `StandardSchemaV1` | Schema for the parsed body. |
 | `authorize` | `GuardRef[]` | Guards that run after validation and see the validated input. |
-| `status` | `number` | Status code of a successful response. Default `200`, or `204` when the handler returns `undefined`. |
+| `status` | `number` | Status code of a successful response. Default `200`, or `204` when the handler returns `undefined`. An integer from 200 to 599, otherwise `listen()` throws `HttpConfigError`. With `204`, `205` or `304` a returned value is dropped (a returned stream is cancelled). |
 
 ## Paths and parameters
 
@@ -160,7 +160,7 @@ Whatever the handler returns, or resolves to if it is async, becomes the respons
 | a `string` | `text/plain; charset=utf-8` |
 | a `Blob` (including `Bun.file()`) | the bytes, with the Blob's own `type` as `Content-Type`, or `application/octet-stream` when it has none |
 | a `ReadableStream`, `ArrayBuffer` or typed array | the bytes, as `application/octet-stream` |
-| a `Response` | sent as is (see below) |
+| a `Response` | its own status, body and headers, plus the headers you set (see below) |
 | anything else, including `null` | `JSON.stringify(value)` as `application/json; charset=utf-8` |
 
 <<< http/responses.ts#values
@@ -187,7 +187,8 @@ A `Response` you return is sent with its own status, headers and body: the `stat
 `ctx.res.status` are ignored, and `nosniff` is not added. Headers on `ctx.res.headers` are copied
 onto it only where the `Response` does not already have them, except `Set-Cookie`, which is
 appended. When the `Response` has immutable headers (as `Response.redirect()` does), Knead copies
-it to add them.
+it to add them. When `listen({ defaultCacheControl })` is set and the `Response` has no
+`Cache-Control`, that value is added too.
 
 ## Route metadata
 
