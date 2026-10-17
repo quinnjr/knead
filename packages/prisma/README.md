@@ -2,7 +2,7 @@
 
 Prisma 7 integration for Knead: `PrismaModule.forRoot()` / `forRootAsync()`, an injectable `PrismaService` whose `db` joins the ambient transaction, `TransactionHost` and `@Transactional()` for request-spanning transactions without passing a client around, `@knead-js/prisma/http` to answer Prisma errors with problem responses, and `@knead-js/prisma/testing` for `withRollback`. The package has no runtime dependencies and never imports `@prisma/client`, not even its types: the generated client lives in your project, so you register its type once and the library stays structural.
 
-Requires Bun >= 1.4.3. Older Bun skips `@Transactional`'s initializer when another decorated class follows in the same scope, so the decorated method would silently run without a transaction. `@prisma/client` ^7 is an optional peer dependency (you need it to have a client at all); `@knead-js/http` is an optional peer, needed only for `@knead-js/prisma/http`.
+Requires Bun >= 1.4.3. Older Bun skips `@Transactional`'s initializer when another decorated class follows in the same scope; calling the decorated method then rejects with a `KneadError` that names this requirement, rather than running without a transaction. `@prisma/client` ^7 is an optional peer dependency (you need it to have a client at all); `@knead-js/http` is an optional peer, needed only for `@knead-js/prisma/http`.
 
 ## Setup
 
@@ -84,7 +84,7 @@ class OrderService {
 }
 ```
 
-The class must be built by the container: the decorator takes `TransactionHost` from `inject()` while the instance is constructed, so `new OrderService()` throws `InjectionContextError` instead of quietly running without a transaction. It applies to methods that return a `Promise`; a synchronous method is a type error.
+The class must be built by the container: the decorator takes `TransactionHost` from `inject()` while the instance is constructed, so `new OrderService()` throws `InjectionContextError` instead of quietly running without a transaction. It applies to instance methods that return a `Promise`; a synchronous method is a type error. Decorating a static method, or passing a `propagation` or `isolationLevel` that is not one of the values listed here, is a `KneadError` when the class is defined; `run()` likewise rejects with a `KneadError` for an unknown `propagation`.
 
 Propagation: `'required'` (the default) joins the active transaction, and the inner call's options are ignored (in development a mismatch logs a warning through `LOGGER`). A joined run that rejects marks the shared transaction rollback-only: the rejection reaches the inner caller unchanged, but if the owning `run()` then resolves anyway (because it caught that rejection), the transaction is rolled back rather than committed and the owning `run()` rejects with a `KneadError` (`transaction marked rollback-only by an inner failure`) whose `cause` is the first inner rejection. Catching an inner failure therefore cannot commit half of the work; use `'requiresNew'` for work whose failure the outer transaction should survive. `'requiresNew'` always opens a separate transaction on another connection. That needs a connection pool of at least 2, and it can deadlock against the outer transaction when both touch the same rows, because the outer one holds its locks while the inner one waits for them. Keep `requiresNew` for work that must commit independently, such as audit records.
 

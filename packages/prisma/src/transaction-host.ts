@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { DEVELOPMENT, inject, KneadError, LOGGER } from '@knead-js/core';
 import { PRISMA_CLIENT } from './tokens.js';
-import type { PrismaLike, TransactionOptions, TxClient } from './types.js';
+import type { IsolationLevel, PrismaLike, TransactionOptions, TxClient } from './types.js';
 
 export type Propagation = 'required' | 'requiresNew';
 
@@ -27,6 +27,33 @@ interface TxFrame {
 
 const OPTION_KEYS = ['isolationLevel', 'timeout', 'maxWait'] as const;
 
+const PROPAGATIONS: ReadonlySet<unknown> = new Set<Propagation>(['required', 'requiresNew']);
+const ISOLATION_LEVELS: ReadonlySet<unknown> = new Set<IsolationLevel>([
+  'ReadUncommitted',
+  'ReadCommitted',
+  'RepeatableRead',
+  'Serializable',
+  'Snapshot',
+]);
+
+/** Throws a KneadError unless `propagation` is undefined, `'required'` or `'requiresNew'`. */
+export function assertPropagation(propagation: unknown): void {
+  if (propagation !== undefined && !PROPAGATIONS.has(propagation)) {
+    throw new KneadError(
+      `TransactionHost: unknown propagation ${JSON.stringify(propagation)}; use 'required' or 'requiresNew'.`,
+    );
+  }
+}
+
+/** Throws a KneadError unless `isolationLevel` is undefined or a Prisma isolation level. */
+export function assertIsolationLevel(isolationLevel: unknown): void {
+  if (isolationLevel !== undefined && !ISOLATION_LEVELS.has(isolationLevel)) {
+    throw new KneadError(
+      `TransactionHost: unknown isolationLevel ${JSON.stringify(isolationLevel)}; use one of ${[...ISOLATION_LEVELS].join(', ')}.`,
+    );
+  }
+}
+
 /** Runs work inside an ambient Prisma interactive transaction. One per application. */
 export class TransactionHost {
   readonly #als = new AsyncLocalStorage<TxFrame>();
@@ -42,6 +69,11 @@ export class TransactionHost {
    * with a KneadError whose `cause` is the inner rejection.
    */
   run<R>(fn: () => Promise<R>, options: RunOptions = {}): Promise<R> {
+    try {
+      assertPropagation(options.propagation);
+    } catch (error) {
+      return Promise.reject(error);
+    }
     const frame = this.#open();
     const txOptions = pick(options);
     if (frame && options.propagation !== 'requiresNew') {

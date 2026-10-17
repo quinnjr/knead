@@ -85,9 +85,11 @@ describe('TransactionHost', () => {
     const inner = new Error('inner');
     const error = await host
       .run(async () => {
-        await host.run(async () => {
-          throw inner;
-        }).catch(() => {});
+        await host
+          .run(async () => {
+            throw inner;
+          })
+          .catch(() => {});
         return 'swallowed';
       })
       .then(
@@ -168,6 +170,17 @@ describe('TransactionHost', () => {
       expect(txId(prisma)).toBe(outer);
     });
     expect(fake.transactions).toHaveLength(2);
+    await ctx.close();
+  });
+
+  test('run rejects an unknown propagation with a KneadError', async () => {
+    const { fake, ctx, host } = await setup();
+    for (const propagation of ['nested', 'REQUIRED', 1]) {
+      await expect(host.run(async () => 1, { propagation } as never)).rejects.toBeInstanceOf(
+        KneadError,
+      );
+    }
+    expect(fake.transactions).toHaveLength(0);
     await ctx.close();
   });
 
@@ -306,5 +319,80 @@ describe('@Transactional', () => {
       async work(): Promise<void> {}
     }
     expect(() => new Plain()).toThrow(InjectionContextError);
+  });
+
+  test('@Transactional rejects static methods at decoration', () => {
+    expect(() => {
+      class Static {
+        @Transactional()
+        static async work(): Promise<void> {}
+      }
+      return Static;
+    }).toThrow(KneadError);
+    expect(() => {
+      class Static {
+        @Transactional()
+        static async work(): Promise<void> {}
+      }
+      return Static;
+    }).toThrow('@Transactional cannot decorate static methods');
+  });
+
+  test('@Transactional validates propagation and isolationLevel at decoration', () => {
+    const bad = [{ propagation: 'nested' }, { isolationLevel: 'Chaos' }, { propagation: 1 }];
+    for (const options of bad) {
+      expect(() => {
+        class Bad {
+          @Transactional(options as never)
+          async work(): Promise<void> {}
+        }
+        return Bad;
+      }).toThrow(KneadError);
+    }
+    expect(() => {
+      class Good {
+        @Transactional({ propagation: 'required', isolationLevel: 'Snapshot' })
+        async work(): Promise<void> {}
+      }
+      return Good;
+    }).not.toThrow();
+  });
+
+  test('a missing TransactionHost is a KneadError naming Bun and DI construction', async () => {
+    class Users {
+      @Transactional()
+      async create(): Promise<number> {
+        return 1;
+      }
+    }
+    // An instance whose initializers never ran (what Bun < 1.4.3 can produce).
+    const orphan = Object.create(Users.prototype) as Users;
+    const error = await orphan.create().then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(KneadError);
+    expect((error as KneadError).message).toContain('Bun >= 1.4.3');
+    expect((error as KneadError).message).toContain('DI container');
+  });
+
+  test('a rejecting @Transactional method rolls back and rethrows the same error', async () => {
+    const boom = new Error('boom');
+    class Users {
+      @Transactional()
+      async create(): Promise<never> {
+        throw boom;
+      }
+    }
+    @Module({ providers: [Users] })
+    class AppModule {}
+    const fake = createFakeClient();
+    const ctx = await ApplicationContext.create(
+      { module: AppModule, imports: [PrismaModule.forRoot({ client: () => fake })] },
+      { development: false },
+    );
+    await expect(ctx.get(Users).create()).rejects.toBe(boom);
+    expect(fake.transactions.map((t) => t.outcome)).toEqual(['rollback']);
+    await ctx.close();
   });
 });
