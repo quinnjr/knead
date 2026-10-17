@@ -14,11 +14,13 @@ injection, and is secure by default.
 |---|---|---|
 | `packages/core` | `@knead-js/core` | DI container, modules, lifecycle, metadata |
 | `packages/http` | `@knead-js/http` | `Bun.serve` adapter, routing, pipeline, guards, WebSocket registry, logger |
+| `packages/config` | `@knead-js/config` | Typed, validated config from env vars, async loaders and code |
 | `packages/cors` | `@knead-js/cors` | CORS |
 | `packages/rate-limit` | `@knead-js/rate-limit` | Rate limiting (memory and Redis stores) |
 | `packages/security-headers` | `@knead-js/security-headers` | CSP, HSTS and other headers |
 | `packages/sanitize` | `@knead-js/sanitize` | Allowlist HTML sanitization |
 | `packages/schedule` | `@knead-js/schedule` | Cron/interval/timeout jobs, `SchedulerRegistry`, memory and Redis lock stores |
+| `packages/prisma` | `@knead-js/prisma` | Prisma 7 integration: `PrismaModule`, ambient transactions, HTTP error mapping, `withRollback` |
 | `packages/graphql` | `@knead-js/graphql` | Code-first GraphQL on [Leaven](https://github.com/quinnjr/leaven) |
 | `packages/casl` | `@knead-js/casl` | [CASL](https://casl.js.org) authorization: permission catalog, token grants, REST and GraphQL guards |
 | `packages/testing` | `@knead-js/testing` | Test modules, overrides, real ephemeral servers |
@@ -58,6 +60,20 @@ docker run -d --rm -p 6390:6379 redis:7-alpine
 REDIS_URL=redis://localhost:6390 pnpm test
 REDIS_URL=redis://localhost:6390 pnpm --filter @knead-js/example-graphql-server smoke
 ```
+
+The Postgres suite of `@knead-js/prisma` skips unless `DATABASE_URL` is set. Run it before
+finishing changes to `packages/prisma`:
+
+```bash
+docker run -d --rm --name knead-prisma-pg -p 5433:5432 -e POSTGRES_PASSWORD=knead postgres:17-alpine
+DATABASE_URL=postgresql://postgres:knead@localhost:5433/postgres pnpm --filter @knead-js/prisma test:db
+```
+
+`test:db` uses `prisma db push --force-reset`, which Prisma refuses to run from AI agents without
+the user's consent. Agents should either ask the user to run it, or, on a freshly started
+container only, run `prisma generate` and a plain `prisma db push` with the fixture config
+(`--config test/fixtures/prisma.config.ts`), then `bun test`. Agents must never set
+`PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION` themselves.
 
 **Definition of done:** `pnpm lint && pnpm typecheck && pnpm test && pnpm clean && pnpm build &&
 pnpm check:pack`, plus the smoke script, plus the Redis runs above when relevant, all green.

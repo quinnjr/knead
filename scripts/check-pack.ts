@@ -23,6 +23,10 @@ const run = (cmd: string[], cwd: string) => {
 };
 
 const required = ['LICENSE-MIT', 'LICENSE-APACHE', 'README.md', 'dist/index.js', 'dist/index.d.ts'];
+// Subpath entry points shipped by individual packages.
+const requiredByPackage: Record<string, string[]> = {
+  '@knead-js/prisma': ['dist/http/index.js', 'dist/testing/index.js'],
+};
 const forbidden = [/\.map$/, /\.tsbuildinfo$/, /\/src\//, /\/test\//];
 const problems: string[] = [];
 const tmp = mkdtempSync(join(tmpdir(), 'knead-pack-'));
@@ -52,7 +56,7 @@ try {
         if (forbidden.some((re) => re.test(`/${e}`)))
           problems.push(`${label}: forbidden entry ${e}`);
       }
-      for (const r of required) {
+      for (const r of [...required, ...(requiredByPackage[label] ?? [])]) {
         if (!entries.includes(r)) problems.push(`${label}: missing ${r}`);
       }
       const packed = run(['tar', 'xzf', tarball, '-O', 'package/package.json'], tmp).stdout;
@@ -186,6 +190,8 @@ import { inject, Module } from '@knead-js/core';
 import { CorsModule } from '@knead-js/cors';
 import { Field, GraphQLModule, ID, ObjectType, Query, Resolver, type ResolverCtx } from '@knead-js/graphql';
 import { Controller, type Ctx, Get, KneadFactory, MemoryLogger, UseGuards } from '@knead-js/http';
+import { PrismaModule } from '@knead-js/prisma';
+import { toHttpException } from '@knead-js/prisma/http';
 import { RateLimitModule } from '@knead-js/rate-limit';
 import { sanitize, type SanitizePolicy } from '@knead-js/sanitize';
 import { Interval, ScheduleModule, SchedulerRegistry } from '@knead-js/schedule';
@@ -229,6 +235,14 @@ class Greeting {
   @Field(() => String) text!: string;
 }
 
+const fakePrisma = {
+  async $connect() {},
+  async $disconnect() {},
+  async $transaction<R>(fn: (tx: object) => Promise<R>): Promise<R> {
+    return fn({});
+  },
+};
+
 class Ticker {
   ticks = 0;
 
@@ -265,6 +279,7 @@ class GreetingResolver {
       },
     }),
     ScheduleModule.forRoot(),
+    PrismaModule.forRoot({ instance: fakePrisma }),
   ],
   controllers: [GreetController, SecretController],
   providers: [Greeter, GreetingResolver, Ticker],
@@ -304,6 +319,7 @@ try {
     (await secret()).status === 401,
     app.get(Ticker).ticks > 0,
     app.get(SchedulerRegistry).get('Ticker.tick')?.state === 'scheduled',
+    toHttpException(new Error('not prisma')) === undefined,
   ];
   if (checks.includes(false)) throw new Error(\`checks failed: \${JSON.stringify(checks)}\`);
 } finally {
