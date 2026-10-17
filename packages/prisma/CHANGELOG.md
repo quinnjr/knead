@@ -1,5 +1,13 @@
 # @knead-js/prisma
 
+## 0.2.1
+
+### Patch Changes
+
+- d0fcac9: Documents that `@prisma/adapter-pg` 7.10 and later report a violated unique index by name (`constraint.index`) rather than by its fields, so in development a Postgres unique violation's problem response has `prismaCode` but no `fields`. Tested against Prisma 7.10.1.
+- @knead-js/core@0.2.1
+  - @knead-js/http@0.2.1
+
 ## 0.2.0
 
 ### Minor Changes

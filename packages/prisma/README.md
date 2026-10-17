@@ -247,7 +247,8 @@ Security trade-offs:
   handling and carry only `type`, `title`, `status`, `instance` and a `correlationId` that matches
   the logged error, so the 503 `detail` is dropped too.
 - In development, the built-in mappings add `prismaCode` and, when the error's metadata names the
-  constraint's fields, `fields` (field names only, never values).
+  constraint's fields, `fields` (field names only, never values). `@prisma/adapter-pg` 7.10+
+  names the violated unique index instead, so Postgres unique violations carry no `fields`.
 - Errors are recognized by exact `name`, not `instanceof`, so a client generated into another copy
   or realm still matches, and no runtime import of `@prisma/client` is needed.
 
