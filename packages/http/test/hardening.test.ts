@@ -186,6 +186,24 @@ describe('route wildcards', () => {
     await expect(start(M)).rejects.toThrow(HttpConfigError);
   });
 
+  test.each(['/a/*/b', '/a*', '/a/b*c'])(
+    'a * that is not the whole last segment (%s) is a configuration error, since Bun never matches it',
+    async (path) => {
+      @Controller('/files')
+      class Files {
+        @Get(path)
+        get() {
+          return 'ok';
+        }
+      }
+      @Module({ controllers: [Files] })
+      class M {}
+      await expect(start(M)).rejects.toThrow(
+        `Route /files${path} has a "*" that is not the whole last segment (Files.get); Bun only matches a trailing "/*".`,
+      );
+    },
+  );
+
   test('a single trailing * is fine', async () => {
     @Controller('/files')
     class Files {

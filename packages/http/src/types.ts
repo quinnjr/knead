@@ -46,7 +46,10 @@ export interface Ctx<I extends CtxInput = {}> {
   readonly ip: string | undefined;
   /** TLS listener, or a trusted proxy reported `X-Forwarded-Proto: https`. */
   readonly secure: boolean;
-  /** Matched route; `null` for unmatched requests handled by the fallback and for upgrades. */
+  /**
+   * Matched route; `null` for unmatched requests handled by the fallback. On a WebSocket upgrade
+   * it is the GET route registered on the same path, or `null` when there is none.
+   */
   readonly route: RouteInfo | null;
   /**
    * The matched route's metadata (`ctx.route?.meta`), or an empty frozen object. GraphQL resolver

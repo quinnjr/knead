@@ -93,6 +93,10 @@ export interface ListenOptions {
   validation?: ValidationOptions;
   /** Largest accepted request body in bytes; larger bodies get 413. Default 1 MiB. */
   maxRequestBodySize?: number;
+  /**
+   * Seconds a connection may stay idle before Bun closes it; passed to Bun.serve only when set,
+   * so Bun's default (10s) applies otherwise. WebSocket idle time is `websocket.idleTimeout`.
+   */
   idleTimeout?: number;
   /**
    * Max time close() waits for in-flight requests before forcing connections closed, and for a
