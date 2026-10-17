@@ -843,7 +843,8 @@ describe('http: exception classes', () => {
     const error = new PaymentRequiredException('Pay');
     expect(error.name).toBe('PaymentRequiredException');
     expect(error.message).toBe('Pay');
-    expect(new HttpException(418).title).toBe('Error');
+    expect(new HttpException(502).title).toBe('Bad Gateway');
+    expect(new HttpException(499).title).toBe('Error');
     expect(() => new HttpException(302)).toThrow(
       'HttpException status must be an integer between 400 and 599, got 302',
     );
