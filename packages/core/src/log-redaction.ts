@@ -9,10 +9,72 @@ const HOST_THEN_PATH = /[^:/@\s"'<>]+(?::\d*)?\//y;
 const USERINFO_WINDOW = 1024;
 /** Longest scheme recognized, in characters. */
 const MAX_SCHEME = 32;
-/** Key words that mark a `key=value` pair as secret, anywhere in the (lowercased) key. */
-const SECRET_KEY = /password|passwd|pwd|secret|token|apikey|api_key|accountkey/i;
-/** Longest key looked at before an `=`, in characters. */
+/** Keys whose values are replaced with `***` wherever they appear, whatever the value. */
+const SENSITIVE_KEYS = new Set([
+  'authorization',
+  'cookie',
+  'set-cookie',
+  'password',
+  'passwd',
+  'pwd',
+  'secret',
+  'token',
+  'apikey',
+  'api_key',
+  'accesstoken',
+  'refreshtoken',
+  'accountkey',
+  'privatekey',
+  'connectionstring',
+]);
+/**
+ * Keys sensitive as a whole (not as a word inside a longer key, so `compass` and
+ * `SharedAccessKeyName` stay readable), once lowercased and stripped of `-` and `_`.
+ */
+const SECRET_EXACT_KEYS = new Set([
+  'pass',
+  'passphrase',
+  'jwt',
+  'sig',
+  'accesskey',
+  'sharedaccesskey',
+]);
+/**
+ * Words that make any key containing them sensitive, once lowercased and stripped of `-` and `_`
+ * (`db_password`, `x-api-key`, `clientSecret`, `AWS_SECRET_ACCESS_KEY`, `sessionId`). Such object
+ * keys keep number and boolean values (`maxTokens: 100`); every other value becomes `***`.
+ */
+const SENSITIVE_WORDS =
+  /password|passwd|pwd|secret|token|apikey|accountkey|privatekey|connectionstring|authorization|cookie|credential|sessionid/;
+
+/** `key` lowercased, without `-` and `_`. */
+function normalizeKey(key: string): string {
+  return key.toLowerCase().replace(/[-_]/g, '');
+}
+
+/**
+ * `'exact'` for a SENSITIVE_KEYS or SECRET_EXACT_KEYS key, `'word'` for one containing a
+ * SENSITIVE_WORDS word.
+ */
+function sensitivity(key: string): 'exact' | 'word' | undefined {
+  const lower = key.toLowerCase();
+  if (SENSITIVE_KEYS.has(lower)) return 'exact';
+  // Keys longer than this are not names; skip the scan rather than test arbitrary text.
+  if (lower.length > 128) return undefined;
+  const normalized = normalizeKey(lower);
+  if (SECRET_EXACT_KEYS.has(normalized)) return 'exact';
+  return SENSITIVE_WORDS.test(normalized) ? 'word' : undefined;
+}
+
+/** Whether the value of a `key=value` or `key: value` pair in text is a credential. */
+function isSecretKey(key: string): boolean {
+  return sensitivity(key) !== undefined;
+}
+
+/** Longest key looked at before an `=` or `:`, in characters. */
 const MAX_KEY_LENGTH = 64;
+/** Most blanks skipped between a key and its `:`, and before a `key:` to find the line start. */
+const MAX_BLANKS = 64;
 
 /** `[A-Za-z0-9_.-]`: the characters of a key in `key=value`. */
 function isKeyChar(code: number): boolean {
@@ -26,34 +88,129 @@ function isKeyChar(code: number): boolean {
   );
 }
 
-/** `&`, `;` and whitespace end a value. */
+/** A space or a tab. */
+function isBlank(code: number): boolean {
+  return code === 0x20 || code === 0x09;
+}
+
+/** `&`, `;` and whitespace end a `key=value` value. */
 const VALUE_END = /[&;\s]/g;
+/** `&`, `;`, whitespace, `,`, `}` and `]` end an unquoted `key: value` value. */
+const COLON_VALUE_END = /[&;\s,}\]]/g;
+/** A line break ends the value of an Authorization or Cookie header line. */
+const LINE_END = /[\r\n]/g;
+/** The scheme of an Authorization header value (`Bearer`, `Token`, ...), kept readable. */
+const AUTH_SCHEME_PREFIX = /[A-Za-z][A-Za-z0-9._-]*[ \t]+(?=[^\s])/y;
+/** Header names whose `name: value` line value is a credential whatever its shape. */
+const HEADER_KEYS = new Set(['authorization', 'proxy-authorization', 'cookie', 'set-cookie']);
 
 /**
- * Redacts the values of `key=value` pairs whose key contains a secret key word, case-insensitive
- * and with any prefix or suffix (`access_token=`, `client_secret=`, `DB_PASSWORD=`,
- * `PGPASSWORD=`). Every `=` is found with indexOf and its key read backwards (at most 64
- * characters), so the work is linear.
+ * The index of the quote closing a value opened by `quote` just before `from`, honouring
+ * backslash escapes, or -1. `noClose` holds, per quote, a position after which no closing quote
+ * exists (a scan from there failed, and a value never opens on an escaped quote), so repeated
+ * unterminated values are not rescanned and the work stays linear.
+ */
+function closingQuote(
+  text: string,
+  from: number,
+  quote: number,
+  noClose: Map<number, number>,
+): number {
+  if (from >= (noClose.get(quote) ?? text.length + 1)) return -1;
+  for (let i = from; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code === 0x5c) i++;
+    else if (code === quote) return i;
+  }
+  noClose.set(quote, from);
+  return -1;
+}
+
+/** The quote (`"` or `'`) at `index`, or 0. */
+function quoteAt(text: string, index: number): number {
+  const code = text.charCodeAt(index);
+  return code === 0x22 || code === 0x27 ? code : 0;
+}
+
+/**
+ * Redacts the values of `key=value` and `key: value` pairs whose key is secret (see
+ * isSecretKey), case-insensitive and with any prefix or suffix (`access_token=`,
+ * `client_secret=`, `DB_PASSWORD=`, `x-api-key=`, `{"password":"x"}`, `password: x`). A quoted
+ * value runs to its closing quote (`password="hunter 2"`); the value of an `Authorization:` or
+ * `Cookie:` line runs to the end of the line, keeping an Authorization scheme. An unquoted
+ * `key:` counts only at the start of a line or after `{` or `,` (YAML, header lines, inspected
+ * objects), so prose such as "Invalid token: expired" stays readable. Every separator is found
+ * with indexOf and its key read backwards (at most 64 characters), so the work is linear.
  */
 function redactSecretPairs(text: string): string {
   let out = '';
   let copied = 0;
-  for (let eq = text.indexOf('='); eq !== -1; ) {
-    let start = eq;
-    while (start > 0 && eq - start < MAX_KEY_LENGTH && isKeyChar(text.charCodeAt(start - 1)))
+  const noClose = new Map<number, number>();
+  let nextEq = text.indexOf('=');
+  let nextColon = text.indexOf(':');
+  let from = 0;
+  for (;;) {
+    if (nextEq !== -1 && nextEq < from) nextEq = text.indexOf('=', from);
+    if (nextColon !== -1 && nextColon < from) nextColon = text.indexOf(':', from);
+    const sep = nextEq === -1 ? nextColon : nextColon === -1 ? nextEq : Math.min(nextEq, nextColon);
+    if (sep === -1) break;
+    from = sep + 1;
+    const colon = sep === nextColon;
+    let keyEnd = sep;
+    if (colon) {
+      while (keyEnd > 0 && sep - keyEnd < MAX_BLANKS && isBlank(text.charCodeAt(keyEnd - 1)))
+        keyEnd--;
+    }
+    const keyQuote = keyEnd > 0 ? quoteAt(text, keyEnd - 1) : 0;
+    if (keyQuote !== 0) keyEnd--;
+    let start = keyEnd;
+    while (start > 0 && keyEnd - start < MAX_KEY_LENGTH && isKeyChar(text.charCodeAt(start - 1)))
       start--;
-    let next = eq + 1;
-    // The shortest key word ('pwd') has 3 characters; shorter keys need no further look.
-    if (eq - start >= 3 && SECRET_KEY.test(text.slice(start, eq))) {
-      VALUE_END.lastIndex = eq + 1;
-      const end = VALUE_END.exec(text)?.index ?? text.length;
-      if (end > eq + 1) {
-        out += `${text.slice(copied, eq + 1)}***`;
-        copied = end;
-        next = end;
+    if (keyQuote !== 0 && (start === 0 || text.charCodeAt(start - 1) !== keyQuote)) continue;
+    // The shortest secret keys ('pwd', 'jwt', 'sig') have 3 characters.
+    if (keyEnd - start < 3) continue;
+    const key = text.slice(start, keyEnd);
+    if (!isSecretKey(key)) continue;
+    let header = false;
+    if (colon && keyQuote === 0) {
+      let before = start;
+      while (before > 0 && start - before < MAX_BLANKS && isBlank(text.charCodeAt(before - 1)))
+        before--;
+      const code = before === 0 ? 0x0a : text.charCodeAt(before - 1);
+      if (code !== 0x0a && code !== 0x0d && code !== 0x7b && code !== 0x2c) continue;
+      header = HEADER_KEYS.has(key.toLowerCase());
+    }
+    let value = sep + 1;
+    if (colon) {
+      // Each blank is skipped only after its own separator: still linear.
+      while (value < text.length && isBlank(text.charCodeAt(value))) value++;
+    }
+    let valueStart = value;
+    let end = -1;
+    const quote = quoteAt(text, value);
+    if (quote !== 0) {
+      const close = closingQuote(text, value + 1, quote, noClose);
+      if (close !== -1) {
+        valueStart = value + 1;
+        end = close;
       }
     }
-    eq = text.indexOf('=', next);
+    if (end === -1) {
+      const stop = header ? LINE_END : colon ? COLON_VALUE_END : VALUE_END;
+      stop.lastIndex = value;
+      end = stop.exec(text)?.index ?? text.length;
+      if (header && key.toLowerCase().endsWith('authorization')) {
+        AUTH_SCHEME_PREFIX.lastIndex = value;
+        if (AUTH_SCHEME_PREFIX.test(text) && AUTH_SCHEME_PREFIX.lastIndex < end) {
+          valueStart = AUTH_SCHEME_PREFIX.lastIndex;
+        }
+      }
+    }
+    if (end > valueStart) {
+      out += `${text.slice(copied, valueStart)}***`;
+      copied = end;
+      from = end;
+    } else from = Math.max(from, value);
   }
   return copied === 0 ? text : out + text.slice(copied);
 }
@@ -71,6 +228,12 @@ const AUTH_HINT = /bearer|basic/i;
 /** Whitespace, quotes and angle brackets end a URL token. */
 const STOP = /[\s"'<>]/g;
 
+/** `[A-Za-z]`. */
+function isLetter(code: number): boolean {
+  const lower = code | 0x20;
+  return lower >= 0x61 && lower <= 0x7a;
+}
+
 /** `[a-z0-9+.-]`, case-insensitive. */
 function isSchemeChar(code: number): boolean {
   const lower = code | 0x20;
@@ -85,8 +248,8 @@ function isSchemeChar(code: number): boolean {
 
 /**
  * Redacts URL userinfo. Every `://` is located with indexOf; its scheme is the run of scheme
- * characters before it (1 to 32, starting with a letter). Each step is bounded, so the work is
- * linear in the input length.
+ * characters before it (its last 32 at most), from its first letter. Each step is bounded, so the
+ * work is linear in the input length.
  */
 function redactUrls(text: string): string {
   if (!text.includes('@')) return text;
@@ -100,10 +263,12 @@ function redactUrls(text: string): string {
   for (let i = text.indexOf('://'); i !== -1; ) {
     let from = i + 1;
     let b = i;
-    while (b > 0 && i - b <= MAX_SCHEME && isSchemeChar(text.charCodeAt(b - 1))) b--;
+    while (b > 0 && i - b < MAX_SCHEME && isSchemeChar(text.charCodeAt(b - 1))) b--;
+    // A scheme starts with a letter: `-redis://` and `1redis://` are `redis://`, and a longer
+    // run keeps its last 32 characters.
+    while (b < i && !isLetter(text.charCodeAt(b))) b++;
     const length = i - b;
-    const first = text.charCodeAt(b) | 0x20;
-    if (length >= 1 && length <= MAX_SCHEME && first >= 0x61 && first <= 0x7a) {
+    if (length >= 1) {
       const start = i + 3;
       if (stop < start) {
         STOP.lastIndex = start;
@@ -138,9 +303,12 @@ function redactUrls(text: string): string {
 
 /**
  * Replaces credentials with `***`: URL userinfo (`redis://user:pass@host` becomes
- * `redis://***@host`), values of `key=value` pairs (query strings, connection strings, env
- * dumps) whose key contains password/passwd/pwd/secret/token/apikey/api_key/accountkey in any
- * case and with any prefix or suffix (`access_token=`, `DB_PASSWORD=`), and `Bearer`/`Basic`
+ * `redis://***@host`); values of `key=value` pairs (query strings, connection strings, env
+ * dumps) and of `"key":"value"` / `key: value` pairs (JSON, YAML, header lines) whose key is
+ * sensitive as for redactValue (a word such as password, secret, token, apikey, credential or
+ * sessionid in any case, with any prefix, suffix or `-`/`_` separators, or exactly pass,
+ * passphrase, jwt, sig, AccessKey or SharedAccessKey), a quoted value up to its closing quote;
+ * `Authorization:` and `Cookie:` line values whatever their scheme; and `Bearer`/`Basic`
  * credentials in any case. The userinfo runs to the LAST `@` within the first 1024
  * characters of the URL, since passwords often contain unencoded `@` or `/`. Only http(s) URLs
  * starting `host[:port]/` are exempt (an `@` there is in the path), and credential URLs nested
@@ -150,7 +318,7 @@ function redactUrls(text: string): string {
  */
 export function redactCredentials(text: string): string {
   let out = redactUrls(text);
-  if (out.includes('=')) out = redactSecretPairs(out);
+  if (out.includes('=') || out.includes(':')) out = redactSecretPairs(out);
   if (AUTH_HINT.test(out)) out = out.replace(AUTH_SCHEMES, '$1 ***');
   return out;
 }
@@ -158,41 +326,6 @@ export function redactCredentials(text: string): string {
 /** The error's own text: its stack (which starts with `Name: message`), or `Name: message`. */
 function errorText(error: Error): string {
   return error.stack?.includes(error.message) ? error.stack : `${error.name}: ${error.message}`;
-}
-
-/** Keys whose values are replaced with `***` wherever they appear, whatever the value. */
-const SENSITIVE_KEYS = new Set([
-  'authorization',
-  'cookie',
-  'set-cookie',
-  'password',
-  'passwd',
-  'pwd',
-  'secret',
-  'token',
-  'apikey',
-  'api_key',
-  'accesstoken',
-  'refreshtoken',
-  'accountkey',
-  'privatekey',
-  'connectionstring',
-]);
-/**
- * Words that make any key containing them sensitive, once lowercased and stripped of `-` and `_`
- * (`db_password`, `x-api-key`, `clientSecret`, `AWS_SECRET_ACCESS_KEY`, `sessionId`). Such keys
- * keep number and boolean values (`maxTokens: 100`); every other value becomes `***`.
- */
-const SENSITIVE_WORDS =
-  /password|passwd|pwd|secret|token|apikey|accountkey|privatekey|connectionstring|authorization|cookie|credential|sessionid/;
-
-/** `'exact'` for a SENSITIVE_KEYS key, `'word'` for one containing a SENSITIVE_WORDS word. */
-function sensitivity(key: string): 'exact' | 'word' | undefined {
-  const lower = key.toLowerCase();
-  if (SENSITIVE_KEYS.has(lower)) return 'exact';
-  // Keys longer than this are not names; skip the scan rather than test arbitrary text.
-  if (lower.length > 128) return undefined;
-  return SENSITIVE_WORDS.test(lower.replace(/[-_]/g, '')) ? 'word' : undefined;
 }
 
 function isRedactable(item: unknown, kind: 'exact' | 'word'): boolean {
@@ -277,11 +410,17 @@ function entriesOf(value: object): Record<string, unknown> | undefined {
 interface Walk {
   changed: boolean;
   readonly seen: WeakSet<object>;
+  /** Strings and objects walked so far (see MAX_NODES). */
+  nodes: number;
 }
+
+/** Most strings and objects one redactValue() call walks; the rest become `[Truncated]`. */
+const MAX_NODES = 20_000;
+const TRUNCATED = '[Truncated]';
 
 function ownProps(
   error: Error,
-  state: Walk = { changed: false, seen: new WeakSet() },
+  state: Walk = { changed: false, seen: new WeakSet(), nodes: 0 },
 ): [PropertyKey, unknown][] {
   const entries = readProps(error, state).filter(
     ([key]) => typeof key !== 'string' || !ERROR_TEXT_KEYS.has(key),
@@ -293,62 +432,104 @@ function ownProps(
   return entries;
 }
 
+/**
+ * Walks `view` in place of `value` (a class instance shown as its href, entries or fields) and
+ * returns the walked view only when something in it was redacted, else `value` itself.
+ */
+function walkAs(value: object, view: unknown, depth: number, state: Walk): unknown {
+  const outer = state.changed;
+  state.changed = false;
+  state.seen.add(value);
+  try {
+    const walked = walk(view, depth, state);
+    const changed = state.changed;
+    state.changed = outer || changed;
+    return changed ? walked : value;
+  } finally {
+    state.seen.delete(value);
+  }
+}
+
+/**
+ * What a class instance is walked as: a URL as its href, a Request or Response as its method or
+ * status, url and headers, a map-like object (see isMapLike) as its entries or its `toJSON()`
+ * string; `undefined` for any other instance, which is walked as its own properties.
+ */
+function viewOf(value: object): unknown {
+  if (value instanceof Request) {
+    return { method: value.method, url: value.url, headers: value.headers };
+  }
+  if (value instanceof Response) {
+    return { status: value.status, url: value.url, headers: value.headers };
+  }
+  if (!isMapLike(value)) return undefined;
+  const candidate = value as { entries?: unknown; toJSON?: unknown };
+  if (typeof candidate.entries !== 'function') {
+    const json = (candidate.toJSON as () => unknown).call(value);
+    if (typeof json === 'string') return json;
+  }
+  return entriesOf(value);
+}
+
 function walk(value: unknown, depth: number, state: Walk): unknown {
+  if (typeof value !== 'string' && (typeof value !== 'object' || value === null)) return value;
+  // Shared references are walked once per path: bound the total work on wide graphs.
+  if (++state.nodes > MAX_NODES) {
+    state.changed = true;
+    return TRUNCATED;
+  }
   if (typeof value === 'string') {
     const redacted = redactCredentials(value);
     if (redacted !== value) state.changed = true;
     return redacted;
   }
-  if (typeof value !== 'object' || value === null) return value;
   const isError = value instanceof Error;
   if (!isError && !Array.isArray(value) && !isPlainObject(value)) {
-    // Headers, Map and header-like objects (err.config.headers.Authorization): walked as
-    // their entries, and replaced only when something in them was redacted.
-    // Like plain objects, a map-like object in a cycle or past the depth limit is replaced, so
-    // its unwalked entries (a nested Authorization header) never reach the log.
-    let entries: Record<string, unknown> | undefined;
+    // Class instances: walked as a view (see viewOf) or as their own properties, and replaced
+    // only when something in them was redacted. Like plain objects, one in a cycle or past the
+    // depth limit is replaced, so its unwalked contents (a nested Authorization header) never
+    // reach the log; dates, binary data and instances without own properties are kept.
+    let view: unknown;
     try {
-      if (!isMapLike(value)) return value;
+      if (value instanceof Date || ArrayBuffer.isView(value) || value instanceof ArrayBuffer) {
+        return value;
+      }
       if (state.seen.has(value)) {
         state.changed = true;
         return '[Circular]';
       }
+      // A URL is a string: its userinfo is redacted at any depth.
+      if (value instanceof URL) return walkAs(value, value.href, depth, state);
       if (depth >= REDACT_DEPTH) {
+        const viewed = value instanceof Request || value instanceof Response || isMapLike(value);
+        if (!viewed && readProps(value, state).length === 0) return value;
         state.changed = true;
         return '[Object]';
       }
-      entries = entriesOf(value);
+      view = viewOf(value);
     } catch {
       state.changed = true;
       return UNREADABLE;
     }
-    if (entries === undefined) return value;
-    const outer = state.changed;
-    state.changed = false;
-    state.seen.add(value);
-    try {
-      const walked = walk(entries, depth, state);
-      const changed = state.changed;
-      state.changed = outer || changed;
-      return changed ? walked : value;
-    } finally {
-      state.seen.delete(value);
+    if (view !== undefined) return walkAs(value, view, depth, state);
+  } else {
+    if (state.seen.has(value)) {
+      state.changed = true;
+      return '[Circular]';
     }
-  }
-  if (state.seen.has(value)) {
-    state.changed = true;
-    return '[Circular]';
-  }
-  if (depth >= REDACT_DEPTH) {
-    state.changed = true;
-    return Array.isArray(value) ? '[Array]' : '[Object]';
+    if (depth >= REDACT_DEPTH) {
+      state.changed = true;
+      return Array.isArray(value) ? '[Array]' : '[Object]';
+    }
   }
   state.seen.add(value);
   try {
     if (Array.isArray(value)) return value.map((item) => walk(item, depth + 1, state));
-    // An Error tracks its own changes: it is replaced only when something in it was redacted.
+    // An Error or class instance tracks its own changes: it is replaced only when something in
+    // it was redacted.
+    const local = isError || !isPlainObject(value);
     const outer = state.changed;
-    if (isError) state.changed = false;
+    if (local) state.changed = false;
     const entries = isError ? ownProps(value, state) : readProps(value, state);
     const out: Record<PropertyKey, unknown> = isError
       ? {}
@@ -365,7 +546,12 @@ function walk(value: unknown, depth: number, state: Walk): unknown {
         state.changed = true;
       } else out[key] = walk(item, depth + 1, state);
     }
-    if (!isError) return out;
+    if (!local) return out;
+    if (!isError) {
+      const changed = state.changed;
+      state.changed = outer || changed;
+      return changed ? out : value;
+    }
     const result = redactError(value, out, depth, state);
     state.changed ||= outer;
     return result;
@@ -419,18 +605,23 @@ function redactError(error: Error, props: Record<string, unknown>, depth: number
 /**
  * A copy of `value` with credentials redacted, for logging: strings through redactCredentials;
  * plain objects, arrays and Error own properties (including `AggregateError.errors`) walked up
- * to 4 levels deep, with the values of sensitive keys (`authorization`, `cookie`, `password`,
- * `token`, `apikey`, ..., and any key containing such a word whatever its case or separators,
+ * to 4 levels deep, with the values of sensitive keys (`authorization`, `cookie`, `password`, `pass`,
+ * `jwt`, `sig`, `token`, `apikey`, ..., and any key containing such a word whatever its case or separators,
  * such as `db_password` or `x-api-key`) replaced by `***`, credentials in keys redacted too;
- * Headers, Maps and other objects with `entries()` or `toJSON()` are walked as their entries;
- * deeper values become `[Object]`/`[Array]` and cycles become `[Circular]`. Causes that are not
- * Errors are walked too. An Error that needed redacting, or whose cause chain is longer
- * than 16, becomes its redacted stack text. Other objects (class instances) are returned as is.
- * The original is never modified, and a value with nothing to redact is returned unchanged.
+ * a URL is walked as its href (and becomes that redacted string when it held credentials); a
+ * Request or Response as its method or status, url and headers; Headers, Maps and other objects
+ * with `entries()` or `toJSON()` as their entries (or as the string `toJSON()` returns); other
+ * class instances as their own enumerable properties, into a copy with the same prototype. Each
+ * of these is replaced only when something in it was redacted; dates and binary data are kept.
+ * Deeper values become `[Object]`/`[Array]` (an instance without own properties is kept), cycles
+ * become `[Circular]`, and past 20000 strings and objects walked the rest become `[Truncated]`.
+ * Causes that are not Errors are walked too. An Error that needed redacting, or whose cause chain
+ * is longer than 16, becomes its redacted stack text. The original is never modified, and a
+ * value with nothing to redact is returned unchanged.
  */
 export function redactValue(value: unknown): unknown {
   try {
-    const state: Walk = { changed: false, seen: new WeakSet() };
+    const state: Walk = { changed: false, seen: new WeakSet(), nodes: 0 };
     const result = walk(value, 0, state);
     return state.changed ? result : value;
   } catch (error) {

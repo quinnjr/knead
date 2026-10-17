@@ -54,6 +54,37 @@ describe('redactCredentials', () => {
     ['PGPASSWORD=pg1;PGHOST=db', 'PGPASSWORD=***;PGHOST=db'],
     ['x.Refresh-Token=r1', 'x.Refresh-Token=***'],
     ['note=fine total=3', 'note=fine total=3'],
+    // One vocabulary for key=value pairs and object keys, `-` and `_` ignored.
+    ['credential=c1&x=1', 'credential=***&x=1'],
+    ['sessionid=s1 privatekey=p1 private_key=p2', 'sessionid=*** privatekey=*** private_key=***'],
+    ['api-key=k1&x-api-key=k2&X_API_KEY=k3', 'api-key=***&x-api-key=***&X_API_KEY=***'],
+    [
+      'Endpoint=sb://ns.example/;SharedAccessKeyName=root;SharedAccessKey=k1=',
+      'Endpoint=sb://ns.example/;SharedAccessKeyName=root;SharedAccessKey=***',
+    ],
+    ['AccessKey=ak1;x=1', 'AccessKey=***;x=1'],
+    ['?sv=2022&sig=AbC%2F&se=1', '?sv=2022&sig=***&se=1'],
+    ['pass=p1 passphrase=p2 jwt=j1', 'pass=*** passphrase=*** jwt=***'],
+    ['compass=north', 'compass=north'],
+    // A scheme run that starts with a non-letter or is longer than 32 characters.
+    ['-redis://user:pass@host', '-redis://***@host'],
+    ['1redis://u:p@h', '1redis://***@h'],
+    [`${'a'.repeat(40)}redis://u:p@h`, `${'a'.repeat(40)}redis://***@h`],
+    // JSON- and header-shaped credentials.
+    ['{"password":"x","user":"u"}', '{"password":"***","user":"u"}'],
+    ['{"pwd": 123, "a": 1}', '{"pwd": ***, "a": 1}'],
+    ['{"token":"a\\"b","x":1}', '{"token":"***","x":1}'],
+    ["{ password: 'x y', ok: 1 }", "{ password: '***', ok: 1 }"],
+    ['password="hunter 2" user=u', 'password="***" user=u'],
+    ["secret='a b'", "secret='***'"],
+    ['Cookie: session=abc; theme=dark', 'Cookie: ***'],
+    ['GET /\r\nCookie: a=b\r\nAccept: x', 'GET /\r\nCookie: ***\r\nAccept: x'],
+    ['Authorization: Token abcd', 'Authorization: Token ***'],
+    ['authorization: s3cr3t', 'authorization: ***'],
+    ['  password: hunter2\n  user: u', '  password: ***\n  user: u'],
+    ['Invalid token: expired', 'Invalid token: expired'],
+    ['Missing Authorization: header', 'Missing Authorization: header'],
+    ['at 10:30 token:x', 'at 10:30 token:x'],
   ])('%s', (input, expected) => {
     expect(redactCredentials(input)).toBe(expected);
   });
@@ -79,6 +110,19 @@ describe('redactCredentials performance', () => {
     ['token='.repeat(MB / 6)],
     [`${'x'.repeat(MB - 1)}=`],
     ['bearer '.repeat(MB / 7)],
+    [':'.repeat(MB)],
+    ['"a":'.repeat(MB / 4)],
+    ['"password":"'.repeat(MB / 12)],
+    ['password="\\" '.repeat(MB / 13)],
+    [`password="${'\\"'.repeat(MB / 2)}`],
+    ["token='".repeat(MB / 7)],
+    ['\ntoken: '.repeat(MB / 8)],
+    ['Authorization: '.repeat(MB / 15)],
+    [`Cookie:${' '.repeat(MB)}`],
+    [`${' '.repeat(MB)}token:`],
+    ['{"token":'.repeat(MB / 9)],
+    [`${'-'.repeat(MB)}redis://u:p@h`],
+    ['-1redis://'.repeat(MB / 10)],
   ])('pathological input %#: 1 MB in well under 50 ms', (input) => {
     redactCredentials(input.slice(0, 1000)); // warm up the regex
     const started = performance.now();
@@ -316,10 +360,18 @@ describe('redactValue depth and cycles of map-like objects', () => {
     expect(out).toEqual({ authorization: '***', self: '[Circular]', url: 'redis://***@h' });
   });
 
-  test('a Date and other class instances at the depth limit stay as they are', () => {
-    const date = new Date(0);
-    const input = { a: { b: { c: { d: date } } } };
+  test('a Date and other instances without own properties at the depth limit stay as they are', () => {
+    class Empty {}
+    const input = { a: { b: { c: { d: new Date(0), e: new Empty() } } } };
     expect(redactValue(input)).toBe(input);
+  });
+
+  test('a class instance with own properties beyond the depth limit becomes [Object]', () => {
+    class Conn {
+      password = 'hunter2';
+    }
+    const out = redactValue({ a: { b: { c: { d: new Conn() } } } });
+    expect(out).toEqual({ a: { b: { c: { d: '[Object]' } } } });
   });
 });
 
@@ -347,5 +399,96 @@ describe('redactValue non-Error and aggregate causes', () => {
   test('a plain object cause with nothing to redact keeps the Error unchanged', () => {
     const error = new Error('boom', { cause: { code: 42 } });
     expect(redactValue(error)).toBe(error);
+  });
+});
+
+describe('redactValue class instances', () => {
+  test('a URL with userinfo becomes its redacted href', () => {
+    const out = redactValue({ u: new URL('redis://user:s3cret@host:6379/0') });
+    expect(out).toEqual({ u: 'redis://***@host:6379/0' });
+    const plain = { u: new URL('https://example.com/a') };
+    expect(redactValue(plain)).toBe(plain);
+  });
+
+  test('a Request or Response is walked as its method or status, url and headers', () => {
+    const request = new Request('https://api.example/x?token=t0k3n', {
+      method: 'POST',
+      headers: { authorization: 'Token abcdefghij', accept: 'json' },
+    });
+    const text = Bun.inspect(redactValue({ request }));
+    expect(text).not.toContain('abcdefghij');
+    expect(text).not.toContain('t0k3n');
+    expect(text).toContain('POST');
+    expect(text).toContain('accept');
+    const response = new Response(null, { headers: { 'set-cookie': 'sid=s3ssion' } });
+    expect(Bun.inspect(redactValue(response))).not.toContain('s3ssion');
+    const plain = { request: new Request('https://api.example/x') };
+    expect(redactValue(plain)).toBe(plain);
+  });
+
+  test('a toJSON() returning a string is walked as that string', () => {
+    class Dsn {
+      toJSON() {
+        return 'postgres://app:dsnsecret@db/app';
+      }
+    }
+    expect(redactValue({ dsn: new Dsn() })).toEqual({ dsn: 'postgres://***@db/app' });
+    class Safe {
+      toJSON() {
+        return 'fine';
+      }
+    }
+    const input = { safe: new Safe() };
+    expect(redactValue(input)).toBe(input);
+  });
+
+  test('other class instances are walked like plain objects and keep their prototype', () => {
+    class Credentials {
+      user = 'u';
+      password = 'hunter2';
+      url = 'redis://a:instsecret@h';
+    }
+    const original = new Credentials();
+    const out = redactValue({ creds: original }) as { creds: Credentials };
+    expect(out.creds).toBeInstanceOf(Credentials);
+    expect({ ...out.creds }).toEqual({ user: 'u', password: '***', url: 'redis://***@h' });
+    expect(original.password).toBe('hunter2');
+    class Point {
+      x = 1;
+      y = 2;
+    }
+    const input = { p: new Point() };
+    expect(redactValue(input)).toBe(input);
+  });
+
+  test('class instances in a cycle become [Circular]', () => {
+    class Node {
+      self: unknown = this;
+      secret = 's3cret';
+    }
+    const out = redactValue(new Node()) as Record<string, unknown>;
+    expect({ ...out }).toEqual({ self: '[Circular]', secret: '***' });
+  });
+
+  test('the walk is bounded on wide shared graphs', () => {
+    const leaf = Array.from({ length: 200 }, () => 'redis://u:p@h');
+    const level3 = Array.from({ length: 200 }, () => leaf);
+    const level2 = Array.from({ length: 200 }, () => level3);
+    const started = performance.now();
+    const out = redactValue({ level2 });
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(Bun.inspect(out)).not.toContain('u:p@');
+  });
+});
+
+describe('redactValue object keys', () => {
+  test('pass, passphrase, jwt and sig are sensitive keys', () => {
+    expect(redactValue({ pass: 'a', passphrase: 'b', jwt: 'c', sig: 'd', compass: 'e' })).toEqual({
+      pass: '***',
+      passphrase: '***',
+      jwt: '***',
+      sig: '***',
+      compass: 'e',
+    });
   });
 });

@@ -18,6 +18,8 @@ export interface CreateContextOptions {
 
 export class ApplicationContext {
   #closing: Promise<void> | undefined;
+  /** The signal close() was called with, for instances initialized after it started. */
+  #closeSignal: string | undefined;
   /** Instances whose init hooks ran; only these receive shutdown hooks. */
   #initialized: object[] = [];
   /** Instances whose init hooks were attempted (create or initializeLate). */
@@ -65,17 +67,18 @@ export class ApplicationContext {
     own.exported.set(DEVELOPMENT, own);
     state.globals = [...state.globals, own];
 
-    // Phase A: settle every singleton factory (async ones are awaited, dependents retried).
-    for (const m of graph.modules) {
-      for (const record of [...m.injector.ownRecords()]) {
+    // Phase A: settle every singleton factory (async ones are awaited, dependents retried),
+    // including overrides of LOGGER and DEVELOPMENT held by `own` (last in state.injectors).
+    for (const injector of state.injectors) {
+      for (const record of [...injector.ownRecords()]) {
         if (record.provider.kind === 'factory' && record.provider.scope === 'singleton') {
           await state.resolveAsync(record);
         }
       }
     }
     // Phase B: eagerly instantiate every remaining singleton so errors surface at bootstrap.
-    for (const m of graph.modules) {
-      for (const record of [...m.injector.ownRecords()]) {
+    for (const injector of state.injectors) {
+      for (const record of [...injector.ownRecords()]) {
         if (record.provider.scope === 'singleton') state.resolve(record);
       }
     }
@@ -104,21 +107,61 @@ export class ApplicationContext {
   }
 
   async #initializePending(): Promise<void> {
+    // Instances constructed after close() started never receive hooks.
+    if (this.closed) return;
+    try {
+      await this.#runInitHooks();
+    } catch (error) {
+      try {
+        await this.close();
+      } catch (shutdownError) {
+        ApplicationContext.#attachShutdownError(error, shutdownError);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * onModuleInit then onApplicationBootstrap on the instances not seen yet. Starts no hook once
+   * close() has begun. close() does not wait for a hook in progress (it may be awaiting close()
+   * itself), so an instance whose onModuleInit completes after close() started receives its
+   * shutdown hooks here instead.
+   */
+  async #runInitHooks(): Promise<void> {
     const pending = (this.state.instances as object[]).filter((i) => !this.#seen.has(i));
     for (const instance of pending) this.#seen.add(instance);
     const initialized: object[] = [];
+    for (const instance of pending) {
+      if (this.closed) return;
+      await ApplicationContext.#call(instance, 'onModuleInit');
+      this.#initialized.push(instance);
+      initialized.push(instance);
+      // Pushed after close() took its snapshot of #initialized: shut it down here.
+      if (this.closed) return ApplicationContext.#shutDown([instance], this.#closeSignal);
+    }
+    for (const instance of initialized) {
+      if (this.closed) return;
+      await ApplicationContext.#call(instance, 'onApplicationBootstrap');
+    }
+  }
+
+  /**
+   * Keeps the error of the cleanup that followed a failed startup hook as `shutdownError` on the
+   * startup error, which is rethrown as is.
+   */
+  static #attachShutdownError(error: unknown, shutdownError: unknown): void {
+    if (typeof error !== 'object' || error === null || Object.hasOwn(error, 'shutdownError')) {
+      return;
+    }
     try {
-      for (const instance of pending) {
-        await ApplicationContext.#call(instance, 'onModuleInit');
-        this.#initialized.push(instance);
-        initialized.push(instance);
-      }
-      for (const instance of initialized) {
-        await ApplicationContext.#call(instance, 'onApplicationBootstrap');
-      }
-    } catch (error) {
-      await this.close().catch(() => {});
-      throw error;
+      Object.defineProperty(error, 'shutdownError', {
+        value: shutdownError,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+    } catch {
+      // A frozen or non-extensible error is rethrown without it.
     }
   }
 
@@ -152,25 +195,30 @@ export class ApplicationContext {
 
   /** Runs shutdown hooks once, in reverse initialization order; hook errors are collected. */
   close(signal?: string): Promise<void> {
-    this.#closing ??= (async () => {
-      const errors: unknown[] = [];
-      const reversed = [...this.#initialized].reverse();
-      for (const [name, arg] of [
-        ['beforeApplicationShutdown', signal],
-        ['onModuleDestroy', undefined],
-      ] as const) {
-        for (const instance of reversed) {
-          try {
-            await ApplicationContext.#call(instance, name, arg);
-          } catch (error) {
-            errors.push(error);
-          }
+    if (this.#closing === undefined) {
+      this.#closeSignal = signal;
+      this.#closing = ApplicationContext.#shutDown([...this.#initialized].reverse(), signal);
+    }
+    return this.#closing;
+  }
+
+  /** The shutdown hooks of `instances`, in order; hook errors are collected and rethrown. */
+  static async #shutDown(instances: readonly object[], signal: string | undefined): Promise<void> {
+    const errors: unknown[] = [];
+    for (const [name, arg] of [
+      ['beforeApplicationShutdown', signal],
+      ['onModuleDestroy', undefined],
+    ] as const) {
+      for (const instance of instances) {
+        try {
+          await ApplicationContext.#call(instance, name, arg);
+        } catch (error) {
+          errors.push(error);
         }
       }
-      if (errors.length === 1) throw errors[0];
-      if (errors.length > 1) throw new AggregateError(errors, 'Application shutdown failed');
-    })();
-    return this.#closing;
+    }
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, 'Application shutdown failed');
   }
 
   static async #call(instance: object, name: string, arg?: unknown): Promise<void> {

@@ -100,7 +100,10 @@ function computeExports(node: Node): void {
     }
     if (matched.length > 0) {
       for (const child of matched) {
-        for (const [token, owner] of child.injector.exported) injector.exported.set(token, owner);
+        for (const [token, owner] of child.injector.exported) {
+          // The module's own export of a token wins, whatever the order of its exports.
+          if (injector.exported.get(token) !== injector) injector.exported.set(token, owner);
+        }
       }
       continue;
     }

@@ -2,6 +2,7 @@ import {
   ConsoleLogger,
   DeferredLogger,
   defaultRedisUrl,
+  ownedRedisClientOptions,
   plaintextRedisHost,
   sendRedisCommand,
   type WarnLogger,
@@ -34,8 +35,10 @@ export interface RedisLockStoreOptions {
   /**
    * Milliseconds an acquire() waits for Redis before failing; the firing is then skipped and the
    * error reported to onError. Default 250. If Redis applied the SET anyway, every instance skips
-   * that firing. A supplied client should set `enableOfflineQueue: false` so a timed-out command is
-   * not sent later.
+   * that firing. The store's own client is built with `enableOfflineQueue: false` and a
+   * `connectionTimeout` of `max(commandTimeout, 1000)` ms, and connected before sending. A supplied
+   * client is not connected by the store: give it `enableOfflineQueue: false` and a
+   * `connectionTimeout` too, so a timed-out command is not sent later.
    */
   commandTimeout?: number;
 }
@@ -75,8 +78,8 @@ export class RedisLockStore implements ScheduleLockStore {
     }
     this.#owned = options.client === undefined;
     // Without the offline queue a timed-out SET is never sent later, after the firing was
-    // reported as skipped.
-    this.#client = options.client ?? new RedisClient(options.url, { enableOfflineQueue: false });
+    // reported as skipped; the connection timeout bounds each reconnection attempt.
+    this.#client = options.client ?? new RedisClient(options.url, ownedRedisClientOptions(timeout));
     this.#prefix = options.prefix ?? 'knead:schedule:';
   }
 
@@ -98,6 +101,9 @@ export class RedisLockStore implements ScheduleLockStore {
       this.#client,
       () => this.#client.send('SET', args),
       this.#commandTimeout,
+      // A supplied client connects as its own options say; only the store's own one is
+      // connected here (without the offline queue, a send while disconnected rejects).
+      this.#owned,
     );
     return reply === 'OK';
   }

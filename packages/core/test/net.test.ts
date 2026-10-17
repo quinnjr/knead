@@ -1,5 +1,13 @@
-import { describe, expect, test } from 'bun:test';
-import { isLoopbackHostname, parseIp, plaintextRedisHost } from '../src/index.js';
+import { describe, expect, mock, test } from 'bun:test';
+import type { RedisClient } from 'bun';
+import {
+  isLoopbackHostname,
+  ownedRedisClientOptions,
+  parseIp,
+  plaintextRedisHost,
+  type RedisDeadline,
+  sendRedisCommand,
+} from '../src/index.js';
 
 describe('parseIp', () => {
   test('IPv4, IPv6, mapped IPv4, zones and invalid input', () => {
@@ -64,4 +72,82 @@ test('plaintextRedisHost returns undefined for a URL with no host', () => {
   expect(plaintextRedisHost('redis://')).toBeUndefined();
   expect(plaintextRedisHost('redis:///0')).toBeUndefined();
   expect(plaintextRedisHost('valkey://')).toBeUndefined();
+});
+
+describe('sendRedisCommand', () => {
+  type Fake = { connected: boolean; connect: () => Promise<void>; connects: number };
+  function fake(connected: boolean, connectDelay = 0): Fake & RedisClient {
+    const client = {
+      connected,
+      connects: 0,
+      async connect() {
+        client.connects++;
+        await Bun.sleep(connectDelay);
+        client.connected = true;
+      },
+    };
+    return client as unknown as Fake & RedisClient;
+  }
+
+  test('a connected client sends right away', async () => {
+    const client = fake(true);
+    expect(await sendRedisCommand(client, async () => 'OK', 50)).toBe('OK');
+    expect(client.connects).toBe(0);
+  });
+
+  test('a disconnected client is connected first, unless connect is false', async () => {
+    const client = fake(false);
+    expect(await sendRedisCommand(client, async () => 'OK', 50)).toBe('OK');
+    expect(client.connects).toBe(1);
+    const other = fake(false);
+    expect(await sendRedisCommand(other, async () => 'OK', 50, false)).toBe('OK');
+    expect(other.connects).toBe(0);
+  });
+
+  test('rejects after timeoutMs and never sends once it has passed', async () => {
+    const client = fake(false, 60);
+    const send = mock(async () => 'OK');
+    await expect(sendRedisCommand(client, send, 20)).rejects.toThrow(
+      'Redis did not answer within 20ms',
+    );
+    await Bun.sleep(80);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  test('send sees deadline.expired once the timeout has fired', async () => {
+    const seen: boolean[] = [];
+    let done!: () => void;
+    const finished = new Promise<void>((resolve) => {
+      done = resolve;
+    });
+    const send = async (deadline: RedisDeadline) => {
+      seen.push(deadline.expired);
+      await Bun.sleep(40);
+      seen.push(deadline.expired);
+      done();
+      return 'late';
+    };
+    await expect(sendRedisCommand(fake(true), send, 10)).rejects.toThrow('within 10ms');
+    await finished;
+    expect(seen).toEqual([false, true]);
+  });
+
+  test('timeoutMs must be an integer of at least 1', async () => {
+    for (const timeoutMs of [0, -1, 1.5, Number.NaN]) {
+      await expect(sendRedisCommand(fake(true), async () => 'OK', timeoutMs)).rejects.toThrow(
+        RangeError,
+      );
+    }
+  });
+});
+
+test('ownedRedisClientOptions: no offline queue and a bounded connection timeout', () => {
+  expect(ownedRedisClientOptions(250)).toEqual({
+    enableOfflineQueue: false,
+    connectionTimeout: 1_000,
+  });
+  expect(ownedRedisClientOptions(5_000)).toEqual({
+    enableOfflineQueue: false,
+    connectionTimeout: 5_000,
+  });
 });

@@ -248,3 +248,24 @@ describe('lifecycle robustness', () => {
     expect(log).toEqual(['a:destroy']);
   });
 });
+
+test('a failed bootstrap whose cleanup also fails keeps the cleanup error as shutdownError', async () => {
+  const boom = new Error('boom');
+  const cleanup = new Error('cleanup failed');
+  class A {
+    onModuleDestroy() {
+      throw cleanup;
+    }
+  }
+  class B {
+    readonly a = inject(A);
+    onModuleInit() {
+      throw boom;
+    }
+  }
+  @Module({ providers: [A, B] })
+  class AppModule {}
+  const error = await ApplicationContext.create(AppModule).catch((e: unknown) => e);
+  expect(error).toBe(boom);
+  expect((error as { shutdownError?: unknown }).shutdownError).toBe(cleanup);
+});
