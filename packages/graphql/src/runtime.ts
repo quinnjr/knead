@@ -17,10 +17,10 @@ import {
   ForbiddenException,
   GUARDS,
   type Guard,
-  type GuardRef,
   HTTP_DEVELOPMENT,
   LOGGER,
   ROUTE_META,
+  resolveGuard,
   WsRegistry,
   type WsSocket,
 } from '@knead-js/http';
@@ -114,20 +114,6 @@ export function discoverResolvers(modules: readonly ModuleRef[]): DiscoveredReso
     }
   }
   return out;
-}
-
-function isClassWith(value: unknown, method: string): value is Type {
-  return (
-    typeof value === 'function' &&
-    typeof (value as { prototype?: Record<string, unknown> }).prototype?.[method] === 'function'
-  );
-}
-
-/** Mirrors @knead-js/http's resolveGuard, which that package does not export. */
-function resolveGuard(ref: GuardRef<any>, injector: ModuleInjector): Guard<any> {
-  if (isClassWith(ref, 'canActivate')) return injector.resolveOrConstruct(ref as Type<Guard<any>>);
-  if (typeof ref === 'function') return { canActivate: ref as (ctx: unknown) => boolean };
-  return ref;
 }
 
 /** Longest computed subscription topic, in characters. */
