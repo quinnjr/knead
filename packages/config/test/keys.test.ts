@@ -26,9 +26,17 @@ test('convertSource keeps only declared keys and empty strings', () => {
   expect(convertSource({ PATH: '/bin' }, new Set(['path']), 'env').get('path')?.value).toBe('/bin');
 });
 test('collision on a declared key throws, naming both', () => {
-  expect(() => convertSource({ FOO_1: 'a', FOO1: 'b' }, new Set(['foo1']), 'env')).toThrow(
-    ConfigKeyCollisionError,
-  );
+  let error: unknown;
+  try {
+    convertSource({ FOO_1: 'a', FOO1: 'b' }, new Set(['foo1']), 'env');
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toBeInstanceOf(ConfigKeyCollisionError);
+  const e = error as ConfigKeyCollisionError;
+  expect(e.key).toBe('foo1');
+  expect(e.sources).toEqual(['FOO_1', 'FOO1']);
+  expect(e.message).toBe('env: FOO_1 and FOO1 both map to config key "foo1".');
 });
 test('collision on an undeclared key is ignored', () => {
   expect(convertSource({ FOO_1: 'a', FOO1: 'b' }, new Set(['bar']), 'env').size).toBe(0);

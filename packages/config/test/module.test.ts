@@ -34,8 +34,13 @@ describe('ConfigModule', () => {
       providers: [Svc],
     }).compile();
     expect(mod.get(Svc).cfg.get('port')).toBe(4000);
+  });
 
-    await mod.close();
+  test('forRoot values override env', async () => {
+    process.env.PORT = '4000';
+    class Svc {
+      readonly cfg = inject(Cfg);
+    }
     mod = await Test.createModule({
       imports: [ConfigModule.forRoot(Cfg, { values: { port: 5000 } })],
       providers: [Svc],
@@ -105,6 +110,31 @@ describe('ConfigModule', () => {
             loaders: [
               async () => {
                 await Bun.sleep(1);
+                inject(Cfg);
+                return {};
+              },
+            ],
+          }),
+        }),
+      ],
+    })
+      .compile()
+      .then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+    expect(error).toBeInstanceOf(ConfigLoaderError);
+    expect((error as ConfigLoaderError).cause).toBeInstanceOf(InjectionContextError);
+  });
+
+  test('a sync loader calling inject() fails clearly', async () => {
+    delete process.env.PORT;
+    const error = await Test.createModule({
+      imports: [
+        ConfigModule.forRootAsync(Cfg, {
+          useFactory: () => ({
+            loaders: [
+              () => {
                 inject(Cfg);
                 return {};
               },
