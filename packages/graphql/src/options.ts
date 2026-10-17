@@ -143,7 +143,10 @@ export interface GraphQLModuleOptions {
   csrf?: { requiredHeaders?: readonly string[] } | false;
   /** Default: true outside development (HTTP_DEVELOPMENT, else NODE_ENV). */
   maskErrors?: boolean;
-  /** Maps an error thrown by resolver code (or hooks) to an HttpException before masking; return undefined to leave it. */
+  /**
+   * Maps an error thrown by resolver code, `hooks`, subscription filters or the `context` factory
+   * over WebSocket to an HttpException before masking; return undefined to leave it as is.
+   */
   mapError?: (error: unknown) => HttpException | undefined;
   /** Writes sorted SDL at bootstrap. Default: 'schema.graphql' in development, else false. */
   emitSchemaFile?: string | false;

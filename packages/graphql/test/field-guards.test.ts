@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { InjectionToken, inject, Module } from '@knead-js/core';
-import { type Ctx, createRouteDecorator, HttpConfigError } from '@knead-js/http';
+import { getMetadata, InjectionToken, inject, Module } from '@knead-js/core';
+import { type Ctx, createRouteDecorator, HttpConfigError, ROUTE_META } from '@knead-js/http';
 import type { GraphQLObjectType, GraphQLResolveInfo } from 'graphql';
 import { OperationContext } from '../src/context.js';
 import {
@@ -8,6 +8,7 @@ import {
   Field,
   GraphQLRuntime,
   Int,
+  InterfaceType,
   ObjectType,
   Query,
   ResolveField,
@@ -252,6 +253,51 @@ describe('UseFieldGuards', () => {
 
   test('writes the guard list under Symbol.for("knead:gql:field-guards")', () => {
     expect(FIELD_GUARDS === Symbol.for('knead:gql:field-guards')).toBe(true);
+  });
+
+  test('stores a frozen copy of the guard list', () => {
+    const a = () => true;
+    const b = () => true;
+    @ObjectType()
+    @UseFieldGuards(a)
+    class Base {
+      @Field(() => Int) id!: number;
+    }
+    @ObjectType()
+    @UseFieldGuards(b)
+    class Sub extends Base {}
+    const base = getMetadata(Base, ROUTE_META)![FIELD_GUARDS];
+    const sub = getMetadata(Sub, ROUTE_META)![FIELD_GUARDS];
+    expect(base).toEqual([a]);
+    expect(sub).toEqual([a, b]);
+    expect(Object.isFrozen(base)).toBe(true);
+    expect(Object.isFrozen(sub)).toBe(true);
+  });
+
+  test('guards a concrete type reached through an interface field', async () => {
+    @InterfaceType({ resolveType: () => 'Account' })
+    class Node {
+      @Field(() => Int) id!: number;
+    }
+    @ObjectType({ implements: () => [Node] })
+    @UseFieldGuards((ctx: FieldCtx) => ctx.info.fieldName !== 'secret')
+    class Account extends Node {
+      @Field(() => String, { nullable: true }) secret?: string | null;
+    }
+    @Resolver()
+    class R {
+      @Query(() => Node, { nullable: true }) node() {
+        return { id: 1, secret: 's3cret' };
+      }
+    }
+    @Module({ providers: [R] })
+    class M {}
+    s = await startGraphQL([M], { orphanedTypes: [Account] });
+    const res = await s.app.graphql('{ node { id ... on Account { secret } } }');
+    expect(res.data).toEqual({ node: { id: 1, secret: null } });
+    expect(res.errors?.length).toBe(1);
+    expect(res.errors?.[0]?.path).toEqual(['node', 'secret']);
+    expect(res.errors?.[0]?.extensions?.code).toBe('FORBIDDEN');
   });
 
   test('only === true passes, sync or async; a throwing guard is reported', async () => {

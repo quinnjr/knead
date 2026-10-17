@@ -17,7 +17,7 @@ export function UseFieldGuards(
     const existing = (current[FIELD_GUARDS] as readonly GuardRef<any>[] | undefined) ?? [];
     setMetadata(context.metadata, ROUTE_META, {
       ...current,
-      [FIELD_GUARDS]: [...existing, ...guards],
+      [FIELD_GUARDS]: Object.freeze([...existing, ...guards]),
     });
   };
 }
