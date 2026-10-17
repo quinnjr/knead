@@ -1,174 +1,229 @@
 # @knead-js/config
 
-Typed, validated configuration for the Knead framework. Values come from environment variables,
-async loaders (SSM, Vault, files) and code, are validated once at boot with your own schema, and
-are injected with `inject()`.
+[![npm](https://img.shields.io/npm/v/@knead-js/config?color=c2410c&label=npm)](https://www.npmjs.com/package/@knead-js/config)
+[![CI](https://github.com/quinnjr/knead/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/quinnjr/knead/actions/workflows/ci.yml)
+[![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](https://github.com/quinnjr/knead#license)
+
+Typed, validated configuration for [Knead](https://github.com/quinnjr/knead) applications. You
+describe your settings with a schema; they are loaded from environment variables, async loaders
+and code once at startup, validated, and injected anywhere with `inject()`.
+
+**[Documentation](https://quinnjr.github.io/knead/packages/config/)** · [Guide](https://quinnjr.github.io/knead/guide/configuration/) · [Knead](https://github.com/quinnjr/knead)
 
 ## Install
 
 ```bash
-pnpm add @knead-js/config
+bun add @knead-js/core @knead-js/config valibot @valibot/to-json-schema
 ```
 
-`@knead-js/core` is a peer dependency. Bun loads `.env` files itself, so there is no dotenv step.
+Requires Bun 1.4.3 or newer. `@knead-js/core` is a peer dependency. You also need a schema library
+with Standard JSON Schema support: Zod 4.2+, ArkType 2.1.28+, or Valibot 1.5+ with
+`@valibot/to-json-schema` 1.5+ (the examples use Valibot).
 
-## Define and use
+## Quick start
 
-```ts
-import { ConfigModule, defineConfig } from '@knead-js/config';
-import { inject, Module } from '@knead-js/core';
-import { z } from 'zod';
-
-export const AppConfig = defineConfig(
-  z.object({
-    port: z.coerce.number().int().default(3000),
-    databaseUrl: z.url(),
-    jwtSecret: z.string().min(32),
-  }),
-);
-
-class Server {
-  readonly config = inject(AppConfig);
-  port = this.config.get('port'); // number
-}
-
-@Module({ imports: [ConfigModule.forRoot(AppConfig)], providers: [Server] })
-class AppModule {}
-```
-
-`ConfigModule` is global: any provider can `inject(AppConfig)` without importing it.
-
-Environment variables are always strings, so numbers and booleans need coercion in the schema
-(`z.coerce.number()`, not `z.number()`). Otherwise `PORT=3000` fails validation.
-
-## Keys
-
-Environment names are converted from `SCREAMING_SNAKE_CASE` to camelCase, and only keys declared
-in the schema are read:
-
-| Environment | Config key |
-|---|---|
-| `PORT` | `port` |
-| `DATABASE_URL` | `databaseUrl` |
-| `JWT_SECRET` | `jwtSecret` |
-
-Names that are not `SCREAMING_SNAKE_CASE` (`path`, `Foo_Bar`, `_X`) and names the schema does not
-declare are ignored. Two names in the same source that map to the same declared key (for example
-`X_1` and `X1`, which both become `x1`) throw `ConfigKeyCollisionError` rather than picking one.
-Collisions only count for keys the schema declares.
-
-Schema keys must be camelCase that an environment name can produce. `defineConfig` rejects keys
-such as `DATABASE_URL` or `api_key` with a `ConfigDefinitionError` that suggests the camelCase form
-(`databaseUrl`, `apiKey`).
-
-## Precedence
-
-From lowest to highest: `process.env`, then each loader in order (later loaders win), then the
-`values` you pass in code.
+Declare every setting in one object schema:
 
 ```ts
-ConfigModule.forRoot(AppConfig, { values: { port: 8080 } });
-```
-
-## Schemas
-
-The schema is strict: only keys it declares are read, and `defineConfig` needs the schema's
-declared properties to know which keys to look for. That requires Standard JSON Schema
-(`~standard.jsonSchema`) support. Verified minimums:
-
-- Zod 4.2.0+
-- ArkType 2.1.28+
-- Valibot 1.5.0+ with `@valibot/to-json-schema` 1.5.0+, wrapped with `toStandardJsonSchema()`:
-
-```ts
+import { defineConfig } from '@knead-js/config';
 import { toStandardJsonSchema } from '@valibot/to-json-schema';
 import * as v from 'valibot';
 
-const AppConfig = defineConfig(
-  toStandardJsonSchema(v.object({ port: v.pipe(v.string(), v.toNumber()) })),
+export const AppConfig = defineConfig(
+  toStandardJsonSchema(
+    v.object({
+      // Environment variables are strings: parse numbers and booleans in the schema.
+      port: v.optional(v.pipe(v.string(), v.toNumber(), v.integer()), '3000'),
+      databaseUrl: v.pipe(v.string(), v.url()),
+      jwtSecret: v.pipe(v.string(), v.minLength(32)),
+      signupsOpen: v.optional(
+        v.pipe(
+          v.picklist(['true', 'false']),
+          v.transform((value) => value === 'true'),
+        ),
+        'false',
+      ),
+    }),
+  ),
+  { name: 'AppConfig' },
 );
 ```
 
-## Async loaders
-
-A loader is a function returning a record of strings (or a promise of one). Use `forRootAsync` and
-inject whatever the loader needs in `useFactory`, not in the loader:
+Register it once, in the root module:
 
 ```ts
-import { GetParametersByPathCommand, SSMClient } from '@aws-sdk/client-ssm';
 import { ConfigModule } from '@knead-js/config';
-import { InjectionToken, inject, Module } from '@knead-js/core';
-
-const SSM = new InjectionToken<SSMClient>('SSM');
+import { Module } from '@knead-js/core';
+import { AppConfig } from './app-config.js';
+import { SignupService } from './signup.service.js';
 
 @Module({
-  providers: [{ provide: SSM, useFactory: async () => new SSMClient({}) }],
-  exports: [SSM],
+  imports: [ConfigModule.forRoot(AppConfig)],
+  providers: [SignupService],
 })
-class AwsModule {}
-
-ConfigModule.forRootAsync(AppConfig, {
-  imports: [AwsModule],
-  useFactory: () => {
-    const client = inject(SSM);
-    return {
-      loaders: [
-        async () => {
-          const out: Record<string, string> = {};
-          let token: string | undefined;
-          do {
-            const res = await client.send(
-              new GetParametersByPathCommand({
-                Path: '/my-app/prod/',
-                WithDecryption: true,
-                NextToken: token,
-              }),
-            );
-            for (const p of res.Parameters ?? []) {
-              if (p.Name && p.Value) out[p.Name.split('/').pop() as string] = p.Value;
-            }
-            token = res.NextToken;
-          } while (token);
-          return out; // { DATABASE_URL: '...', JWT_SECRET: '...' }
-        },
-      ],
-    };
-  },
-});
+export class AppModule {}
 ```
 
-`useFactory` runs inside the injection context, so `inject()` works there. Loaders do not: they
-run after an `await`, and calling `inject()` in one fails boot with a `ConfigLoaderError` whose
-`cause` is core's `InjectionContextError`. Loaders run concurrently, once, after `useFactory`
-settles.
+`ConfigModule` is global, so any provider can inject the handle and read typed values:
 
-Core may run `useFactory` again from the start when one of its `inject()` calls waits on an async
-provider, so keep it free of side effects before its `inject()` calls.
+```ts
+import { inject } from '@knead-js/core';
+import { AppConfig } from './app-config.js';
+
+export class SignupService {
+  readonly #config = inject(AppConfig);
+
+  isOpen(): boolean {
+    return this.#config.get('signupsOpen'); // boolean, parsed from 'true' or 'false'
+  }
+
+  port(): number {
+    return this.#config.get('port'); // number, 3000 when PORT is unset
+  }
+}
+```
+
+With `DATABASE_URL` and `JWT_SECRET` set (Bun loads `.env` files itself), the application boots
+and `port()` returns `3000`. A missing or invalid value rejects `KneadFactory.create()`, so the
+server never starts with a broken configuration.
+
+## Features
+
+- **Typed values.** `config.get(key)` returns the schema's output type; an undeclared key is a
+  compile error.
+- **Your schema library.** Zod, ArkType or Valibot, through Standard Schema and Standard JSON
+  Schema.
+- **Validated once, at boot.** Every source is merged and validated before any `onModuleInit` hook
+  runs. The result is deep-frozen.
+- **Environment names.** `DATABASE_URL` becomes `databaseUrl`; only keys the schema declares are
+  read.
+- **Async loaders.** Fetch from a secret store or a file at startup, with dependencies injected.
+- **Secrets stay secret.** Errors name variables and keys, never values, and `Config` prints as
+  `[redacted]`.
+
+## Environment variable names
+
+Each source's names are converted from `SCREAMING_SNAKE_CASE` to camelCase, and only names that
+convert to a declared key are read:
+
+| Environment variable | Config key |
+| --- | --- |
+| `PORT` | `port` |
+| `DATABASE_URL` | `databaseUrl` |
+| `OAUTH2_CLIENT_ID` | `oauth2ClientId` |
+
+- Names that are not `SCREAMING_SNAKE_CASE` (`path`, `Foo_Bar`, `_PORT`) are ignored, and so are
+  names the schema does not declare.
+- Two names in one source that map to the same declared key throw `ConfigKeyCollisionError`
+  rather than picking one.
+- Schema keys must be camelCase that an environment name converts to: `defineConfig()` rejects
+  `DATABASE_URL` or `api_key` with a `ConfigDefinitionError` that suggests `databaseUrl` or
+  `apiKey`.
+
+Environment variables are strings, so parse numbers and booleans in the schema, as the quick start
+does. A schema that expects `v.number()` rejects every value an environment variable can hold.
+
+## Sources and precedence
+
+From lowest to highest precedence:
+
+1. `process.env`
+2. each loader, in order (later loaders win)
+3. `values` passed in code
+
+Code values are schema input, like environment strings:
+
+```ts
+import { ConfigModule } from '@knead-js/config';
+import { Module } from '@knead-js/core';
+import { AppConfig } from './app-config.js';
+
+@Module({
+  imports: [
+    // Code values are schema input, like environment strings, and win over every other source.
+    ConfigModule.forRoot(AppConfig, { values: { port: '8080', signupsOpen: 'true' } }),
+  ],
+})
+export class AppModule {}
+```
+
+A loader is a function returning a record of `SCREAMING_SNAKE_CASE` names and strings, or a
+promise of one. Loaders run concurrently, once, outside the injection context. When a loader needs
+another provider, use `forRootAsync()` and call `inject()` in `useFactory`, not in the loader:
+
+```ts
+export const ShopConfigModule = ConfigModule.forRootAsync(AppConfig, {
+  imports: [SecretsModule],
+  useFactory: () => {
+    // useFactory runs in the injection context: inject() here, not inside a loader.
+    const store = inject(SECRET_STORE);
+    return { loaders: [() => store.read('shop/production')] };
+  },
+});
+
+@Module({ imports: [ShopConfigModule] })
+export class AppModule {}
+```
+
+`loadConfig(handle, sources?, env?)` runs the same loading step outside a module, for example in a
+migration script.
 
 ## Errors and secrets
 
-- Errors name keys and sources, never values. `ConfigValidationError` lists each problem as
-  `JWT_SECRET (jwtSecret): Missing value` or `Invalid value`. A schema that throws while
-  validating fails with `ConfigValidationError` and its error is dropped, since it may quote a
-  value.
-- A loader's own error is kept verbatim as the `cause` of `ConfigLoaderError`, so loaders must not
-  put config values in their error messages.
-- `Config` redacts itself: `JSON.stringify(config)` and `console.log(config)` show
-  `[redacted]` for every key. `config.get(key)` reads one value and `config.all()` returns the
-  whole frozen object; `all()` is the explicit escape hatch, so do not log its result.
-- Configuration is loaded once at boot and deep-frozen. Changing `process.env` later has no
-  effect, and a validation failure stops boot. `Config` freezes the validated output in place, so
-  with a schema that passes objects through unchanged, objects you pass in `values` are frozen
-  too.
+A failed validation lists every problem, one line per key, and never the values:
+
+```text
+Config validation failed:
+  PORT (port): Invalid value
+  DATABASE_URL (databaseUrl): Missing value
+  JWT_SECRET (jwtSecret): Invalid value
+```
+
+- The schema's own messages are discarded, because they can quote the rejected input. A schema
+  that throws fails with `Config schema threw while validating.` and its error is dropped.
+- A loader's error becomes the `cause` of `ConfigLoaderError` unchanged, so a loader must not put
+  configuration values in its error messages.
+- `JSON.stringify(config)`, `console.log(config)` and `Bun.inspect(config)` show `[redacted]` for
+  every key.
+- `config.all()` returns the whole object with every secret: do not log it.
+- Configuration is read once. Changing `process.env` later has no effect.
 
 ## Testing
 
-```ts
-import { Config, ConfigModule } from '@knead-js/config';
-import { Test } from '@knead-js/testing';
+Replace the handle's provider with a ready `Config`, so a test does not depend on the machine's
+environment:
 
-const mod = await Test.createModule({ imports: [ConfigModule.forRoot(AppConfig)] })
-  .overrideProvider(AppConfig)
-  .useValue(new Config({ port: 1, databaseUrl: 'postgres://x', jwtSecret: 'x'.repeat(32) }))
-  .compile();
+```ts
+test('signups follow the signupsOpen flag', async () => {
+  mod = await Test.createModule({
+    imports: [ConfigModule.forRoot(AppConfig)],
+    providers: [SignupService],
+  })
+    .overrideProvider(AppConfig)
+    .useValue(
+      new Config({
+        port: 3000,
+        databaseUrl: 'postgres://localhost/shop_test',
+        jwtSecret: 'test-secret-that-is-at-least-32-chars',
+        signupsOpen: true,
+      }),
+    )
+    .compile();
+
+  expect(mod.get(SignupService).isOpen()).toBe(true);
+});
 ```
+
+## Documentation
+
+- [`@knead-js/config` reference](https://quinnjr.github.io/knead/packages/config/): every export,
+  option and error class.
+- [Configuration guide](https://quinnjr.github.io/knead/guide/configuration/): sources, loaders,
+  validation errors, secrets and schema libraries, with examples.
+- [Testing guide](https://quinnjr.github.io/knead/guide/testing/): test modules and provider
+  overrides.
+
+## License
+
+Licensed under either of [MIT](https://github.com/quinnjr/knead/blob/develop/LICENSE-MIT) or
+[Apache-2.0](https://github.com/quinnjr/knead/blob/develop/LICENSE-APACHE) at your option.

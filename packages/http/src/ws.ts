@@ -223,7 +223,6 @@ export interface WsEndpoint<D = unknown> {
 
 type WsEvent = 'open' | 'message' | 'close' | 'drain';
 
-/** Bun allows one websocket handler per server; modules register endpoints here instead. */
 /** Own string and symbol keys of `meta`, without invoking a `__proto__` setter. */
 function copyOwn(meta: object): Record<PropertyKey, unknown> {
   const out: Record<PropertyKey, unknown> = {};
@@ -237,6 +236,7 @@ function copyOwn(meta: object): Record<PropertyKey, unknown> {
   return out;
 }
 
+/** Bun allows one websocket handler per server; modules register endpoints here instead. */
 export class WsRegistry {
   readonly #endpoints = new Map<string, WsEndpoint<any>>();
   readonly #options = new Map<string, WsEndpointOptions>();

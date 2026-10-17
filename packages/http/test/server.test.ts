@@ -70,7 +70,8 @@ async function presentedSubject(port: number): Promise<string> {
     `echo | timeout 5 openssl s_client -connect 127.0.0.1:${port} 2>/dev/null | openssl x509 -noout -subject`,
   ]);
   await proc.exited;
-  return (await new Response(proc.stdout).text()).trim();
+  // OpenSSL versions differ in spacing ("CN=first" vs "CN = first"); compare without it.
+  return (await new Response(proc.stdout).text()).trim().replace(/\s*=\s*/g, '=');
 }
 
 describe.skipIf(!hasOpenssl)('TLS', () => {

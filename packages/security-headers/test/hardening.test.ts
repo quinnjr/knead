@@ -6,6 +6,7 @@ import {
   mergeOptions,
   SecurityHeaders,
   SecurityHeadersModule,
+  type SecurityHeadersOptions,
   validateSecurityHeadersOptions,
 } from '../src/index.js';
 
@@ -69,5 +70,33 @@ describe('new default headers', () => {
     expect(() =>
       validateSecurityHeadersOptions({ permissionsPolicy: 'camera=()\r\nX-Injected: 1' }),
     ).toThrow(HttpConfigError);
+  });
+
+  test.each([
+    ['referrerPolicy', 'Referrer-Policy'],
+    ['crossOriginOpenerPolicy', 'Cross-Origin-Opener-Policy'],
+    ['crossOriginResourcePolicy', 'Cross-Origin-Resource-Policy'],
+    ['xContentTypeOptions', 'X-Content-Type-Options'],
+    ['xFrameOptions', 'X-Frame-Options'],
+    ['xDnsPrefetchControl', 'X-DNS-Prefetch-Control'],
+    ['xPermittedCrossDomainPolicies', 'X-Permitted-Cross-Domain-Policies'],
+  ] as const)('a %s with a line break or NUL is a configuration error', (key, header) => {
+    for (const value of ['no-referrer\r\nX-Injected: 1', 'a\nb', 'a\u0000b']) {
+      expect(() =>
+        validateSecurityHeadersOptions({ [key]: value } as SecurityHeadersOptions),
+      ).toThrow(`Invalid ${header}: ${JSON.stringify(value)}`);
+    }
+    expect(() =>
+      validateSecurityHeadersOptions({ [key]: 42 } as unknown as SecurityHeadersOptions),
+    ).toThrow(`Invalid ${header}: 42`);
+  });
+
+  test('header values may contain tabs, and false turns a header off', () => {
+    expect(() =>
+      validateSecurityHeadersOptions({
+        referrerPolicy: 'no-referrer,\tstrict-origin',
+        xFrameOptions: false,
+      }),
+    ).not.toThrow();
   });
 });

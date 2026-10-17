@@ -122,6 +122,18 @@ describe('requests without a key', () => {
       RateLimitModule.forRoot({ limit: 1, window: '1m', onMissingKey: 'maybe' as never }),
     ).toThrow(RangeError);
   });
+
+  test('an unknown onStoreError is rejected at forRoot instead of failing open', () => {
+    expect(() =>
+      RateLimitModule.forRoot({ limit: 1, window: '1m', onStoreError: 'deny ' as never }),
+    ).toThrow("onStoreError must be 'allow' or 'deny', got deny .");
+  });
+
+  test('an unknown algorithm is rejected at forRoot', () => {
+    expect(() =>
+      RateLimitModule.forRoot({ limit: 1, window: '1m', algorithm: 'token_bucket' as never }),
+    ).toThrow("algorithm must be 'sliding-window' or 'token-bucket', got token_bucket.");
+  });
 });
 
 describe('duration cap', () => {

@@ -99,8 +99,10 @@ describe('PrismaModule', () => {
     ).rejects.toBeInstanceOf(KneadError);
     const entries = logger.entries.filter((e) => e.level === 'error');
     expect(entries).toHaveLength(1);
-    const text = JSON.stringify(entries);
-    expect(text).toContain('connect to postgres://***@db failed');
+    const logged = entries[0]!.meta[0] as Error;
+    expect(logged).toBeInstanceOf(Error);
+    const text = `${JSON.stringify(entries)}\n${logged.message}\n${logged.stack}`;
+    expect(logged.stack).toContain('connect to postgres://***@db failed');
     expect(text).not.toContain('secret');
   });
 

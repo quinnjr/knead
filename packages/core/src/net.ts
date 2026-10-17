@@ -75,7 +75,10 @@ export function plaintextRedisHost(url: string | undefined): string | undefined 
   return isLoopbackHostname(parsed.hostname) ? undefined : parsed.host;
 }
 
-/** The URL Bun.redis connects to without an explicit one: REDIS_URL, VALKEY_URL or localhost. */
+/**
+ * The URL Bun.redis connects to without an explicit one: REDIS_URL, else VALKEY_URL (an empty
+ * value counts as unset), else `undefined`, in which case Bun connects to localhost.
+ */
 export function defaultRedisUrl(): string | undefined {
   return process.env.REDIS_URL || process.env.VALKEY_URL || undefined;
 }

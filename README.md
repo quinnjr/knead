@@ -2,6 +2,8 @@
 
 A NestJS-style framework for [Bun](https://bun.sh): standard TC39 decorators, `inject()`-based dependency injection, schema-typed REST controllers on Bun's native router, and secure-by-default HTTP modules.
 
+**Documentation: [quinnjr.github.io/knead](https://quinnjr.github.io/knead/)** (built from [`site/`](site)).
+
 | Package | Purpose |
 |---|---|
 | `@knead-js/core` | DI container, modules, lifecycle hooks |

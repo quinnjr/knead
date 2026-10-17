@@ -100,6 +100,21 @@ const FORBIDDEN_TOKEN = /[;,\r\n]/;
 
 const ONE_YEAR = 31_536_000;
 
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the point.
+const CONTROL_EXCEPT_TAB = /[\u0000-\u0008\u000a-\u001f\u007f]/;
+
+/** Options whose value is sent as a header as is, with their header names for error messages. */
+const HEADER_VALUES = [
+  ['referrerPolicy', 'Referrer-Policy'],
+  ['crossOriginOpenerPolicy', 'Cross-Origin-Opener-Policy'],
+  ['crossOriginResourcePolicy', 'Cross-Origin-Resource-Policy'],
+  ['xContentTypeOptions', 'X-Content-Type-Options'],
+  ['xFrameOptions', 'X-Frame-Options'],
+  ['xDnsPrefetchControl', 'X-DNS-Prefetch-Control'],
+  ['permissionsPolicy', 'Permissions-Policy'],
+  ['xPermittedCrossDomainPolicies', 'X-Permitted-Cross-Domain-Policies'],
+] as const satisfies readonly (readonly [keyof SecurityHeadersOptions, string])[];
+
 function validateHsts(hsts: HstsOptions | false | undefined): void {
   if (hsts === false || hsts === undefined) return;
   const maxAge = hsts.maxAge ?? ONE_YEAR;
@@ -123,17 +138,18 @@ function validateHsts(hsts: HstsOptions | false | undefined): void {
 /**
  * Rejects CSP config that could inject extra directives or header lines, invalid HSTS (a
  * non-integer or negative maxAge, or preload without includeSubDomains and a one-year maxAge) and
- * header values containing line breaks.
+ * header values that are not strings or contain control characters other than tab (CR, LF, NUL,
+ * ...), which would otherwise fail every response.
  */
 export function validateSecurityHeadersOptions(options: SecurityHeadersOptions): void {
   validateHsts(options.strictTransportSecurity);
-  const policy = options.permissionsPolicy;
-  if (
-    policy !== undefined &&
-    policy !== false &&
-    (typeof policy !== 'string' || /[\r\n]/.test(policy))
-  ) {
-    throw new HttpConfigError(`Invalid Permissions-Policy: ${JSON.stringify(policy)}`);
+  for (const [key, header] of HEADER_VALUES) {
+    const value = options[key];
+    if (value === undefined || value === false) continue;
+    // Headers rejects CR, LF and NUL, which would fail every response instead of startup.
+    if (typeof value !== 'string' || CONTROL_EXCEPT_TAB.test(value)) {
+      throw new HttpConfigError(`Invalid ${header}: ${JSON.stringify(value)}`);
+    }
   }
   const csp = options.contentSecurityPolicy;
   if (csp === false || csp === undefined || !csp.directives) return;

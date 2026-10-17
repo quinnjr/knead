@@ -1,4 +1,11 @@
-import { type DynamicModule, KneadError, Module } from '@knead-js/core';
+import {
+  type DynamicModule,
+  InjectionToken,
+  inject,
+  KneadError,
+  MODULES,
+  Module,
+} from '@knead-js/core';
 import { APP_FILTER } from '@knead-js/http';
 import { PrismaExceptionFilter } from './filter.js';
 import { PRISMA_HTTP_OPTIONS, type PrismaHttpOptions } from './tokens.js';
@@ -33,7 +40,27 @@ function snapshotHttpOptions(options: unknown): PrismaHttpOptions {
   return { ...(options as PrismaHttpOptions), map: Object.freeze(copy) as never };
 }
 
-@Module({})
+const PRISMA_HTTP_SETUP = new InjectionToken<true>('knead:prisma-http:setup');
+
+/**
+ * Fails startup when PrismaHttpModule is imported without forRoot() (no filter would be
+ * registered) or forRoot() is imported more than once (the first filter would answer every
+ * Prisma error, silently ignoring the other imports' `map`).
+ */
+function checkSetup(): true {
+  if (inject(PRISMA_HTTP_OPTIONS, { optional: true }) === undefined) {
+    throw new KneadError('Import PrismaHttpModule.forRoot(), not PrismaHttpModule');
+  }
+  const count = inject(MODULES).filter((m) => m.metatype === PrismaHttpModule).length;
+  if (count > 1) {
+    throw new KneadError(
+      `PrismaHttpModule.forRoot() is imported ${count} times; import it once, in the root module`,
+    );
+  }
+  return true;
+}
+
+@Module({ providers: [{ provide: PRISMA_HTTP_SETUP, useFactory: checkSetup }] })
 export class PrismaHttpModule {
   static forRoot(options: PrismaHttpOptions = {}): DynamicModule {
     const stored = snapshotHttpOptions(options);

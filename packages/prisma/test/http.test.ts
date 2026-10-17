@@ -350,3 +350,23 @@ describe('toHttpException', () => {
     expect(toHttpException({ name: 'PrismaClientFooError' })).toBeUndefined();
   });
 });
+
+describe('PrismaHttpModule setup', () => {
+  test('importing forRoot() twice is a startup error, not a silently ignored map', async () => {
+    @Module({
+      imports: [PrismaHttpModule.forRoot({ map: { P2025: () => new BadRequestException() } })],
+    })
+    class Feature {}
+    await expect(
+      Test.createModule({ imports: [PrismaHttpModule.forRoot(), Feature] }).compile(),
+    ).rejects.toThrow(
+      'PrismaHttpModule.forRoot() is imported 2 times; import it once, in the root module',
+    );
+  });
+
+  test('importing PrismaHttpModule without forRoot() is a startup error', async () => {
+    await expect(Test.createModule({ imports: [PrismaHttpModule] }).compile()).rejects.toThrow(
+      'Import PrismaHttpModule.forRoot(), not PrismaHttpModule',
+    );
+  });
+});

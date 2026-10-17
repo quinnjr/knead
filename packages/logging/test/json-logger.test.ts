@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { type LogLevel, MemoryLogger } from '@knead-js/core';
+import { type LogLevel, logError, MemoryLogger } from '@knead-js/core';
 import {
   childLogger,
   JsonLogger,
@@ -526,5 +526,21 @@ describe('childLogger()', () => {
 
   test('rejects fields that are not a plain object', () => {
     expect(() => childLogger(new MemoryLogger(), new Map() as never)).toThrow(LoggingConfigError);
+  });
+});
+
+describe('logError through JsonLogger', () => {
+  test('in development an error that held a credential still lands in err', () => {
+    const lines: string[] = [];
+    const logger = new JsonLogger({ development: true, write: (line) => lines.push(line) });
+    const error = Object.assign(new Error('connect redis://app:pw@cache failed'), {
+      config: { headers: { authorization: 'Bearer t0ken' } },
+    });
+    logError({ logger, development: true }, 'Request failed', error);
+    const record = JSON.parse(lines[0]!);
+    expect(record.meta).toBeUndefined();
+    expect(record.err).toStartWith('Error: connect redis://***@cache failed');
+    expect(lines[0]).not.toContain('app:pw');
+    expect(lines[0]).not.toContain('t0ken');
   });
 });
