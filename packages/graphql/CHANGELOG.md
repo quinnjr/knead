@@ -1,5 +1,41 @@
 # @knead-js/graphql
 
+## 0.4.0
+
+### Patch Changes
+
+- 141cdf4: GraphQL execution hardening:
+  
+  - `@ObjectType()` subclasses of a `@Resolver(() => T)` type now inherit its `@ResolveField()` methods with their guards, `authorize` and `validate`, instead of serving the raw inherited property. `@ResolveField()` on an `@InterfaceType()` (or `@InputType()`) target is a `SchemaBuildError`.
+  - `@UseFieldGuards()` on an `@InterfaceType()` or `@InputType()`, where it never ran, is a `SchemaBuildError`.
+  - A subscription field executed outside a subscription (for example a subscription document passed to `GraphQLRuntime.executor.execute`) is `BAD_USER_INPUT` and no longer calls the method without its guards.
+  - Computed subscription topics are deduplicated, and more than 100 distinct topics is `BAD_USER_INPUT`.
+  - A subscription `filter` sees the context as last replaced by `subscriptions.refreshContext`, not the subscribe-time one.
+  - `ctx.loader(Cls)` keeps one DataLoader per module, so modules that provide the same loader class each batch through their own provider.
+  - Under `defaultDeny`, an `authorize` guard counts as the field's own guard.
+- 141cdf4: GraphQL transport fixes from the code review:
+  
+  - `RedisPubSub` no longer goes silent when its subscriber connection dies: when it closes, or Bun
+    reconnects it without its channel subscriptions, every subscription ends through `onError` and
+    the next `subscribe()` opens a new connection. An owned publisher that Bun gave up on (or closed
+    on `idleTimeout`) is reconnected on its next use.
+  - `subscriptions.maxConnectionLifetime` must be an integer from 1 to 2147483647 (`HttpConfigError`);
+    larger values made the timer fire after about 1 ms and close every socket.
+  - The subscription endpoint answers with `Sec-WebSocket-Protocol: graphql-transport-ws` even when
+    the client offers it after another subprotocol.
+  - A `context` factory that throws at `connection_init` now rejects the connection (`4403`, logged)
+    instead of accepting it without an identity.
+  - An over-long `subscribe` reusing an active id closes the socket with `4409`, like any other.
+  - The in-memory `PubSub` deep-freezes payloads in `publish()`, whether or not anything is
+    subscribed, and `eventIterator()` undoes earlier topics when subscribing to a later one throws.
+- Updated dependencies [141cdf4]
+- Updated dependencies [141cdf4]
+- Updated dependencies [141cdf4]
+- Updated dependencies [141cdf4]
+- Updated dependencies [141cdf4]
+  - @knead-js/core@0.4.0
+  - @knead-js/http@0.4.0
+
 ## 0.3.0
 
 ### Patch Changes

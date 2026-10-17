@@ -1,6 +1,6 @@
 {
   "name": "@knead-js/prisma",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Prisma 7 integration with ambient transactions and HTTP error mapping for Knead, the NestJS-style web framework for Bun",
   "keywords": [
     "bun",
