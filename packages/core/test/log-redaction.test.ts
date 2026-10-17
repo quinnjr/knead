@@ -219,3 +219,79 @@ test('redactValue walks own Symbol keys', () => {
   const error = Object.assign(new Error('x'), { [key]: 'postgres://a:b@db' });
   expect(redactValue(error) as string).not.toContain('a:b@');
 });
+
+describe('redactValue key rules', () => {
+  test('keys containing a secret word are sensitive, whatever their case or separators', () => {
+    const input = {
+      db_password: 'a1',
+      userPassword: 'a2',
+      'x-api-key': 'a3',
+      clientSecret: 'a4',
+      access_token: 'a5',
+      sessionId: 'a6',
+      'Set-Cookie': 'a7',
+      AWS_SECRET_ACCESS_KEY: 'a8',
+      dbCredentials: { user: 'u', pass: 'a9' },
+    };
+    const out = redactValue(input) as Record<string, unknown>;
+    for (const key of Object.keys(input)) expect(out[key]).toBe('***');
+  });
+
+  test('numbers and booleans under a key that only contains a secret word are kept', () => {
+    const out = redactValue({ maxTokens: 100, tokenCount: 3, hasPassword: true, note: 'x' });
+    expect(out).toEqual({ maxTokens: 100, tokenCount: 3, hasPassword: true, note: 'x' });
+  });
+
+  test('an exact sensitive key is redacted whatever its value', () => {
+    expect(redactValue({ token: 12345, password: false })).toEqual({
+      token: '***',
+      password: '***',
+    });
+  });
+
+  test('credentials in object keys are redacted', () => {
+    const out = redactValue({ pools: { 'redis://admin:hunter2@db:6379': 3 } });
+    expect(JSON.stringify(out)).not.toContain('hunter2');
+    expect(out).toEqual({ pools: { 'redis://***@db:6379': 3 } });
+  });
+
+  test('credentials in Map keys are redacted', () => {
+    const out = redactValue(new Map([['postgres://u:s3cret@h/db', 1]]));
+    expect(Bun.inspect(out)).not.toContain('s3cret');
+  });
+
+  test('credentials in Error property keys are redacted', () => {
+    const error = Object.assign(new Error('x'), { pools: { 'redis://u:keysecret@h': 1 } });
+    expect(Bun.inspect(redactValue(error))).not.toContain('keysecret');
+  });
+});
+
+describe('redactValue cause chains', () => {
+  function chain(length: number, secretAt: number): Error {
+    let error = new Error('root');
+    for (let i = 1; i < length; i++) {
+      const message = i === length - 1 - secretAt ? 'redis://admin:deepsecret@db' : `level ${i}`;
+      error = new Error(message, { cause: error });
+    }
+    return error;
+  }
+
+  test('a credential deep in a long cause chain is redacted', () => {
+    const out = redactValue(chain(20, 12));
+    expect(typeof out).toBe('string');
+    expect(out as string).not.toContain('deepsecret');
+  });
+
+  test('a chain longer than the scanned limit is never returned raw', () => {
+    const error = chain(40, 0);
+    const out = redactValue(error);
+    expect(out).not.toBe(error);
+    expect(out as string).toContain('Caused by: … (more causes omitted)');
+    expect(out as string).not.toContain('deepsecret');
+  });
+
+  test('a short chain with nothing to redact is returned unchanged', () => {
+    const error = new Error('a', { cause: new Error('b') });
+    expect(redactValue(error)).toBe(error);
+  });
+});

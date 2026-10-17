@@ -187,6 +187,7 @@ jobs:
             @knead-js/cors
             @knead-js/graphql
             @knead-js/http
+            @knead-js/logging
             @knead-js/prisma
             @knead-js/rate-limit
             @knead-js/sanitize
@@ -202,6 +203,7 @@ jobs:
             @knead-js/cors: @knead-js/core @knead-js/http
             @knead-js/graphql: @knead-js/core @knead-js/http @leaven-graphql/core @leaven-graphql/errors @leaven-graphql/playground @leaven-graphql/ws @standard-schema/spec dataloader graphql
             @knead-js/http: @knead-js/core @standard-schema/spec
+            @knead-js/logging: @knead-js/core
             @knead-js/prisma: @knead-js/core @knead-js/http @prisma/client
             @knead-js/rate-limit: @knead-js/core @knead-js/http
             @knead-js/sanitize: @standard-schema/spec sanitize-html

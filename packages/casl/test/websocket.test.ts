@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { inject, Module, type OnModuleInit } from '@knead-js/core';
+import { inject, type OnModuleInit } from '@knead-js/core';
 import { APP_GUARD, WsRegistry } from '@knead-js/http';
 import { Test, type TestApp, type TestingModule } from '@knead-js/testing';
 import { AbilityGuard, CaslModule, canMeta, skipAbilityMeta } from '../src/index.js';

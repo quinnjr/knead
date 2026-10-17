@@ -8,6 +8,7 @@ A NestJS-style framework for [Bun](https://bun.sh): standard TC39 decorators, `i
 | `@knead-js/config` | Typed, validated config from env vars, async loaders and code |
 | `@knead-js/http` | `Bun.serve` adapter, controllers, middleware/guards/filters, TLS, WebSocket registry |
 | `@knead-js/cors` | CORS with preflight handling |
+| `@knead-js/logging` | JSON structured logging (NDJSON), redacted with core's rules |
 | `@knead-js/rate-limit` | Sliding-window / token-bucket limits, memory and Redis stores |
 | `@knead-js/security-headers` | CSP (with nonces), HSTS and friends |
 | `@knead-js/graphql` | Code-first GraphQL on Leaven: typed decorators, DataLoader, subscriptions |

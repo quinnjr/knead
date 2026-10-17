@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { inject, Module } from '@knead-js/core';
+import { inject, LOGGER, Module } from '@knead-js/core';
 import {
   Controller,
   type Ctx,
@@ -181,5 +181,26 @@ describe('Test.createModule', () => {
     expect(mod.logger).toBe(custom);
     await (await mod.createApp()).request('GET', '/greet/boom');
     expect(custom.entries.some((e) => e.level === 'error')).toBe(true);
+  });
+});
+
+describe('the testing logger', () => {
+  test('captures every module, replacing global and module-local LOGGER providers', async () => {
+    const local = new MemoryLogger();
+    class LocalService {
+      readonly log = inject(LOGGER);
+    }
+    @Module({ providers: [{ provide: LOGGER, useValue: local }, LocalService] })
+    class Feature {}
+    @Module({ imports: [Feature] })
+    class App {}
+    const mod = await Test.createModule({ imports: [App] }).compile();
+    try {
+      mod.get(LocalService).log.info('captured');
+      expect(mod.logs).toContainEqual({ level: 'info', message: 'captured', meta: [] });
+      expect(local.entries).toEqual([]);
+    } finally {
+      await mod.close();
+    }
   });
 });

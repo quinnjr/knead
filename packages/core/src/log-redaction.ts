@@ -58,7 +58,6 @@ function redactSecretPairs(text: string): string {
   return copied === 0 ? text : out + text.slice(copied);
 }
 
-/** HTTP Authorization credentials. */
 /**
  * A credential-shaped value only (8+ token characters, or a `:`/`=` with a token character
  * right before and after it, as in `user:pass`), so prose such as "a basic mistake" or
@@ -161,7 +160,7 @@ function errorText(error: Error): string {
   return error.stack?.includes(error.message) ? error.stack : `${error.name}: ${error.message}`;
 }
 
-/** Keys whose values are replaced with `***` wherever they appear (case-insensitive). */
+/** Keys whose values are replaced with `***` wherever they appear, whatever the value. */
 const SENSITIVE_KEYS = new Set([
   'authorization',
   'cookie',
@@ -179,6 +178,33 @@ const SENSITIVE_KEYS = new Set([
   'privatekey',
   'connectionstring',
 ]);
+/**
+ * Words that make any key containing them sensitive, once lowercased and stripped of `-` and `_`
+ * (`db_password`, `x-api-key`, `clientSecret`, `AWS_SECRET_ACCESS_KEY`, `sessionId`). Such keys
+ * keep number and boolean values (`maxTokens: 100`); every other value becomes `***`.
+ */
+const SENSITIVE_WORDS =
+  /password|passwd|pwd|secret|token|apikey|accountkey|privatekey|connectionstring|authorization|cookie|credential|sessionid/;
+
+/** `'exact'` for a SENSITIVE_KEYS key, `'word'` for one containing a SENSITIVE_WORDS word. */
+function sensitivity(key: string): 'exact' | 'word' | undefined {
+  const lower = key.toLowerCase();
+  if (SENSITIVE_KEYS.has(lower)) return 'exact';
+  // Keys longer than this are not names; skip the scan rather than test arbitrary text.
+  if (lower.length > 128) return undefined;
+  return SENSITIVE_WORDS.test(lower.replace(/[-_]/g, '')) ? 'word' : undefined;
+}
+
+function isRedactable(item: unknown, kind: 'exact' | 'word'): boolean {
+  if (item === undefined || item === null) return false;
+  return (
+    kind === 'exact' ||
+    (typeof item !== 'number' && typeof item !== 'boolean' && typeof item !== 'bigint')
+  );
+}
+
+/** Most errors of a cause chain scanned; a longer chain is never returned as the raw Error. */
+const MAX_CAUSES = 16;
 /** How deep redactValue walks objects, arrays and Error properties. */
 const REDACT_DEPTH = 4;
 /** Error properties printed as part of the error's text. */
@@ -308,9 +334,14 @@ function walk(value: unknown, depth: number, state: Walk): unknown {
     const out: Record<PropertyKey, unknown> = isError
       ? {}
       : Object.create(Object.getPrototypeOf(value));
-    for (const [key, item] of entries) {
-      const sensitive = typeof key === 'string' && SENSITIVE_KEYS.has(key.toLowerCase());
-      if (sensitive && item !== undefined && item !== null) {
+    for (const [rawKey, item] of entries) {
+      let key = rawKey;
+      if (typeof rawKey === 'string') {
+        key = redactCredentials(rawKey);
+        if (key !== rawKey) state.changed = true;
+      }
+      const kind = typeof rawKey === 'string' ? sensitivity(rawKey) : undefined;
+      if (kind !== undefined && isRedactable(item, kind)) {
         out[key] = '***';
         state.changed = true;
       } else out[key] = walk(item, depth + 1, state);
@@ -333,7 +364,7 @@ function walk(value: unknown, depth: number, state: Walk): unknown {
 function redactError(error: Error, props: Record<string, unknown>, depth: number, state: Walk) {
   const parts: string[] = [];
   let current: unknown = error;
-  for (let level = 0; current !== undefined && level <= 8; level++) {
+  for (let level = 0; current !== undefined && level < MAX_CAUSES; level++) {
     const raw =
       current instanceof Error ? errorText(current) : typeof current === 'string' ? current : '';
     const text = raw || String(current);
@@ -346,6 +377,11 @@ function redactError(error: Error, props: Record<string, unknown>, depth: number
     }
     current = current instanceof Error ? current.cause : undefined;
   }
+  if (current !== undefined) {
+    // The rest of the chain was not scanned, so the raw Error must not be printed.
+    parts.push('Caused by: … (more causes omitted)');
+    state.changed = true;
+  }
   if (!state.changed) return error;
   if (Object.keys(props).length > 0) parts.splice(1, 0, `  ${Bun.inspect(props)}`);
   return parts.join('\n');
@@ -355,8 +391,10 @@ function redactError(error: Error, props: Record<string, unknown>, depth: number
  * A copy of `value` with credentials redacted, for logging: strings through redactCredentials;
  * plain objects, arrays and Error own properties (including `AggregateError.errors`) walked up
  * to 4 levels deep, with the values of sensitive keys (`authorization`, `cookie`, `password`,
- * `token`, `apikey`, ...) replaced by `***`; cycles become `[Circular]`. An Error that needed
- * redacting becomes its redacted stack text. Other objects (class instances) are returned as is.
+ * `token`, `apikey`, ..., and any key containing such a word whatever its case or separators,
+ * such as `db_password` or `x-api-key`) replaced by `***`, credentials in keys redacted too;
+ * cycles become `[Circular]`. An Error that needed redacting, or whose cause chain is longer
+ * than 16, becomes its redacted stack text. Other objects (class instances) are returned as is.
  * The original is never modified, and a value with nothing to redact is returned unchanged.
  */
 export function redactValue(value: unknown): unknown {

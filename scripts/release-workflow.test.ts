@@ -502,7 +502,7 @@ describe('release.yml publish step', () => {
       const r = publish('v1.2.3', []);
       expect(r.exitCode).toBe(0);
       expect(r.allPublishes).toHaveLength(ALLOWED.length);
-      expect(ALLOWED).toHaveLength(12);
+      expect(ALLOWED).toHaveLength(13);
     });
 
     test('publishes nothing when a package is missing from the artifact', () => {

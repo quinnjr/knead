@@ -15,6 +15,7 @@ injection, and is secure by default.
 | `packages/core` | `@knead-js/core` | DI container, modules, lifecycle, metadata |
 | `packages/http` | `@knead-js/http` | `Bun.serve` adapter, routing, pipeline, guards, WebSocket registry, logger |
 | `packages/config` | `@knead-js/config` | Typed, validated config from env vars, async loaders and code |
+| `packages/logging` | `@knead-js/logging` | `LoggingModule` and `JsonLogger`: JSON structured logs |
 | `packages/cors` | `@knead-js/cors` | CORS |
 | `packages/rate-limit` | `@knead-js/rate-limit` | Rate limiting (memory and Redis stores) |
 | `packages/security-headers` | `@knead-js/security-headers` | CSP, HSTS and other headers |
