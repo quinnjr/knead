@@ -53,8 +53,9 @@ in the schema are read:
 | `JWT_SECRET` | `jwtSecret` |
 
 Names that are not `SCREAMING_SNAKE_CASE` (`path`, `Foo_Bar`, `_X`) and names the schema does not
-declare are ignored. Two names that map to the same key (`A_B` and `A__B` style clashes) throw
-`ConfigKeyCollisionError` rather than picking one.
+declare are ignored. Two names in the same source that map to the same declared key (for example `X_1` and `X1`, which
+both become `x1`) throw `ConfigKeyCollisionError` rather than picking one. Collisions only count
+for keys the schema declares.
 
 ## Precedence
 
