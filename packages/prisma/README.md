@@ -153,6 +153,6 @@ test('creates a user', async () => {
 
 `withRollback` does not cover requests made through a real ephemeral server (`listen()` plus `fetch`). Those run in a separate async context, never see the test's transaction, and commit for real. Clean up after such tests yourself, or test controllers through service calls inside `withRollback`.
 
-The package's own Postgres suite runs with `pnpm --filter @knead-js/prisma test:db` and `DATABASE_URL` set (see AGENTS.md); it resets the target database, so point it at a disposable one.
+The package's own Postgres suite runs with `pnpm --filter @knead-js/prisma test:db` and `KNEAD_PRISMA_TEST_DATABASE_URL` set (see AGENTS.md). It reads that dedicated variable, never `DATABASE_URL`, skips without it, and resets the target database, so point it at a disposable one.
 
 `bun add @knead-js/core @knead-js/prisma` (`@knead-js/core` is a peer dependency, so every package shares one copy; add `@knead-js/http` for `/http`). Licensed MIT OR Apache-2.0.

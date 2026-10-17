@@ -12,10 +12,12 @@ import {
   loadClient,
 } from './fixtures/load-client.js';
 
-// Runs against a real Postgres. See `test:db` in package.json:
+// Runs against a real, disposable Postgres; skipped unless KNEAD_PRISMA_TEST_DATABASE_URL is set
+// (a dedicated variable, so an application's DATABASE_URL never points the suite at real data).
+// See `test:db` in package.json and AGENTS.md:
 //   docker run -d --rm -p 5433:5432 -e POSTGRES_PASSWORD=knead postgres:17-alpine
-//   DATABASE_URL=postgresql://postgres:knead@localhost:5433/postgres pnpm --filter @knead-js/prisma test:db
-const DATABASE_URL = process.env.DATABASE_URL;
+//   KNEAD_PRISMA_TEST_DATABASE_URL=postgresql://postgres:knead@localhost:5433/postgres pnpm --filter @knead-js/prisma test:db
+const TEST_DATABASE_URL = process.env.KNEAD_PRISMA_TEST_DATABASE_URL ?? '';
 
 function db(prisma: PrismaService): FixtureDb {
   return prisma.db as unknown as FixtureDb;
@@ -73,7 +75,7 @@ class UsersController {
   }
 }
 
-describe.skipIf(!DATABASE_URL)('postgres integration', () => {
+describe.skipIf(TEST_DATABASE_URL === '')('postgres integration', () => {
   let mod: TestingModule;
   let client: FixtureClient;
   let host: TransactionHost;
@@ -81,7 +83,7 @@ describe.skipIf(!DATABASE_URL)('postgres integration', () => {
 
   beforeAll(async () => {
     const PrismaClient = await loadClient();
-    const adapter = await loadAdapter(DATABASE_URL!);
+    const adapter = await loadAdapter(TEST_DATABASE_URL);
     mod = await Test.createModule({
       imports: [
         PrismaModule.forRoot({ client: () => new PrismaClient({ adapter }) as never }),
@@ -96,6 +98,9 @@ describe.skipIf(!DATABASE_URL)('postgres integration', () => {
   });
 
   afterAll(async () => {
+    // Leave the database as the suite found it.
+    await client?.post.deleteMany();
+    await client?.user.deleteMany();
     await mod?.close();
   });
 
@@ -177,7 +182,7 @@ describe.skipIf(!DATABASE_URL)('postgres integration', () => {
 
   test('P2002 carries the field names in development', async () => {
     const PrismaClient = await loadClient();
-    const adapter = await loadAdapter(DATABASE_URL!);
+    const adapter = await loadAdapter(TEST_DATABASE_URL);
     const dev = await Test.createModule({
       imports: [
         PrismaModule.forRoot({ client: () => new PrismaClient({ adapter }) as never }),

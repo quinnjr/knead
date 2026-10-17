@@ -1,4 +1,4 @@
-// Fixture schema for the DATABASE_URL-gated integration suite (test/integration.test.ts).
+// Fixture schema for the KNEAD_PRISMA_TEST_DATABASE_URL-gated integration suite (test/integration.test.ts).
 // The generated client lands in ./generated, which is gitignored.
 
 generator client {

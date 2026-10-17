@@ -61,15 +61,17 @@ REDIS_URL=redis://localhost:6390 pnpm test
 REDIS_URL=redis://localhost:6390 pnpm --filter @knead-js/example-graphql-server smoke
 ```
 
-The Postgres suite of `@knead-js/prisma` skips unless `DATABASE_URL` is set. Run it before
-finishing changes to `packages/prisma`:
+The Postgres suite of `@knead-js/prisma` skips unless `KNEAD_PRISMA_TEST_DATABASE_URL` is set
+(a dedicated variable, never `DATABASE_URL`, so an application's real database is never the
+target). Run it before finishing changes to `packages/prisma`:
 
 ```bash
 docker run -d --rm --name knead-prisma-pg -p 5433:5432 -e POSTGRES_PASSWORD=knead postgres:17-alpine
-DATABASE_URL=postgresql://postgres:knead@localhost:5433/postgres pnpm --filter @knead-js/prisma test:db
+KNEAD_PRISMA_TEST_DATABASE_URL=postgresql://postgres:knead@localhost:5433/postgres pnpm --filter @knead-js/prisma test:db
 ```
 
-`test:db` uses `prisma db push --force-reset`, which Prisma refuses to run from AI agents without
+`test:db` exits early when `KNEAD_PRISMA_TEST_DATABASE_URL` is unset. It uses
+`prisma db push --force-reset`, which Prisma refuses to run from AI agents without
 the user's consent. Agents should either ask the user to run it, or, on a freshly started
 container only, run `prisma generate` and a plain `prisma db push` with the fixture config
 (`--config test/fixtures/prisma.config.ts`), then `bun test`. Agents must never set
