@@ -85,6 +85,10 @@ not counted. A request over the limit gets a `429 Too Many Requests` problem res
 - **Validated at startup.** Invalid limits, windows and option values are a `RangeError`, never a
   silent fallback.
 - **GraphQL too.** `RateLimitGuard` works on resolvers, where a denial is a `RATE_LIMITED` error.
+  Without `@RateLimit()`, a guarded field counts once per HTTP request, however many items it
+  resolves for.
+- **Quiet outages.** Store failures are logged once, then at most every 10 seconds, then on
+  recovery.
 
 ## Options
 
