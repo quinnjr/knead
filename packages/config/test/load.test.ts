@@ -202,15 +202,32 @@ test('duplicate issues for one key are listed once', async () => {
   );
 });
 
-test('a nested issue shows its camelCase path', async () => {
+test('a nested issue is truncated to its declared key', async () => {
   const s = defineConfig(z.object({ db: z.object({ host: z.string() }) }));
   const error = await failure(loadConfig(s, { values: { db: { host: 1 } } as never }, {}));
   const e = error as ConfigValidationError;
   expect(e.issues[0]).toEqual({
     key: 'db',
     name: 'db',
-    path: ['db', 'host'],
+    path: ['db'],
     message: 'Invalid value',
   });
-  expect(e.message).toContain('db (db.host): Invalid value');
+  expect(e.message).toContain('db (db): Invalid value');
+  expect(e.message).not.toContain('host');
+});
+
+test('keys produced from a secret never reach the message or inspect output', async () => {
+  const s = defineConfig(
+    z.object({
+      creds: z
+        .string()
+        .transform((raw) => JSON.parse(raw) as unknown)
+        .pipe(z.record(z.string(), z.number())),
+    }),
+  );
+  const error = await failure(loadConfig(s, {}, { CREDS: '{"supersecretkey":"x"}' }));
+  const e = error as ConfigValidationError;
+  expect(e.message).not.toContain('supersecretkey');
+  expect(Bun.inspect(error)).not.toContain('supersecretkey');
+  expect(e.issues[0]?.path).toEqual(['creds']);
 });

@@ -23,10 +23,10 @@ test('ConfigLoaderError keeps cause non-enumerable', () => {
 test('ConfigValidationError lists one line per issue', () => {
   const error = new ConfigValidationError([
     { key: 'jwtSecret', name: 'JWT_SECRET', path: ['jwtSecret'], message: 'Missing value' },
-    { key: 'db', name: 'DB', path: ['db', 'host'], message: 'Invalid value' },
+    { key: 'db', name: 'DB', path: ['db'], message: 'Invalid value' },
   ]);
   expect(error.message).toBe(
-    'Config validation failed:\n  JWT_SECRET (jwtSecret): Missing value\n  DB (db.host): Invalid value',
+    'Config validation failed:\n  JWT_SECRET (jwtSecret): Missing value\n  DB (db): Invalid value',
   );
   expect(error.issues).toHaveLength(2);
 });

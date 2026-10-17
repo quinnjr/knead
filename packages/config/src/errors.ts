@@ -34,13 +34,13 @@ export class ConfigLoaderError extends ConfigError {
 export interface ConfigIssue {
   key: string;
   name: string;
+  /** Always `[key]` (or `[]` for a root issue); nested segments may derive from values and are dropped. */
   path: string[];
   message: string;
 }
 
 function describe(issue: ConfigIssue): string {
-  const where = issue.path.length > 1 ? issue.path.join('.') : issue.key;
-  return `  ${issue.name} (${where}): ${issue.message}`;
+  return `  ${issue.name} (${issue.key}): ${issue.message}`;
 }
 
 export class ConfigValidationError extends ConfigError {

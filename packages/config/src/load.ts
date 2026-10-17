@@ -20,16 +20,19 @@ function segment(s: PropertyKey | StandardSchemaV1.PathSegment): string {
 }
 
 function describeIssue(
-  path: string[],
+  topKey: string | undefined,
   merged: Record<string, unknown>,
   winners: ReadonlyMap<string, string>,
 ): ConfigIssue {
-  const key = path[0];
-  if (key === undefined) return { key: '(root)', name: '(schema)', path, message: 'Invalid value' };
+  const key = topKey;
+  // Only the declared top-level key is ever kept: deeper segments can be derived from values
+  // (record keys, keys of a transformed secret), so they never reach issues or messages.
+  if (key === undefined)
+    return { key: '(root)', name: '(schema)', path: [], message: 'Invalid value' };
   return {
     key,
     name: winners.get(key) ?? toScreamingSnake(key),
-    path,
+    path: [key],
     message: Object.hasOwn(merged, key) ? 'Invalid value' : 'Missing value',
   };
 }
@@ -89,9 +92,13 @@ export async function loadConfig<S extends ConfigSchema>(
   if (result.issues) {
     const issues = new Map<string, ConfigIssue>();
     for (const issue of result.issues) {
-      const path = (issue.path ?? []).map(segment);
-      const described = describeIssue(path, merged, winners);
-      const id = `${described.name}|${path.join('.')}`;
+      const first = issue.path?.[0];
+      const described = describeIssue(
+        first === undefined ? undefined : segment(first),
+        merged,
+        winners,
+      );
+      const id = `${described.name}|${described.key}`;
       if (!issues.has(id)) issues.set(id, described);
     }
     throw new ConfigValidationError([...issues.values()]);
