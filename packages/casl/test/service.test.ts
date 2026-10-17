@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from 'bun:test';
+import type { AbilityBuilder, MongoAbility } from '@casl/ability';
 import { inject } from '@knead-js/core';
 import { Controller, type Ctx, Get, UnauthorizedException, UseGuards } from '@knead-js/http';
 import { Test, type TestApp, type TestingModule } from '@knead-js/testing';
@@ -239,6 +240,51 @@ test('validateGrant rejects a field the user is explicitly forbidden', async () 
       },
     ],
   });
+});
+
+test('validateGrant rejects a pair a later unconditional cannot denies', async () => {
+  const problem = {
+    reason: 'exceeds-user',
+    area: 'posts',
+    level: 'write',
+    action: 'update',
+    subject: 'Post',
+  };
+  const user: TestUser = { id: 'alice', roles: [] };
+  const denied = await service({
+    ...options,
+    defineUserAbility: (_user, { can, cannot }) => {
+      can('read', 'Post');
+      can('update', 'Post', { authorId: 'alice' });
+      cannot('update', 'Post');
+    },
+  });
+  expect(await denied.validateGrant(user, 'posts:write')).toEqual({
+    ok: false,
+    problems: [problem],
+  });
+  // (posts:write includes posts:read.) A conditional or field-level cannot leaves the pair
+  // possible, and so does a can after the cannot.
+  for (const define of [
+    (_u: TestUser, { can, cannot }: AbilityBuilder<MongoAbility>) => {
+      can('read', 'Post');
+      can('update', 'Post');
+      cannot('update', 'Post', { locked: true });
+    },
+    (_u: TestUser, { can, cannot }: AbilityBuilder<MongoAbility>) => {
+      can('read', 'Post');
+      can('update', 'Post');
+      cannot('update', 'Post', ['title']);
+    },
+    (_u: TestUser, { can, cannot }: AbilityBuilder<MongoAbility>) => {
+      can('read', 'Post');
+      cannot('update', 'Post');
+      can('update', 'Post', { authorId: 'alice' });
+    },
+  ]) {
+    const abilities = await service({ ...options, defineUserAbility: define });
+    expect((await abilities.validateGrant(user, 'posts:write')).ok).toBe(true);
+  }
 });
 
 test('a null identity is unauthenticated', async () => {

@@ -87,10 +87,13 @@ export class AbilityService {
               const key = JSON.stringify([area, action, subject, field ?? null]);
               if (seen.has(key)) continue;
               seen.add(key);
-              // A field must be allowed (a `cannot` on it wins); a pair needs some positive rule.
+              // A field must be allowed (a `cannot` on it wins). A pair needs a positive rule
+              // that no higher-priority unconditional `cannot` (no conditions, no fields) shadows.
               const allowed =
                 field === undefined
-                  ? ability.possibleRulesFor(action, subject).some((r) => !r.inverted)
+                  ? ability
+                      .possibleRulesFor(action, subject)
+                      .find((r) => !r.inverted || (!r.conditions && !r.fields))?.inverted === false
                   : ability.can(action, subject, field) === true;
               if (allowed) continue;
               problems.push({

@@ -57,8 +57,34 @@ class PostsController {
 @UseGuards(AbilityGuard)
 @SkipAbility()
 class PublicController {
-  @Get('/') @Can('update', 'Post') both() {
+  @Get('/') open() {
     return 'public';
+  }
+
+  // The method's @Can() is more specific than the controller's @SkipAbility().
+  @Get('/admin') @Can('update', 'Post') admin() {
+    return 'admin';
+  }
+
+  @Get('/skip-then-can') @SkipAbility() @Can('update', 'Post') skipThenCan() {
+    return 'both';
+  }
+
+  @Get('/can-then-skip') @Can('update', 'Post') @SkipAbility() canThenSkip() {
+    return 'both';
+  }
+}
+
+@Controller('/guarded')
+@UseGuards(AbilityGuard)
+@Can('update', 'Post')
+class GuardedController {
+  @Get('/') guarded() {
+    return 'guarded';
+  }
+
+  @Get('/open') @SkipAbility() open() {
+    return 'open';
   }
 }
 
@@ -71,7 +97,7 @@ afterEach(async () => {
 async function serve(): Promise<TestApp> {
   const mod = await Test.createModule({
     imports: [CaslModule.forRoot(options)],
-    controllers: [PostsController, PublicController],
+    controllers: [PostsController, PublicController, GuardedController],
   }).compile();
   app = await mod.createApp();
   return app;
@@ -128,9 +154,24 @@ test('@SkipAbility() routes need no identity', async () => {
   expect((await a.request('GET', '/open')).status).toBe(200);
 });
 
-test('@SkipAbility() wins over @Can() when both apply', async () => {
+test('a method-level decorator wins over the controller-level one', async () => {
   const a = await serve();
   expect((await a.request('GET', '/public')).status).toBe(200);
+  expect((await a.request('GET', '/public/admin')).status).toBe(401);
+  expect((await a.request('GET', '/public/admin', bearer('alice', { posts: 'read' }))).status).toBe(
+    403,
+  );
+  expect(
+    (await a.request('GET', '/public/admin', bearer('admin', { posts: 'write' }))).status,
+  ).toBe(200);
+  expect((await a.request('GET', '/guarded')).status).toBe(401);
+  expect((await a.request('GET', '/guarded/open')).status).toBe(200);
+});
+
+test('@SkipAbility() wins over @Can() on the same method, in either order', async () => {
+  const a = await serve();
+  expect((await a.request('GET', '/public/skip-then-can')).status).toBe(200);
+  expect((await a.request('GET', '/public/can-then-skip')).status).toBe(200);
 });
 
 test('a guarded route without @Can() fails closed', async () => {
