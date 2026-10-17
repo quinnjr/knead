@@ -2,12 +2,12 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { AbilityService, fullGrant } from '@knead-js/casl';
 import { Test, type TestingModule } from '@knead-js/testing';
 import { AppModule } from '../src/app.module.js';
+import { demoUsers } from '../src/auth/auth.js';
 import { permissions } from '../src/auth/permissions.js';
 
 let mod: TestingModule;
 let abilities: AbilityService;
-const admin = { id: 'u1', name: 'Admin', roles: ['admin'] };
-const regular = { id: 'u2', name: 'Regular', roles: [] };
+const { admin, regular } = demoUsers;
 
 beforeAll(async () => {
   mod = await Test.createModule({ imports: [AppModule] }).compile({ development: false });

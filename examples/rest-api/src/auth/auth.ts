@@ -15,6 +15,12 @@ declare module '@knead-js/http' {
   }
 }
 
+/** The demo's users. */
+export const demoUsers: Readonly<Record<'admin' | 'regular', User>> = {
+  admin: { id: 'u1', name: 'Admin', roles: ['admin'] },
+  regular: { id: 'u2', name: 'Regular', roles: [] },
+};
+
 /**
  * Demo-only token store. The bearer tokens below are hard-coded and public:
  * anyone who reads this file can authenticate as an admin. Never ship this to
@@ -37,13 +43,10 @@ export class AuthService {
 
   readonly #tokens = new Map<string, Session>([
     // A first-party session: everything the admin can do.
-    [
-      'admin-token',
-      { user: { id: 'u1', name: 'Admin', roles: ['admin'] }, grant: fullGrant(permissions) },
-    ],
-    ['user-token', { user: { id: 'u2', name: 'Regular', roles: [] }, grant: 'users:read' }],
+    ['admin-token', { user: demoUsers.admin, grant: fullGrant(permissions) }],
+    ['user-token', { user: demoUsers.regular, grant: 'users:read' }],
     // An admin's read-only token: the grant narrows what the admin could otherwise do.
-    ['reader-token', { user: { id: 'u1', name: 'Admin', roles: ['admin'] }, grant: 'users:read' }],
+    ['reader-token', { user: demoUsers.admin, grant: 'users:read' }],
   ]);
 
   verify(token: string): Session | undefined {

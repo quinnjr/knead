@@ -130,6 +130,14 @@ function smokeTest(dir: string, names: string[], source: string): void {
     ['@casl/ability', 'packages/casl/node_modules/@casl/ability'],
     ['@types/bun', 'node_modules/@types/bun'],
   ];
+  for (const dep of needed) {
+    if (dep.startsWith('@knead-js/') && !names.includes(dep)) {
+      throw new Error(
+        `${dep} is a required dependency or peer of a package in this smoke test but is not ` +
+          `among its packed packages (${names.join(', ')})`,
+      );
+    }
+  }
   const known = new Set(thirdParty.map(([name]) => name));
   for (const dep of needed) {
     if (!dep.startsWith('@knead-js/') && !known.has(dep)) {
