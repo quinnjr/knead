@@ -349,3 +349,47 @@ describe('resolve refs', () => {
     expect(resolveFilter(filter, injector)).toBe(filter);
   });
 });
+
+describe('an error handler that fails still answers', () => {
+  test('an invalid filter yields a serializable 500 problem with the instance', async () => {
+    const log = new MemoryLogger();
+    const handle = createErrorHandler([undefined as never], log, false);
+    const res = await handle(new Error('secret detail'), makeCtx('/broken'));
+    expect(res.status).toBe(500);
+    expect(res.headers.get('content-type')).toBe('application/problem+json; charset=utf-8');
+    const problem = await res.json();
+    expect(problem).toMatchObject({
+      type: 'about:blank',
+      title: 'Internal Server Error',
+      status: 500,
+      instance: '/broken',
+    });
+    expect(JSON.stringify(problem)).not.toContain('secret detail');
+    expect(log.entries.some((e) => e.level === 'error')).toBe(true);
+  });
+
+  test('a logger that throws does not keep the request from an answer', async () => {
+    const throwing = new MemoryLogger();
+    throwing.error = () => {
+      throw new Error('logger down');
+    };
+    const res = await createErrorHandler([], throwing, false)(new Error('x'), makeCtx('/p'));
+    expect(res.status).toBe(500);
+    expect(await res.json()).toMatchObject({ status: 500, instance: '/p' });
+  });
+});
+
+describe('defaultErrorResponse with extensions that do not serialize', () => {
+  test('drops the extensions and keeps the standard members', async () => {
+    const error = new HttpException(409, 'clash', { extensions: { id: 10n, safe: 1 } });
+    const res = defaultErrorResponse(error, makeCtx('/c'), new MemoryLogger(), false);
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      type: 'about:blank',
+      title: 'Conflict',
+      status: 409,
+      detail: 'clash',
+      instance: '/c',
+    });
+  });
+});

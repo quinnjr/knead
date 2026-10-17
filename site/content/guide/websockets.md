@@ -56,7 +56,8 @@ Keep tickets single-use and short-lived: query strings tend to end up in proxy a
 
 ## How an upgrade is processed
 
-A request with `Upgrade: websocket` to the path of a registered endpoint takes this path:
+A `GET` request with `Upgrade: websocket` to the path of a registered endpoint takes this path
+(with any other method, the header is ignored and the request is an ordinary one):
 
 1. The [host check](/guide/server/#allowed-hosts): a host outside `allowedHosts` gets `421`.
 2. Global middleware, highest priority first. When the path is also the path of a `GET` route,

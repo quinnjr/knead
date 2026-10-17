@@ -73,7 +73,8 @@ match is not included, and requests answered by the fallback (404 and 405) have 
 ## Headers
 
 `ctx.headers` is a `null`-prototype object of the request headers with lowercase names. A header
-sent several times has its values joined with `, `, as `Headers.get()` does. For the `Headers`
+sent several times has its values joined with `, `, as `Headers.get()` does. Headers named
+`__proto__`, `constructor` or `prototype` are dropped, as in `ctx.query`. For the `Headers`
 object itself, use `ctx.req.headers`.
 
 ## The request body

@@ -1,6 +1,6 @@
 import { getMetadata } from '@knead-js/core';
 import type { RequestContext } from './context.js';
-import { logError } from './error-log.js';
+import { type ErrorLogOptions, logError } from './error-log.js';
 import {
   ForbiddenException,
   HttpException,
@@ -73,14 +73,14 @@ export function defaultErrorResponse(
   const where = `${logValue(ctx.req.method)} ${logValue(instance)}`;
   const log = { logger, development };
   if (error instanceof HttpException) {
-    if (error.status < 500) return problemResponse(error.toProblem(instance), error.headers);
+    if (error.status < 500) return serializedProblem(error.toProblem(instance), error.headers);
     const correlationId = logError(log, `${error.status} on ${where}`, error);
     // Outside development a 5xx carries no detail or extensions: they tend to leak internals.
     const problem: ProblemDetails = development
       ? redactProblem(error.toProblem(instance))
       : { type: error.type, title: error.title, status: error.status, instance };
     problem.correlationId = correlationId;
-    return problemResponse(problem, error.headers);
+    return serializedProblem(problem, error.headers);
   }
   const correlationId = logError(log, `Unhandled error on ${where}`, error);
   const problem: ProblemDetails = {
@@ -93,6 +93,53 @@ export function defaultErrorResponse(
   if (development && error instanceof Error) {
     problem.detail = redactCredentials(error.message);
     problem.stack = error.stack === undefined ? undefined : redactCredentials(error.stack);
+  }
+  return problemResponse(problem);
+}
+
+/** The members besides `type`, `title` and `status` that a fallback problem keeps. */
+const KEPT_MEMBERS = ['detail', 'instance', 'correlationId'] as const;
+
+/**
+ * problemResponse(), or, when an extension does not serialize (a BigInt, a cycle), the same
+ * problem with only its standard members.
+ */
+function serializedProblem(problem: ProblemDetails, headers: Headers): Response {
+  try {
+    return problemResponse(problem, headers);
+  } catch {
+    const standard: ProblemDetails = {
+      type: problem.type,
+      title: problem.title,
+      status: problem.status,
+    };
+    for (const key of KEPT_MEMBERS) {
+      if (problem[key] !== undefined) (standard as Record<string, unknown>)[key] = problem[key];
+    }
+    return problemResponse(standard, headers);
+  }
+}
+
+/**
+ * A fixed 500 problem for an error no handler could answer (an error handler that threw, or a
+ * rejection that reached Bun). It is logged when the logger allows; nothing of it is sent.
+ */
+export function internalErrorResponse(
+  error: unknown,
+  log: ErrorLogOptions,
+  message: string,
+  instance?: string,
+): Response {
+  const problem: ProblemDetails = {
+    type: 'about:blank',
+    title: 'Internal Server Error',
+    status: 500,
+  };
+  if (instance !== undefined) problem.instance = instance;
+  try {
+    problem.correlationId = logError(log, message, error);
+  } catch {
+    // A failing logger must not keep the request from an answer.
   }
   return problemResponse(problem);
 }
@@ -112,18 +159,33 @@ export function createErrorHandler(
   development: boolean,
 ): ErrorHandler {
   return async (error, ctx) => {
-    for (const filter of filters) {
-      if (!handles(filter, error)) continue;
-      try {
-        const res = await filter.catch(error, ctx);
-        if (res === undefined) continue;
-        if (res instanceof Response) return res;
-        logger.error(`Exception filter ${nameOf(filter)} did not return a Response`);
-      } catch (filterError) {
-        logError({ logger, development }, `Exception filter ${nameOf(filter)} threw`, filterError);
+    try {
+      for (const filter of filters) {
+        if (!handles(filter, error)) continue;
+        try {
+          const res = await filter.catch(error, ctx);
+          if (res === undefined) continue;
+          if (res instanceof Response) return res;
+          logger.error(`Exception filter ${nameOf(filter)} did not return a Response`);
+        } catch (filterError) {
+          logError(
+            { logger, development },
+            `Exception filter ${nameOf(filter)} threw`,
+            filterError,
+          );
+        }
+        break;
       }
-      break;
+      return defaultErrorResponse(error, ctx, logger, development);
+    } catch (handlerError) {
+      // The error handler is the last line before Bun: it must always answer.
+      const instance = requestPathname(ctx.req);
+      return internalErrorResponse(
+        handlerError,
+        { logger, development },
+        `The error handler failed on ${logValue(ctx.req.method)} ${logValue(instance)}`,
+        instance,
+      );
     }
-    return defaultErrorResponse(error, ctx, logger, development);
   };
 }
