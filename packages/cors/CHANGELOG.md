@@ -1,5 +1,19 @@
 # @knead-js/cors
 
+## 0.2.0
+
+### Patch Changes
+
+- Updated dependencies [f779f8a]
+- Updated dependencies [5296955]
+- Updated dependencies [f779f8a]
+- Updated dependencies [7b77d69]
+- Updated dependencies [5296955]
+- Updated dependencies [82ce070]
+- Updated dependencies [871883c]
+  - @knead-js/core@0.2.0
+  - @knead-js/http@0.2.0
+
 ## 0.1.0
 
 ### Minor Changes
