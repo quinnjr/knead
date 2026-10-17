@@ -219,10 +219,11 @@ Conditions are not evaluated then; they are enforced on every request, against t
   ```
 
   Global guards run before route guards, so `resolve()` must then identify the caller itself rather
-  than read what a route-level auth guard stored. A global guard also runs on WebSocket upgrades and
-  on the `/graphql` request itself, which have no `@Can()` and are therefore denied: in an app with
-  `@knead-js/graphql` or WebSocket endpoints, use `@UseGuards(AbilityGuard)` on the controllers
-  instead, and `guards: [AbilityGuard]` for GraphQL.
+  than read what a route-level auth guard stored. A global guard also runs on the `/graphql`
+  request and on subscription upgrades. It passes them when `GraphQLModule.forRoot({ guards })`
+  includes `AbilityGuard` (or a subclass), because every root field is then checked against its own
+  `@Can()`; otherwise the endpoint has no `@Can()` and is denied (fail closed). Other WebSocket
+  endpoints need `@Can()` or `@SkipAbility()` on the GET route they upgrade from.
 - **`AbilityService`** builds the caller's ability once per request (cached on `ctx.state`):
   `forCtx(ctx)` returns it (or throws `UnauthorizedException`), and `authorize(ctx, action,
   subject, field?)` throws `ForbiddenException` unless it allows the action. `@Can()` checks the

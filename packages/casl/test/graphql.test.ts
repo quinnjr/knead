@@ -15,7 +15,7 @@ import {
   Subscription,
   UseFieldGuards,
 } from '@knead-js/graphql';
-import { ROUTE_META } from '@knead-js/http';
+import { APP_GUARD, ROUTE_META } from '@knead-js/http';
 import { Test, type TestApp, type TestingModule } from '@knead-js/testing';
 import {
   type AbilityBuilder,
@@ -163,10 +163,22 @@ async function until(check: () => boolean, timeoutMs = 2000): Promise<void> {
   }
 }
 
-async function start(imports: ModuleImport[] = [UsersModule]): Promise<TestApp> {
+interface StartOptions {
+  /** Registers AbilityGuard as a global (APP_GUARD) guard. */
+  global?: boolean;
+  gql?: Partial<GraphQLModuleOptions>;
+}
+
+async function start(
+  imports: ModuleImport[] = [UsersModule],
+  options: StartOptions = {},
+): Promise<TestApp> {
   mod = await Test.createModule({
+    providers: options.global
+      ? [{ provide: APP_GUARD, multi: true, useExisting: AbilityGuard }]
+      : [],
     imports: [
-      GraphQLModule.forRoot(gqlOptions()),
+      GraphQLModule.forRoot({ ...gqlOptions(), ...options.gql }),
       CaslModule.forRoot<TestUser>({
         permissions,
         defineUserAbility,
@@ -323,5 +335,39 @@ describe('AbilitySubject metadata', () => {
     expect(Object.isFrozen(derivedMeta[FIELD_GUARDS])).toBe(true);
     expect(derivedMeta[FIELD_GUARDS]).not.toBe(baseMeta[FIELD_GUARDS]);
     expect(derivedMeta[Symbol.for('knead:casl:subject')]).toBe('Admin');
+  });
+});
+
+describe('a global AbilityGuard and the GraphQL endpoint', () => {
+  test('passes /graphql when the GraphQL module runs AbilityGuard on resolvers', async () => {
+    const a = await start([UsersModule], { global: true });
+    const ok = await a.graphql('{ me { id } }', bearer('alice', all));
+    expect(ok.status).toBe(200);
+    expect(ok.data).toEqual({ me: { id: 'alice' } });
+    const denied = await a.graphql('{ undeclared }', bearer('alice', all));
+    expect(denied.errors?.[0]?.extensions?.code).toBe('FORBIDDEN');
+  });
+
+  test('passes subscription upgrades on the GraphQL path', async () => {
+    const a = await start([UsersModule], { global: true });
+    liveGrant = all; // the recheck's refreshContext swaps this grant in
+    const sub = await a.graphqlSubscribe('subscription { posts }', bearer('alice', all));
+    await until(() => subscribers('posts') === 1);
+    await mod!.get(PUBSUB).publish('posts', 7);
+    expect((await sub.next()).value).toEqual({ data: { posts: 7 } });
+    await sub.close();
+  });
+
+  test('still denies /graphql when the GraphQL module does not run AbilityGuard', async () => {
+    const a = await start([UsersModule], { global: true, gql: { guards: [] } });
+    const res = await a.graphql('{ me { id } }', bearer('alice', all));
+    expect(res.status).toBe(403);
+  });
+
+  test('a subclass of AbilityGuard in the GraphQL guards counts', async () => {
+    class AppAbilityGuard extends AbilityGuard {}
+    const a = await start([UsersModule], { global: true, gql: { guards: [AppAbilityGuard] } });
+    const ok = await a.graphql('{ me { id } }', bearer('alice', all));
+    expect(ok.data).toEqual({ me: { id: 'alice' } });
   });
 });
