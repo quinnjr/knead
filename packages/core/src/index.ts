@@ -27,7 +27,9 @@ export type {
   OnModuleInit,
 } from './lifecycle.js';
 export {
+  errorText,
   escapeControl,
+  isPlainObject,
   LOGGED_MESSAGE_LENGTH,
   logValue,
   MAX_LOGGED_VALUE_LENGTH,

@@ -78,6 +78,8 @@ jobs:
           fi
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
+          # setup-bun caches the Bun binary by default; a release build downloads it fresh.
+          no-cache: true
           bun-version: ${{ env.BUN_VERSION }}
       - name: Check Bun revision
         run: |
@@ -250,6 +252,11 @@ jobs:
             [ -n "$b_pre" ]
           }
           semver='[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?'
+          # A plain registry range (7.0.2, ^0.3.0, >=1 <2, ^16 || ^17, 1.0.0 - 2.0.0): no npm: alias,
+          # git, URL, file:/link: path or dist-tag. Unambiguous, so jq matches it in linear time.
+          comparator='(\^|~|[<>]=?|=)?v?(0|[1-9][0-9]*|[xX*])(\.(0|[1-9][0-9]*|[xX*])){0,2}(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?'
+          range_re='^RANGE( \|\| RANGE)*$'
+          range_re="${range_re//RANGE/$comparator( - $comparator| $comparator)*}"
 
           # 1. SHA256SUMS: matches the build job's digest, is well formed, lists exactly the
           #    tarballs present, and every checksum matches.
@@ -485,6 +492,11 @@ jobs:
                  | if . == null then empty elif type == "object" then keys[] else "<not an object>" end]
               | map(select(. as $d | $ok | index([$d]) | not)) | first // empty' <<<"$manifest")"
             [ -z "$bad_dep" ] || fail "$name: dependency $bad_dep is not allowed (see ALLOWED_DEPENDENCIES)"
+            bad_spec="$(jq -r --arg re "$range_re" '
+              [.dependencies, .optionalDependencies, .peerDependencies | objects | to_entries[]
+               | select((.value | type) != "string" or (.value | test($re) | not)) | .key]
+              | first // empty' <<<"$manifest")"
+            [ -z "$bad_spec" ] || fail "$name: dependency $bad_spec has a non-registry specifier"
           done
 
           # Every allowed package exactly once: a partial set would leave a half-published release.
@@ -524,10 +536,11 @@ jobs:
             case "$version" in
               # Prereleases use their identifier (1.0.0-rc.1 -> rc). npm rejects a dist-tag that is
               # also a valid semver range, so identifiers that start with a digit (1.0.0-0),
-              # a v plus digit (1.0.0-v1) or are just x/X fall back to next.
+              # a v plus digit (1.0.0-v1) or are just x/X fall back to next, and so do latest and
+              # *-latest (1.0.0-latest.1), which belong to stable releases and their backports.
               *-*)
                 pre="${version#*-}"; dist_tag="${pre%%.*}"
-                if [[ "$dist_tag" =~ ^([vV]?[0-9].*|[xX])$ ]]; then dist_tag=next; fi
+                if [[ "$dist_tag" =~ ^([vV]?[0-9].*|[xX]|(.*-)?latest)$ ]]; then dist_tag=next; fi
                 ;;
               # A stable version takes latest only when it is newer than the current latest;
               # an older line (a backport) gets v<major>.<minor>-latest instead.

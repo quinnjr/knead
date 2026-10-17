@@ -448,6 +448,17 @@ characters followed by `…`, with control characters escaped.
 `escapeControl(text: string): string`. Escapes C0 control characters (U+0000 to U+001F) and DEL:
 `\n`, `\r` and `\t` as those two-character sequences, the rest as `\xNN`.
 
+### `errorText()` and `isPlainObject()`
+
+Helpers the logging packages share, for loggers of your own.
+
+`errorText(error: Error): string`. The error's own text, not redacted: its `stack` (which starts
+with `Name: message`) when that is a string holding the message, otherwise `Name: message`.
+
+`isPlainObject(value: unknown): value is Record<string, unknown>`. `true` for an object whose
+prototype is `Object.prototype` or `null` (a literal or `Object.create(null)`), `false` for
+everything else, including arrays, class instances and `null`.
+
 ### `LOGGED_MESSAGE_LENGTH` and `MAX_LOGGED_VALUE_LENGTH`
 
 `LOGGED_MESSAGE_LENGTH` is `500`, the longest error message `summarizeError()` keeps.

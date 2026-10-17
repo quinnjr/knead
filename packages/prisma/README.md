@@ -307,6 +307,9 @@ persists. `moduleRef` is a `TestingModule`, an `ApplicationContext` or anything 
 Point these tests at a disposable database through a variable of their own, never `DATABASE_URL`.
 
 - It resolves with the function's value, and errors thrown by the function propagate unchanged.
+- Inner `@Transactional()` calls join the test's transaction, as they would join the owning
+  transaction in production: if one rejects, `withRollback()` rejects with the rollback-only
+  `KneadError` (its `cause` is the inner rejection), even when the function caught it.
 - The default `timeout` is 30 seconds. It uses `requiresNew`, so the pool needs at least 2
   connections.
 - It fails closed: if the transaction does not end in the rollback it asked for, it throws a

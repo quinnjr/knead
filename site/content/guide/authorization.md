@@ -131,8 +131,10 @@ with `@Can(action, subject, field?)`:
 `AbilityGuard` decides in this order:
 
 1. A route with `@SkipAbility()` passes without resolving an identity. Use it for public routes.
-   It wins over `@Can()` when both apply, for example `@SkipAbility()` on the controller and
-   `@Can()` on a method.
+   When both `@SkipAbility()` and `@Can()` apply, the more specific one wins: `@SkipAbility()` on
+   the controller and `@Can()` on a method checks the method's `@Can()`, and `@Can()` on the
+   controller with `@SkipAbility()` on a method makes that method public. On the same method or
+   controller, `@SkipAbility()` wins.
 2. A route without `@Can()` is denied with a `403` (fail closed). This happens before `resolve()`
    runs, so an anonymous caller also gets a `403` there, not a `401`.
 3. `resolve()` returning no identity is a `401` (`UnauthorizedException`).
@@ -260,7 +262,9 @@ for every action and subject pair of the granted levels that the user cannot do.
 above, a regular user asking for `posts:manage` gets exactly that problem, because they cannot
 `delete` posts. When a catalog rule names `fields`, each field is checked too and the problem
 carries a `field` property: a user with only `can('read', 'User', ['id', 'name'])` cannot be issued
-`billing:read`, and the problem has `field: 'billingAddress'`. A `cannot` on a field also counts.
+`billing:read`, and the problem has `field: 'billingAddress'`. A `cannot` on a field also counts,
+and so does an unconditional `cannot` on the pair (no conditions, no fields) that comes after its
+`can` rules.
 
 > [!NOTE]
 > Conditions are not evaluated at issue time. A user who can do something only conditionally passes

@@ -155,9 +155,15 @@ export function redactCredentials(text: string): string {
   return out;
 }
 
-/** The error's own text: its stack (which starts with `Name: message`), or `Name: message`. */
-function errorText(error: Error): string {
-  return error.stack?.includes(error.message) ? error.stack : `${error.name}: ${error.message}`;
+/**
+ * The error's own text: its stack (which starts with `Name: message`), or `Name: message` when the
+ * stack is missing, not a string, or does not hold the message.
+ */
+export function errorText(error: Error): string {
+  const stack = error.stack;
+  return typeof stack === 'string' && stack.includes(error.message)
+    ? stack
+    : `${error.name}: ${error.message}`;
 }
 
 /** Keys whose values are replaced with `***` wherever they appear, whatever the value. */
@@ -210,7 +216,9 @@ const REDACT_DEPTH = 4;
 /** Error properties printed as part of the error's text. */
 const ERROR_TEXT_KEYS = new Set(['name', 'message', 'stack', 'cause']);
 
-function isPlainObject(value: object): boolean {
+/** An object whose prototype is `Object.prototype` or `null` (a literal or `Object.create(null)`). */
+export function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null) return false;
   const proto = Object.getPrototypeOf(value);
   return proto === Object.prototype || proto === null;
 }
