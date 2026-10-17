@@ -58,6 +58,9 @@ describe('parseGrant', () => {
       ['posts:read', 'posts:read'],
       'posts:read:write',
       '__proto__:read',
+      'constructor:read',
+      'prototype:read',
+      ['constructor:read'],
     ];
     for (const input of inputs) expect(parseGrant(input, p)).toBeNull();
   });
@@ -66,10 +69,19 @@ describe('parseGrant', () => {
     const input = JSON.parse('{"__proto__":{"posts":"write"},"billing":"read"}');
     expect(parseGrant(input, p)).toEqual({ billing: 'read' });
     expect(({} as any).posts).toBeUndefined();
+    expect(parseGrant({ constructor: 'read', prototype: 'read', posts: 'read' }, p)).toEqual({
+      posts: 'read',
+    });
   });
 
   test('linear on adversarial input', () => {
-    for (const input of [`${' '.repeat(4000)}x`, 'a:'.repeat(2000)]) {
+    const inputs: unknown[] = [
+      `${' '.repeat(4000)}x`,
+      'a:'.repeat(2000),
+      'posts:read '.repeat(370),
+      Array(5000).fill('posts:read'),
+    ];
+    for (const input of inputs) {
       const start = performance.now();
       parseGrant(input, p);
       expect(performance.now() - start).toBeLessThan(50);

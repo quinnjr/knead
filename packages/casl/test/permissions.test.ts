@@ -29,6 +29,7 @@ test('rulesFor includes fields and denies unknown levels', () => {
     { action: 'read', subject: 'User', fields: ['billingAddress'] },
   ]);
   expect(p.rulesFor('posts', 'bogus')).toEqual([]);
+  expect(p.rulesFor('nope' as any, 'read')).toEqual([]);
 });
 
 test('describe is JSON-safe and frozen', () => {
@@ -40,6 +41,8 @@ test('describe is JSON-safe and frozen', () => {
   });
   expect(p.describe()).toBe(p.describe());
   expect(Object.isFrozen(p.describe().areas[0])).toBe(true);
+  expect(Object.isFrozen(p.describe().areas[0]!.levels)).toBe(true);
+  expect(Object.isFrozen(p.areas.posts.rules.read![0])).toBe(true);
   expect(JSON.parse(JSON.stringify(p.describe()))).toEqual(p.describe());
 });
 
