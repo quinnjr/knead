@@ -292,6 +292,15 @@ $effect(() => {
     padding: 0 0.75rem 0 1.15rem;
     border-bottom: 1px solid var(--border);
     color: var(--fg-muted);
+    transition:
+      color 0.2s var(--ease-out),
+      box-shadow 0.25s var(--ease-out);
+  }
+
+  /* The input draws no outline of its own; the field shows keyboard focus instead. */
+  .field:has(input:focus-visible) {
+    color: var(--accent-ink);
+    box-shadow: inset 0 -2px 0 var(--accent);
   }
 
   input {
@@ -421,11 +430,20 @@ $effect(() => {
   }
 
   .skeleton span {
+    position: relative;
     height: 0.7rem;
+    overflow: hidden;
     border-radius: 4px;
-    background: linear-gradient(90deg, var(--bg-sunken), var(--border), var(--bg-sunken));
-    background-size: 200% 100%;
-    animation: shimmer 1.2s linear infinite;
+    background: var(--bg-sunken);
+  }
+
+  .skeleton span::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent, var(--border), transparent);
+    transform: translateX(-100%);
+    animation: shimmer 1.2s var(--ease-out) infinite;
   }
 
   .skeleton span:first-child {
@@ -438,7 +456,7 @@ $effect(() => {
 
   @keyframes shimmer {
     to {
-      background-position: -200% 0;
+      transform: translateX(100%);
     }
   }
 
@@ -494,6 +512,14 @@ $effect(() => {
   @media (max-width: 520px) {
     .foot {
       display: none;
+    }
+  }
+
+  @media (hover: none) and (pointer: coarse) {
+    .esc,
+    .retry {
+      min-width: 2.75rem;
+      min-height: 2.75rem;
     }
   }
 </style>

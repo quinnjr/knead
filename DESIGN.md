@@ -50,13 +50,18 @@ Banned: pure #000/#fff, purple-blue gradients, more than one accent, side-tab bo
 
 - Easing: `--ease-out` cubic-bezier(0.16, 1, 0.3, 1) for everything interactive; no bounce.
 - Page enter: 10px rise + fade, 0.5s. Hero children staggered 60ms. Search rows staggered 22ms.
+- Theme switch: View Transitions crossfade, 0.35s, skipped under reduced motion.
+- Skeleton shimmer: a translating highlight (transform), never `background-position`.
 - Perpetual: one accent sweep along the pipeline strip (linear, 6s), hidden on narrow screens.
 - Only transform/opacity animate. `prefers-reduced-motion` collapses all durations.
 
 ## Layout
 
 - Header 3.75rem, sticky, blurred. Docs: 17rem sidebar | content max 48rem | 13.5rem TOC
-  (hidden < 1240px). Sidebar becomes a drawer < 960px.
+  (hidden < 1240px, replaced by a collapsible "On this page" panel under the page header).
+  Sidebar becomes a modal drawer < 960px: focus moves to the current page link, the page behind
+  is `inert`, Esc returns focus to the menu button.
+- Landing content edges align: the hero grid is 77rem, the same as a band's 80rem minus its padding.
 - Landing: 5/6 split hero with a tabbed code window (real snippets) on a rotated accent backdrop;
   numbered bands (01 pipeline, 02 defaults bento 4+2 / 2+4, 03 packages as divide-y lists in three
   groups); sunken footer CTA.
@@ -67,9 +72,13 @@ Banned: pure #000/#fff, purple-blue gradients, more than one accent, side-tab bo
   Build-time HTML uses `src/lib/server/icons.ts`. Attribution (CC BY 4.0) in the landing footer.
 - Code blocks: header bar (file title or language label) + copy button with icon swap.
 - Callouts: tinted panel, icon + uppercase label, no left bar.
-- Search: dialog with skeleton loading, empty, error-with-retry states; ⌘/Ctrl+K and `/`.
+- Search: dialog with skeleton loading, empty, error-with-retry states; ⌘/Ctrl+K and `/`. The
+  input draws no outline; the field shows keyboard focus with an accent underline.
+- Touch (coarse pointer): every control reaches 44px (icon buttons, copy, chips, Esc, retry).
 - TOC: IntersectionObserver scroll spy, active marker scales in.
 
 ## Last updated
 
 2026-10-17: initial design system for the docs site.
+2026-10-17: polish pass: hero/band alignment, inline contents panel on narrow screens, modal
+drawer focus handling, theme crossfade, transform-only skeleton shimmer, touch targets.

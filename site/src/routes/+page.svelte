@@ -19,11 +19,17 @@ let tab = $state(0);
 let copied = $state(false);
 const INSTALL = 'bun add @knead-js/core @knead-js/http';
 
+// Clears the "copied" tick after a moment; cancelled if the page unmounts first.
+$effect(() => {
+  if (!copied) return;
+  const timer = setTimeout(() => (copied = false), 1600);
+  return () => clearTimeout(timer);
+});
+
 async function copyInstall() {
   try {
     await navigator.clipboard.writeText(INSTALL);
     copied = true;
-    setTimeout(() => (copied = false), 1600);
   } catch {
     copied = false;
   }
@@ -342,7 +348,7 @@ const groups: { title: string; packages: { name: string; summary: string }[] }[]
     grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
     gap: 4rem;
     align-items: center;
-    max-width: 80rem;
+    max-width: 77rem;
     margin: 0 auto;
   }
 
@@ -511,7 +517,12 @@ const groups: { title: string; packages: { name: string; summary: string }[] }[]
     cursor: pointer;
     transition:
       background-color 0.2s var(--ease-out),
-      color 0.2s var(--ease-out);
+      color 0.2s var(--ease-out),
+      transform 0.15s var(--ease-out);
+  }
+
+  .install button:active {
+    transform: scale(0.94);
   }
 
   .install button:hover {
@@ -943,7 +954,7 @@ const groups: { title: string; packages: { name: string; summary: string }[] }[]
 
   .mini.log {
     white-space: pre-wrap;
-    word-break: break-all;
+    overflow-wrap: anywhere;
   }
 
   .mini mark {
