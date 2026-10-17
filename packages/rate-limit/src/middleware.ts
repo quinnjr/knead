@@ -106,7 +106,7 @@ export class RateLimiter implements OnModuleDestroy {
   readonly #options = inject(RATE_LIMIT_OPTIONS);
   readonly #store = inject(RATE_LIMIT_STORE);
   readonly #logger = inject(LOGGER);
-  readonly #development = inject(HTTP_DEVELOPMENT, { optional: true }) ?? false;
+  readonly #development = inject(HTTP_DEVELOPMENT);
   readonly #windowMs = parseDuration(this.#options.window);
   readonly #ipv6Subnet = this.#options.ipv6Subnet ?? 64;
   readonly #defaultKey: KeyFn = (ctx) =>

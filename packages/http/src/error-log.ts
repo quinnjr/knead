@@ -11,8 +11,7 @@ export {
 /** Injectable logError(), with LOGGER and HTTP_DEVELOPMENT. */
 export class ErrorLog implements ErrorLogOptions {
   readonly logger = inject(LOGGER);
-  readonly development: boolean =
-    inject(HTTP_DEVELOPMENT, { optional: true }) ?? process.env.NODE_ENV === 'development';
+  readonly development: boolean = inject(HTTP_DEVELOPMENT);
 
   /** See logError(). Returns the correlation id. */
   log(message: string, error: unknown, level: 'error' | 'warn' = 'error'): string {
