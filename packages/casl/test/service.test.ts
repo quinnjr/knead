@@ -249,7 +249,7 @@ test('validateGrant rejects a pair a later unconditional cannot denies', async (
     level: 'write',
     action: 'update',
     subject: 'Post',
-  };
+  } as const;
   const user: TestUser = { id: 'alice', roles: [] };
   const denied = await service({
     ...options,
