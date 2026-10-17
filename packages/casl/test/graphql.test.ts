@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { type AbilityBuilder, ForbiddenError, type MongoAbility } from '@casl/ability';
 import { getMetadata, Module, type ModuleImport } from '@knead-js/core';
 import {
   FIELD_GUARDS,
@@ -9,6 +8,7 @@ import {
   Int,
   ObjectType,
   PUBSUB,
+  type PubSub,
   Query,
   Resolver,
   type ResolverCtx,
@@ -18,6 +18,7 @@ import {
 import { ROUTE_META } from '@knead-js/http';
 import { Test, type TestApp, type TestingModule } from '@knead-js/testing';
 import {
+  type AbilityBuilder,
   AbilityGuard,
   AbilitySubject,
   Can,
@@ -25,7 +26,9 @@ import {
   createAppAbility,
   definePermissions,
   FieldAbilityGuard,
+  ForbiddenError,
   type Identity,
+  type MongoAbility,
   mapCaslError,
 } from '../src/index.js';
 import { bearer, resolve as restIdentity, type TestUser } from './fixtures.js';
@@ -110,6 +113,9 @@ class Users {
   @Subscription(() => Int, { topic: 'posts', recheckGuards: true })
   @Can('read', 'Post')
   posts() {}
+  @Subscription(() => User, { topic: 'users', recheckGuards: true })
+  @Can('read', 'Post')
+  userEvents() {}
 }
 
 @Module({ providers: [Users] })
@@ -139,7 +145,19 @@ afterEach(async () => {
   app = undefined;
   builds = 0;
   otherGuardSaw.length = 0;
+  liveGrant = undefined;
 });
+
+const subscribers = (topic: string) => (mod!.get(PUBSUB) as PubSub).getSubscriberCount(topic);
+
+/** Polls until `check` is true, for state that settles asynchronously. */
+async function until(check: () => boolean, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!check()) {
+    if (Date.now() > deadline) throw new Error('until(): condition not met in time');
+    await Bun.sleep(5);
+  }
+}
 
 async function start(imports: ModuleImport[] = [UsersModule]): Promise<TestApp> {
   mod = await Test.createModule({
@@ -209,7 +227,8 @@ describe('@knead-js/casl on GraphQL', () => {
   test('raw ForbiddenError in resolver → FORBIDDEN', async () => {
     const a = await start();
     const res = await a.graphql('{ boom }', bearer('alice', all));
-    expect(res.errors?.[0]).toMatchObject({ message: 'nope', extensions: { code: 'FORBIDDEN' } });
+    expect(res.errors?.[0]?.extensions?.code).toBe('FORBIDDEN');
+    expect(JSON.stringify(res)).not.toContain('nope');
   });
 
   test('shared key', async () => {
@@ -238,13 +257,33 @@ describe('@knead-js/casl on GraphQL', () => {
     liveGrant = { posts: 'read' };
     const pubsub = mod!.get(PUBSUB);
     const sub = await a.graphqlSubscribe('subscription { posts }', bearer('alice', liveGrant));
-    await Bun.sleep(30);
+    await until(() => subscribers('posts') === 1);
     await pubsub.publish('posts', 1);
     expect((await sub.next()).value).toEqual({ data: { posts: 1 } });
     liveGrant = {};
     await pubsub.publish('posts', 2);
     expect((await sub.next()).value?.errors?.[0]?.extensions?.code).toBe('FORBIDDEN');
     expect((await sub.next()).done).toBe(true);
+    await sub.close();
+  });
+
+  test('an @AbilitySubject subscription payload is re-checked per event', async () => {
+    const a = await start();
+    liveGrant = { posts: 'read', users: 'read' };
+    const pubsub = mod!.get(PUBSUB);
+    const sub = await a.graphqlSubscribe(
+      'subscription { userEvents { name } }',
+      bearer('alice', liveGrant),
+    );
+    await until(() => subscribers('users') === 1);
+    await pubsub.publish('users', row('bob'));
+    expect((await sub.next()).value).toEqual({ data: { userEvents: { name: 'name-bob' } } });
+    liveGrant = { posts: 'read' };
+    await pubsub.publish('users', row('bob'));
+    const denied = (await sub.next()).value;
+    expect(denied?.data).toEqual({ userEvents: { name: null } });
+    expect(denied?.errors?.[0]?.path).toEqual(['userEvents', 'name']);
+    expect(denied?.errors?.[0]?.extensions?.code).toBe('FORBIDDEN');
     await sub.close();
   });
 });
@@ -265,7 +304,9 @@ describe('AbilitySubject metadata', () => {
     expect(Object.isFrozen(baseMeta[FIELD_GUARDS])).toBe(true);
     expect(baseMeta[Symbol.for('knead:casl:subject')]).toBe('User');
     expect(derivedMeta).not.toBe(baseMeta);
-    expect(derivedMeta[FIELD_GUARDS]).toEqual([FieldAbilityGuard, FieldAbilityGuard]);
+    expect(derivedMeta[FIELD_GUARDS]).toEqual([FieldAbilityGuard]);
+    expect(Object.isFrozen(derivedMeta[FIELD_GUARDS])).toBe(true);
+    expect(derivedMeta[FIELD_GUARDS]).not.toBe(baseMeta[FIELD_GUARDS]);
     expect(derivedMeta[Symbol.for('knead:casl:subject')]).toBe('Admin');
   });
 });

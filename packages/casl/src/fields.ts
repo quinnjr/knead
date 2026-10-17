@@ -38,14 +38,31 @@ function isOpaque(value: unknown): boolean {
   );
 }
 
-/** Fails closed: every non-opaque object is stripped, whatever its prototype. */
-function strip(ability: AppAbility, subjectType: string, value: unknown, toJson = true): unknown {
+/**
+ * Fails closed: every non-opaque object is stripped, whatever its prototype. `ancestors` holds the
+ * arrays being walked, so a cyclic result throws instead of overflowing the stack.
+ */
+function strip(
+  ability: AppAbility,
+  subjectType: string,
+  value: unknown,
+  ancestors: WeakSet<object>,
+  toJson = true,
+): unknown {
   if (isOpaque(value)) return value;
-  if (Array.isArray(value)) return value.map((item) => strip(ability, subjectType, item));
+  if (Array.isArray(value)) {
+    if (ancestors.has(value)) throw new Error('PermittedFields: the result contains a cycle');
+    ancestors.add(value);
+    try {
+      return value.map((item) => strip(ability, subjectType, item, ancestors));
+    } finally {
+      ancestors.delete(value);
+    }
+  }
   const record = value as object;
   const { toJSON } = record as { toJSON?: unknown };
   if (toJson && typeof toJSON === 'function') {
-    return strip(ability, subjectType, toJSON.call(record), false);
+    return strip(ability, subjectType, toJSON.call(record), ancestors, false);
   }
   return pickPermitted(ability, subjectType, record);
 }
@@ -66,7 +83,7 @@ export function PermittedFields(subjectType: string) {
       const pending = cachedAbility(ctx as AbilityCtx);
       const ability = pending ? await pending : null;
       if (!ability) throw new ForbiddenException('PermittedFields requires AbilityGuard');
-      return strip(ability, subjectType, await method.call(this, ctx));
+      return strip(ability, subjectType, await method.call(this, ctx), new WeakSet());
     };
     return wrapped as unknown as T;
   };

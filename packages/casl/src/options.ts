@@ -29,8 +29,10 @@ export type AbilityCtx = Ctx | GraphQLLikeCtx;
 
 export interface CaslModuleOptions<U = any> {
   permissions: Permissions;
-  /** Who is calling and with which grant; `undefined` means unauthenticated (401). */
-  resolve(ctx: AbilityCtx): Identity<U> | undefined | Promise<Identity<U> | undefined>;
+  /** Who is calling and with which grant; `undefined` or `null` means unauthenticated (401). */
+  resolve(
+    ctx: AbilityCtx,
+  ): Identity<U> | null | undefined | Promise<Identity<U> | null | undefined>;
   /** The user's own abilities, before they are narrowed to the credential's grant. */
   defineUserAbility(user: U, builder: AbilityBuilder<MongoAbility>): void | Promise<void>;
 }
@@ -47,6 +49,7 @@ export function validateCaslOptions(options: unknown): asserts options is CaslMo
     typeof p !== 'object' ||
     p === null ||
     typeof p.areas !== 'object' ||
+    p.areas === null ||
     typeof p.rulesFor !== 'function'
   ) {
     throw new CaslConfigError(

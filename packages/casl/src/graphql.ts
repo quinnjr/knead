@@ -47,10 +47,14 @@ export function AbilitySubject(
     // May be the parent class's object: copy it, never mutate it.
     const current = readMetadata(context.metadata, ROUTE_META) ?? {};
     const existing = (current[FIELD_GUARDS] as readonly unknown[] | undefined) ?? [];
+    // An inherited FieldAbilityGuard already reads the (replaced) SUBJECT: add it only once.
+    const guards = existing.includes(FieldAbilityGuard)
+      ? existing
+      : [...existing, FieldAbilityGuard];
     setMetadata(context.metadata, ROUTE_META, {
       ...current,
       [SUBJECT]: subjectType,
-      [FIELD_GUARDS]: Object.freeze([...existing, FieldAbilityGuard]),
+      [FIELD_GUARDS]: Object.freeze([...guards]),
     });
   };
 }

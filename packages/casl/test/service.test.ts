@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from 'bun:test';
 import { inject } from '@knead-js/core';
-import { Controller, type Ctx, Get, UseGuards } from '@knead-js/http';
+import { Controller, type Ctx, Get, UnauthorizedException, UseGuards } from '@knead-js/http';
 import { Test, type TestApp, type TestingModule } from '@knead-js/testing';
 import {
   AbilityGuard,
@@ -10,7 +10,7 @@ import {
   CaslModule,
   type CaslModuleOptions,
 } from '../src/index.js';
-import { bearer, defineUserAbility, options, type permissions, type TestUser } from './fixtures.js';
+import { bearer, defineUserAbility, options, permissions, type TestUser } from './fixtures.js';
 
 let app: TestApp | undefined;
 const modules: TestingModule[] = [];
@@ -135,7 +135,14 @@ test('validateGrant', async () => {
   expect(await abilities.validateGrant(user, { billing: 'read' })).toEqual({
     ok: false,
     problems: [
-      { reason: 'exceeds-user', area: 'billing', level: 'read', action: 'read', subject: 'User' },
+      {
+        reason: 'exceeds-user',
+        area: 'billing',
+        level: 'read',
+        action: 'read',
+        subject: 'User',
+        field: 'billingAddress',
+      },
     ],
   });
   const write = await abilities.validateGrant(user, { posts: 'write' });
@@ -145,6 +152,43 @@ test('validateGrant', async () => {
     ok: false,
     problems: [{ reason: 'malformed' }],
   });
+});
+
+test('validateGrant checks the fields a grant names', async () => {
+  const fieldUser = await service({
+    ...options,
+    defineUserAbility: (_user, { can }) => {
+      can('read', 'User', ['id', 'name']);
+    },
+  });
+  const user: TestUser = { id: 'alice', roles: [] };
+  expect(await fieldUser.validateGrant(user, 'billing:read')).toEqual({
+    ok: false,
+    problems: [
+      {
+        reason: 'exceeds-user',
+        area: 'billing',
+        level: 'read',
+        action: 'read',
+        subject: 'User',
+        field: 'billingAddress',
+      },
+    ],
+  });
+  const unrestricted = await service({
+    ...options,
+    defineUserAbility: (_user, { can }) => {
+      can('read', 'User');
+    },
+  });
+  const ok = await unrestricted.validateGrant(user, 'billing:read');
+  expect(ok.ok).toBe(true);
+});
+
+test('a null identity is unauthenticated', async () => {
+  const abilities = await service({ ...options, resolve: () => null });
+  const ctx = { req: new Request('http://x/'), state: {}, meta: {} } as unknown as Ctx;
+  await expect(abilities.forCtx(ctx)).rejects.toBeInstanceOf(UnauthorizedException);
 });
 
 test('forRoot rejects bad options', () => {
@@ -158,4 +202,6 @@ test('forRoot rejects bad options', () => {
   expect(() =>
     CaslModule.forRoot({ ...options, permissions: {} as unknown as typeof permissions }),
   ).toThrow(CaslConfigError);
+  const nullAreas = { ...permissions, areas: null } as unknown as typeof permissions;
+  expect(() => CaslModule.forRoot({ ...options, permissions: nullAreas })).toThrow(CaslConfigError);
 });

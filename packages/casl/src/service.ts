@@ -20,7 +20,15 @@ interface CacheEntry {
 
 export type GrantProblem =
   | { reason: 'malformed' }
-  | { reason: 'exceeds-user'; area: string; level: string; action: string; subject: string };
+  | {
+      reason: 'exceeds-user';
+      area: string;
+      level: string;
+      action: string;
+      subject: string;
+      /** Set when the grant's rule names fields and the user may not use this one. */
+      field?: string;
+    };
 
 export type GrantValidation = { ok: true; grant: Grant } | { ok: false; problems: GrantProblem[] };
 
@@ -40,7 +48,7 @@ function isSubscriptionRoot(ctx: AbilityCtx): boolean {
 export class AbilityService {
   readonly #options = inject(CASL_OPTIONS);
 
-  /** Cached ability for this request/operation; throws UnauthorizedException when resolve() gives undefined. */
+  /** Cached ability for this request/operation; UnauthorizedException when resolve() gives none. */
   async forCtx(ctx: AbilityCtx): Promise<AppAbility> {
     const ability = await this.#cached(ctx);
     if (!ability) throw new UnauthorizedException();
@@ -58,7 +66,10 @@ export class AbilityService {
     if (ability.can(action, subject, field) !== true) throw new ForbiddenException();
   }
 
-  /** Checks that every rule a requested grant would allow is something `user` can do. */
+  /**
+   * Checks that every rule a requested grant would allow is something `user` can do, at least
+   * conditionally: each action/subject pair, and each field when the grant's rule names fields.
+   */
   async validateGrant(user: unknown, input: unknown): Promise<GrantValidation> {
     const { permissions } = this.#options;
     const grant = parseGrant(input, permissions);
@@ -69,13 +80,23 @@ export class AbilityService {
     for (const area of Object.keys(grant)) {
       const level = grant[area]!;
       for (const rule of permissions.rulesFor(area, level)) {
+        const fields: (string | undefined)[] = rule.fields ? [rule.fields].flat() : [undefined];
         for (const action of [rule.action].flat() as string[]) {
           for (const subject of [rule.subject ?? 'all'].flat() as string[]) {
-            const key = JSON.stringify([area, action, subject]);
-            if (seen.has(key)) continue;
-            seen.add(key);
-            if (ability.possibleRulesFor(action, subject).some((r) => !r.inverted)) continue;
-            problems.push({ reason: 'exceeds-user', area, level, action, subject });
+            for (const field of fields) {
+              const key = JSON.stringify([area, action, subject, field ?? null]);
+              if (seen.has(key)) continue;
+              seen.add(key);
+              if (ability.rulesFor(action, subject, field).some((r) => !r.inverted)) continue;
+              problems.push({
+                reason: 'exceeds-user',
+                area,
+                level,
+                action,
+                subject,
+                ...(field !== undefined && { field }),
+              });
+            }
           }
         }
       }
@@ -98,7 +119,7 @@ export class AbilityService {
 
   async #build(ctx: AbilityCtx): Cached {
     const identity = await this.#options.resolve(ctx);
-    if (identity === undefined) return null;
+    if (identity == null) return null;
     const userRules = await this.#userRules(identity.user);
     const grant = parseGrant(identity.grant, this.#options.permissions);
     if (!grant) return createAppAbility([]);

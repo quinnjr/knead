@@ -1,5 +1,4 @@
 import { afterEach, expect, test } from 'bun:test';
-import { ForbiddenError } from '@casl/ability';
 import { inject } from '@knead-js/core';
 import { Controller, type Ctx, Get, Put, UseGuards } from '@knead-js/http';
 import { Test, type TestApp } from '@knead-js/testing';
@@ -10,6 +9,8 @@ import {
   Can,
   CaslModule,
   createAppAbility,
+  createCan,
+  ForbiddenError,
   SkipAbility,
 } from '../src/index.js';
 import { bearer, options } from './fixtures.js';
@@ -17,6 +18,8 @@ import { bearer, options } from './fixtures.js';
 const posts: Record<string, { id: string; authorId: string }> = {
   '1': { id: '1', authorId: 'alice' },
 };
+
+const TypedCan = createCan<'read' | 'update', 'Post'>();
 
 @Controller()
 @UseGuards(AbilityGuard)
@@ -31,6 +34,10 @@ class PostsController {
     const post = posts[ctx.params.id]!;
     await this.#abilities.authorize(ctx, 'update', asSubject('Post', post));
     return post;
+  }
+
+  @Get('/typed') @TypedCan('read', 'Post') typed() {
+    return 'typed';
   }
 
   @Get('/open') @SkipAbility() open() {
@@ -88,6 +95,18 @@ test('a write grant keeps the owner-only condition', async () => {
 test('an admin is still limited by the grant', async () => {
   const a = await serve();
   expect((await a.request('PUT', '/posts/1', bearer('admin', { posts: 'read' }))).status).toBe(403);
+});
+
+test('a missing grant denies everything', async () => {
+  const a = await serve();
+  const headers = { authorization: 'Bearer alice' };
+  expect((await a.request('GET', '/posts', { headers })).status).toBe(403);
+});
+
+test('createCan() decorators are enforced like @Can()', async () => {
+  const a = await serve();
+  expect((await a.request('GET', '/typed', bearer('alice', { posts: 'read' }))).status).toBe(200);
+  expect((await a.request('GET', '/typed', bearer('alice', {}))).status).toBe(403);
 });
 
 test('a malformed grant denies everything', async () => {

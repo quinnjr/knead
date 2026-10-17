@@ -167,11 +167,11 @@ export function definePermissions<const C extends Catalog>(areas: C): Permission
   }
 
   const frozenAreas = deepFreeze(copy) as C;
-  const description = deepFreeze({ areas: json });
+  const catalogJson = deepFreeze({ areas: json });
 
   return {
     areas: frozenAreas,
-    describe: () => description,
+    describe: () => catalogJson,
     rulesFor(area, level) {
       const entry = stored.get(area);
       if (!entry) return [];

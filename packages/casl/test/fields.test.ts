@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from 'bun:test';
 import type { AbilityBuilder, MongoAbility } from '@casl/ability';
 import { Controller, Get, UseGuards } from '@knead-js/http';
-import { Test, type TestApp } from '@knead-js/testing';
+import { Test, type TestApp, type TestingModule } from '@knead-js/testing';
 import {
   AbilityGuard,
   Can,
@@ -96,8 +96,15 @@ class UsersController {
     return new Uint8Array([1, 2, 3]);
   }
 
-  @Get('/proto') @Can('read', 'User') @PermittedFields('User') proto() {
-    return JSON.parse('{"__proto__":{"x":1},"id":"u1"}');
+  @Get('/cycle') @Can('read', 'User') @PermittedFields('User') cycle() {
+    const list: unknown[] = [rows()[0]];
+    list.push(list);
+    return list;
+  }
+
+  @Get('/shared') @Can('read', 'User') @PermittedFields('User') shared() {
+    const list = [rows()[1]];
+    return [list, list];
   }
 
   @Get('/noguard') @SkipAbility() @PermittedFields('User') noguard() {
@@ -106,13 +113,14 @@ class UsersController {
 }
 
 let app: TestApp | undefined;
+let mod: TestingModule | undefined;
 afterEach(async () => {
   await app?.close();
   app = undefined;
 });
 
 async function serve(): Promise<TestApp> {
-  const mod = await Test.createModule({
+  mod = await Test.createModule({
     imports: [CaslModule.forRoot({ permissions, resolve, defineUserAbility })],
     controllers: [UsersController],
   }).compile();
@@ -197,13 +205,20 @@ test('binary results pass through', async () => {
   expect(new Uint8Array(await res.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
 });
 
-test('an own __proto__ key does not pollute the prototype', async () => {
+test('a cyclic result is a 500, not a stack overflow', async () => {
   const a = await serve();
-  const res = await a.request('GET', '/proto', bearer('root', { everything: 'read' }));
-  const body = (await res.json()) as Record<string, unknown>;
-  expect(body.id).toBe('u1');
-  expect(Object.getPrototypeOf(body)).toBe(Object.prototype);
-  expect((body as { x?: number }).x).toBeUndefined();
+  const res = await a.request('GET', '/cycle', bearer('alice', fullGrant(permissions)));
+  expect(res.status).toBe(500);
+  expect(await res.text()).not.toContain('a@x');
+  const logged = mod!.logs.flatMap((e) => e.meta.map((m) => String((m as Error)?.message)));
+  expect(logged.some((m) => m.includes('PermittedFields: the result contains a cycle'))).toBe(true);
+});
+
+test('an array referenced twice (not a cycle) is stripped both times', async () => {
+  const a = await serve();
+  const res = await a.request('GET', '/shared', bearer('alice', fullGrant(permissions)));
+  const bob = { id: 'bob', name: 'Bob' };
+  expect(await res.json()).toEqual([[bob], [bob]]);
 });
 
 test('pickPermitted defines an own __proto__ key instead of setting the prototype', () => {

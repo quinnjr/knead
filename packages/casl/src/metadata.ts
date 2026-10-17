@@ -19,6 +19,18 @@ export function Can(action: string, subject: string, field?: string): ClassOrMet
   return setCan(field === undefined ? { action, subject } : { action, subject, field });
 }
 
+/**
+ * `@Can` typed to your app's action and subject names; same route meta as `Can`:
+ * `export const Can = createCan<AppActions, AppSubjects>();`
+ */
+export function createCan<Actions extends string, Subjects extends string>(): (
+  action: Actions,
+  subject: Subjects,
+  field?: string,
+) => ClassOrMethodDecorator {
+  return Can;
+}
+
 /** Makes AbilityGuard pass without resolving an identity (public routes). */
 export function SkipAbility(): ClassOrMethodDecorator {
   return setSkip(true);

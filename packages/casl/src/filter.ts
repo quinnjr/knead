@@ -19,8 +19,8 @@ export class CaslForbiddenFilter implements ExceptionFilter<ForbiddenError<any>>
 
 /**
  * For `GraphQLModule.forRoot({ mapError: mapCaslError })`: a CASL ForbiddenError thrown by a
- * resolver becomes a FORBIDDEN error carrying its message; anything else is left as is.
+ * resolver becomes a plain FORBIDDEN error (its message is not sent); anything else is left as is.
  */
 export function mapCaslError(error: unknown): HttpException | undefined {
-  return error instanceof ForbiddenError ? new ForbiddenException(error.message) : undefined;
+  return error instanceof ForbiddenError ? new ForbiddenException() : undefined;
 }
