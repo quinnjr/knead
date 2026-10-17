@@ -185,6 +185,29 @@ test('validateGrant checks the fields a grant names', async () => {
   expect(ok.ok).toBe(true);
 });
 
+test('validateGrant rejects a field the user is explicitly forbidden', async () => {
+  const abilities = await service({
+    ...options,
+    defineUserAbility: (_user, { can, cannot }) => {
+      can('read', 'User');
+      cannot('read', 'User', ['billingAddress']);
+    },
+  });
+  expect(await abilities.validateGrant({ id: 'alice', roles: [] }, 'billing:read')).toEqual({
+    ok: false,
+    problems: [
+      {
+        reason: 'exceeds-user',
+        area: 'billing',
+        level: 'read',
+        action: 'read',
+        subject: 'User',
+        field: 'billingAddress',
+      },
+    ],
+  });
+});
+
 test('a null identity is unauthenticated', async () => {
   const abilities = await service({ ...options, resolve: () => null });
   const ctx = { req: new Request('http://x/'), state: {}, meta: {} } as unknown as Ctx;

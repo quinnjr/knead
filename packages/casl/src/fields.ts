@@ -40,7 +40,8 @@ function isOpaque(value: unknown): boolean {
 
 /**
  * Fails closed: every non-opaque object is stripped, whatever its prototype. `ancestors` holds the
- * arrays being walked, so a cyclic result throws instead of overflowing the stack.
+ * arrays and `toJSON()` records being walked, so a cyclic result (an array containing itself, a
+ * `toJSON()` returning its own record) throws instead of overflowing the stack.
  */
 function strip(
   ability: AppAbility,
@@ -50,21 +51,23 @@ function strip(
   toJson = true,
 ): unknown {
   if (isOpaque(value)) return value;
-  if (Array.isArray(value)) {
-    if (ancestors.has(value)) throw new Error('PermittedFields: the result contains a cycle');
-    ancestors.add(value);
-    try {
-      return value.map((item) => strip(ability, subjectType, item, ancestors));
-    } finally {
-      ancestors.delete(value);
-    }
-  }
   const record = value as object;
+  if (ancestors.has(record)) throw new Error('PermittedFields: the result contains a cycle');
   const { toJSON } = record as { toJSON?: unknown };
-  if (toJson && typeof toJSON === 'function') {
-    return strip(ability, subjectType, toJSON.call(record), ancestors, false);
+  const isArray = Array.isArray(record);
+  if (!isArray && !(toJson && typeof toJSON === 'function')) {
+    return pickPermitted(ability, subjectType, record);
   }
-  return pickPermitted(ability, subjectType, record);
+  ancestors.add(record);
+  try {
+    if (isArray) return record.map((item) => strip(ability, subjectType, item, ancestors));
+    const json = (toJSON as () => unknown).call(record);
+    // `toJSON() { return this; }` serializes the record itself: not a cycle.
+    if (json === record) return pickPermitted(ability, subjectType, record);
+    return strip(ability, subjectType, json, ancestors, false);
+  } finally {
+    ancestors.delete(record);
+  }
 }
 
 /**

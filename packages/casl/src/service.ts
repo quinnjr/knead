@@ -87,7 +87,12 @@ export class AbilityService {
               const key = JSON.stringify([area, action, subject, field ?? null]);
               if (seen.has(key)) continue;
               seen.add(key);
-              if (ability.rulesFor(action, subject, field).some((r) => !r.inverted)) continue;
+              // A field must be allowed (a `cannot` on it wins); a pair needs some positive rule.
+              const allowed =
+                field === undefined
+                  ? ability.possibleRulesFor(action, subject).some((r) => !r.inverted)
+                  : ability.can(action, subject, field) === true;
+              if (allowed) continue;
               problems.push({
                 reason: 'exceeds-user',
                 area,

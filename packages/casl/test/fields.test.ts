@@ -102,6 +102,25 @@ class UsersController {
     return list;
   }
 
+  @Get('/selfjson') @Can('read', 'User') @PermittedFields('User') selfJson() {
+    return {
+      id: 'alice',
+      toJSON() {
+        return [this];
+      },
+    };
+  }
+
+  @Get('/jsonself') @Can('read', 'User') @PermittedFields('User') jsonSelf() {
+    return {
+      id: 'bob',
+      billingAddress: '2 Main',
+      toJSON() {
+        return this;
+      },
+    };
+  }
+
   @Get('/shared') @Can('read', 'User') @PermittedFields('User') shared() {
     const list = [rows()[1]];
     return [list, list];
@@ -212,6 +231,21 @@ test('a cyclic result is a 500, not a stack overflow', async () => {
   expect(await res.text()).not.toContain('a@x');
   const logged = mod!.logs.flatMap((e) => e.meta.map((m) => String((m as Error)?.message)));
   expect(logged.some((m) => m.includes('PermittedFields: the result contains a cycle'))).toBe(true);
+});
+
+test('a toJSON() returning an array that contains the record is a clear cycle error', async () => {
+  const a = await serve();
+  const res = await a.request('GET', '/selfjson', bearer('alice', fullGrant(permissions)));
+  expect(res.status).toBe(500);
+  const logged = mod!.logs.flatMap((e) => e.meta.map((m) => String((m as Error)?.message)));
+  expect(logged.some((m) => m.includes('PermittedFields: the result contains a cycle'))).toBe(true);
+});
+
+test('a toJSON() returning its own record is stripped, not a cycle', async () => {
+  const a = await serve();
+  const res = await a.request('GET', '/jsonself', bearer('alice', fullGrant(permissions)));
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual({ id: 'bob' });
 });
 
 test('an array referenced twice (not a cycle) is stripped both times', async () => {
