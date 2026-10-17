@@ -22,6 +22,21 @@ function fakeSocket(endpoint: string, data: unknown = null) {
 }
 
 describe('WsRegistry', () => {
+  test('register() rejects a non-object meta and freezes a copy of a valid one', async () => {
+    const { ws } = await registry();
+    for (const meta of ['nope', null, [1]]) {
+      expect(() => ws.register('/x', { upgrade: () => ({}) }, { meta: meta as never })).toThrow(
+        'meta of /x must be an object',
+      );
+    }
+    const meta = { area: 'chat' };
+    ws.register('/y', { upgrade: () => ({}) }, { meta });
+    meta.area = 'changed';
+    expect(ws.meta('/y')).toEqual({ area: 'chat' });
+    expect(Object.isFrozen(ws.meta('/y'))).toBe(true);
+    expect(ws.meta('/nope')).toBeUndefined();
+  });
+
   test('normalizes paths and rejects duplicates', async () => {
     const { ws } = await registry();
     ws.register('chat/', { upgrade: () => ({}) });

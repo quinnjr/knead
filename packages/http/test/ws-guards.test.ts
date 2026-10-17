@@ -218,3 +218,72 @@ describe('WebSocket endpoints on the path of a guarded GET route', () => {
     expect(seen).toEqual([]);
   });
 });
+
+describe('WebSocket endpoint meta', () => {
+  const TAG = Symbol.for('test:tag');
+  const metaSeen: unknown[] = [];
+  const recordMeta = (ctx: Ctx) => {
+    metaSeen.push(
+      ctx.upgrade === null
+        ? 'request'
+        : { area: ctx.meta.area, owner: ctx.meta.owner, tag: ctx.meta[TAG] },
+    );
+    return true;
+  };
+  afterEach(() => {
+    metaSeen.length = 0;
+  });
+
+  test('guards see the endpoint meta on an upgrade without a GET route', async () => {
+    const meta: Record<PropertyKey, unknown> = { area: 'chat', [TAG]: 't' };
+    class MetaGateway implements OnModuleInit {
+      readonly ws = inject(WsRegistry);
+      onModuleInit() {
+        this.ws.register('/live', { upgrade: () => ({}) }, { meta });
+        meta.area = 'changed after register';
+      }
+    }
+    @Module({
+      providers: [MetaGateway, { provide: APP_GUARD, multi: true, useValue: recordMeta }],
+    })
+    class M {}
+    app = await start(M);
+    expect(await upgradeStatus(app)).toContain('101');
+    expect(metaSeen).toEqual([{ area: 'chat', owner: undefined, tag: 't' }]);
+  });
+
+  test('on the path of a GET route, endpoint meta is merged over the route meta', async () => {
+    class MetaGateway implements OnModuleInit {
+      readonly ws = inject(WsRegistry);
+      onModuleInit() {
+        this.ws.register('/live', { upgrade: () => ({}) }, { meta: { area: 'socket' } });
+      }
+    }
+    @Controller('/', { meta: { area: 'page', owner: 'route' } })
+    class Live {
+      @Get('/live') page(ctx: Ctx) {
+        return { area: ctx.meta.area };
+      }
+    }
+    @Module({
+      controllers: [Live],
+      providers: [MetaGateway, { provide: APP_GUARD, multi: true, useValue: recordMeta }],
+    })
+    class M {}
+    app = await start(M);
+    expect(await upgradeStatus(app)).toContain('101');
+    expect(metaSeen).toEqual([{ area: 'socket', owner: 'route', tag: undefined }]);
+    // Ordinary GETs keep the route's own meta.
+    expect(await (await fetch(new URL('/live', app.url))).json()).toEqual({ area: 'page' });
+  });
+
+  test('without endpoint meta, an upgrade without a GET route has empty meta', async () => {
+    @Module({
+      providers: [Gateway, { provide: APP_GUARD, multi: true, useValue: recordMeta }],
+    })
+    class M {}
+    app = await start(M);
+    expect(await upgradeStatus(app)).toContain('101');
+    expect(metaSeen).toEqual([{ area: undefined, owner: undefined, tag: undefined }]);
+  });
+});

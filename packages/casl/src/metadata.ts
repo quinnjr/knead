@@ -14,9 +14,30 @@ export interface CanRequirement {
 const setCan = createRouteDecorator<CanRequirement>(CAN);
 const setSkip = createRouteDecorator<true>(SKIP);
 
+function requirement(action: string, subject: string, field?: string): CanRequirement {
+  return field === undefined ? { action, subject } : { action, subject, field };
+}
+
 /** Requires `ability.can(action, subject, field)` (checked by AbilityGuard). */
 export function Can(action: string, subject: string, field?: string): ClassOrMethodDecorator {
-  return setCan(field === undefined ? { action, subject } : { action, subject, field });
+  return setCan(requirement(action, subject, field));
+}
+
+/**
+ * `@Can()` as plain meta, for places without a decorator, such as a WebSocket endpoint:
+ * `ws.register('/feed', endpoint, { meta: canMeta('read', 'Post') })`.
+ */
+export function canMeta(
+  action: string,
+  subject: string,
+  field?: string,
+): Readonly<Record<PropertyKey, unknown>> {
+  return { [CAN]: requirement(action, subject, field) };
+}
+
+/** `@SkipAbility()` as plain meta: `ws.register('/public', endpoint, { meta: skipAbilityMeta() })`. */
+export function skipAbilityMeta(): Readonly<Record<PropertyKey, unknown>> {
+  return { [SKIP]: true };
 }
 
 /**

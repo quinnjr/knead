@@ -42,6 +42,12 @@ export interface WsEndpointOptions {
   messageRate?: WsMessageRate | false;
   /** Closes each socket with 4408 this many milliseconds after it opened. Default: no limit. */
   maxConnectionLifetime?: number;
+  /**
+   * Route-style metadata for the upgrade request: guards read it as `ctx.meta`, so an endpoint
+   * without a GET route can still carry what a global guard requires. On the path of a GET route
+   * it is merged over that route's meta for upgrades only. Copied and frozen at register().
+   */
+  meta?: Readonly<Record<PropertyKey, unknown>>;
 }
 
 /** Server-wide WebSocket limits (`listen({ websocket })`). */
@@ -218,6 +224,19 @@ export interface WsEndpoint<D = unknown> {
 type WsEvent = 'open' | 'message' | 'close' | 'drain';
 
 /** Bun allows one websocket handler per server; modules register endpoints here instead. */
+/** Own string and symbol keys of `meta`, without invoking a `__proto__` setter. */
+function copyOwn(meta: object): Record<PropertyKey, unknown> {
+  const out: Record<PropertyKey, unknown> = {};
+  for (const key of Reflect.ownKeys(meta)) {
+    if (!Object.prototype.propertyIsEnumerable.call(meta, key)) continue;
+    Object.defineProperty(out, key, {
+      value: (meta as Record<PropertyKey, unknown>)[key],
+      enumerable: true,
+    });
+  }
+  return out;
+}
+
 export class WsRegistry {
   readonly #endpoints = new Map<string, WsEndpoint<any>>();
   readonly #options = new Map<string, WsEndpointOptions>();
@@ -281,8 +300,20 @@ export class WsRegistry {
     if (options.maxConnectionLifetime !== undefined) {
       assertInteger(`maxConnectionLifetime of ${normalized}`, options.maxConnectionLifetime, 1);
     }
+    const meta = options.meta;
+    if (meta !== undefined && (typeof meta !== 'object' || meta === null || Array.isArray(meta))) {
+      throw new HttpConfigError(`meta of ${normalized} must be an object`);
+    }
     this.#endpoints.set(normalized, endpoint);
-    this.#options.set(normalized, { ...options });
+    this.#options.set(normalized, {
+      ...options,
+      meta: meta === undefined ? undefined : Object.freeze(copyOwn(meta)),
+    });
+  }
+
+  /** @internal The frozen `meta` an endpoint was registered with, if any. */
+  meta(path: string): Readonly<Record<PropertyKey, unknown>> | undefined {
+    return this.#options.get(path)?.meta;
   }
 
   /** @internal Called by HttpApplication.listen() with `listen({ websocket })`. */
