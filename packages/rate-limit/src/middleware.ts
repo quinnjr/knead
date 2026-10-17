@@ -55,6 +55,8 @@ export interface RateLimitModuleOptions {
 }
 
 const MISSING_KEY_MODES = new Set(['skip', 'shared', 'deny']);
+const STORE_ERROR_MODES = new Set(['allow', 'deny']);
+const ALGORITHMS = new Set(['sliding-window', 'token-bucket']);
 
 /** @throws RangeError for invalid module options. */
 export function validateRateLimitOptions(options: RateLimitModuleOptions): void {
@@ -70,6 +72,17 @@ export function validateRateLimitOptions(options: RateLimitModuleOptions): void 
   if (options.onMissingKey !== undefined && !MISSING_KEY_MODES.has(options.onMissingKey)) {
     throw new RangeError(
       `onMissingKey must be 'skip', 'shared' or 'deny', got ${String(options.onMissingKey)}.`,
+    );
+  }
+  // Anything but 'deny' fails open, so a typo here would silently weaken the limit.
+  if (options.onStoreError !== undefined && !STORE_ERROR_MODES.has(options.onStoreError)) {
+    throw new RangeError(
+      `onStoreError must be 'allow' or 'deny', got ${String(options.onStoreError)}.`,
+    );
+  }
+  if (options.algorithm !== undefined && !ALGORITHMS.has(options.algorithm)) {
+    throw new RangeError(
+      `algorithm must be 'sliding-window' or 'token-bucket', got ${String(options.algorithm)}.`,
     );
   }
 }
