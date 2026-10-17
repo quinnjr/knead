@@ -457,7 +457,7 @@ describe('casl: GraphQL', () => {
 });
 
 describe('casl: guard edge cases', () => {
-  test('@SkipAbility() on the class wins over @Can() on a method', async () => {
+  test("a method's @Can() wins over @SkipAbility() on the class, and the reverse", async () => {
     @Controller('/public')
     @UseGuards(AbilityGuard)
     @SkipAbility()
@@ -467,8 +467,43 @@ describe('casl: guard edge cases', () => {
       index() {
         return 'ok';
       }
+
+      @Get('/open')
+      open() {
+        return 'ok';
+      }
     }
-    const app = await start({ imports: [RestModule], controllers: [PublicController] });
-    expect((await app.request('GET', '/public')).status).toBe(200);
+    @Controller('/private')
+    @UseGuards(AbilityGuard)
+    @Can('update', 'Post')
+    class PrivateController {
+      @Get('/open')
+      @SkipAbility()
+      open() {
+        return 'ok';
+      }
+    }
+    const app = await start({
+      imports: [RestModule],
+      controllers: [PublicController, PrivateController],
+    });
+    expect((await app.request('GET', '/public')).status).toBe(401);
+    expect((await app.request('GET', '/public/open')).status).toBe(200);
+    expect((await app.request('GET', '/private/open')).status).toBe(200);
+  });
+
+  test('@SkipAbility() wins over @Can() on the same method', async () => {
+    @Controller('/both')
+    @UseGuards(AbilityGuard)
+    class BothController {
+      @Get('/')
+      @Can('update', 'Post')
+      @SkipAbility()
+      index() {
+        return 'ok';
+      }
+    }
+    const app = await start({ imports: [RestModule], controllers: [BothController] });
+    expect((await app.request('GET', '/both')).status).toBe(200);
   });
 });

@@ -1,4 +1,6 @@
 import {
+  errorText,
+  isPlainObject,
   KneadError,
   type Logger,
   type LogLevel,
@@ -53,12 +55,6 @@ const ERROR_TEXT_KEYS = new Set(['name', 'message', 'stack', 'cause']);
 
 /** U+2028 and U+2029, which JSON.stringify leaves unescaped but some readers split lines on. */
 const LINE_SEPARATORS = /[\u2028\u2029]/g;
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  if (typeof value !== 'object' || value === null) return false;
-  const proto = Object.getPrototypeOf(value);
-  return proto === Object.prototype || proto === null;
-}
 
 /** An Error, including one from another realm. */
 function isError(value: unknown): value is Error {
@@ -115,14 +111,6 @@ function stringify(record: Record<string, unknown>): string {
   return JSON.stringify(record).replace(LINE_SEPARATORS, (c) =>
     c === '\u2028' ? '\\u2028' : '\\u2029',
   );
-}
-
-/** The error's own text: its stack (which starts with `Name: message`), or `Name: message`. */
-function errorText(error: Error): string {
-  const stack = error.stack;
-  return typeof stack === 'string' && stack.includes(error.message)
-    ? stack
-    : `${error.name}: ${error.message}`;
 }
 
 interface Settings {
