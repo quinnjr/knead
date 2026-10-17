@@ -93,8 +93,10 @@ export async function loadConfig<S extends ConfigSchema>(
     const issues = new Map<string, ConfigIssue>();
     for (const issue of result.issues) {
       const first = issue.path?.[0];
+      const top = first === undefined ? undefined : segment(first);
+      // A key the schema never declared can be derived from a value, so it is a root issue.
       const described = describeIssue(
-        first === undefined ? undefined : segment(first),
+        top !== undefined && handle.keys.has(top) ? top : undefined,
         merged,
         winners,
       );

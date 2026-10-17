@@ -231,3 +231,21 @@ test('keys produced from a secret never reach the message or inspect output', as
   expect(Bun.inspect(error)).not.toContain('supersecretkey');
   expect(e.issues[0]?.path).toEqual(['creds']);
 });
+
+test('root issues with an undeclared path key never leak the value', async () => {
+  const s = defineConfig(
+    z.object({ token: z.string() }).superRefine((val, ctx) => {
+      ctx.addIssue({ code: 'custom', path: [val.token], message: val.token });
+    }),
+  );
+  const error = await failure(loadConfig(s, {}, { TOKEN: 'supersecretvalue' }));
+  const e = error as ConfigValidationError;
+  expect(e.message).not.toContain('supersecretvalue');
+  expect(Bun.inspect(error)).not.toContain('supersecretvalue');
+  expect(e.issues[0]).toEqual({
+    key: '(root)',
+    name: '(schema)',
+    path: [],
+    message: 'Invalid value',
+  });
+});
