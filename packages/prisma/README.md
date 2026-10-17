@@ -136,7 +136,9 @@ declare module '@knead-js/prisma' {
 - Give exactly one of `client` and `instance`. The client must have `$connect()`, `$disconnect()`
   and `$transaction()`. Mistakes throw `KneadError` when `forRoot()` is called.
 - `PrismaModule.forRootAsync({ imports, useFactory })` runs `useFactory` in an injection context at
-  bootstrap, so it can `inject()` providers exported by `imports`. Its result is validated then.
+  bootstrap, so it can `inject()` providers exported by `imports`. Its result is validated then;
+  the call itself throws `KneadError` unless its options are an object with a `useFactory`
+  function and, when given, an `imports` array.
 - The module is global and exports `PrismaService`, `TransactionHost` and `PRISMA_CLIENT`.
 
 ### Connection failures
@@ -190,7 +192,9 @@ reaches the caller unchanged. Checked for you:
   with a `KneadError` rather than running without a transaction.
 
 `TransactionHost.run(fn, options?)` does the same for a block, for example
-`host.run(() => audit.record(action), { propagation: 'requiresNew' })`. Both take these options:
+`host.run(() => audit.record(action), { propagation: 'requiresNew' })`. Both take these options;
+`run()` rejects with a `KneadError`, before opening a transaction, when `propagation` or
+`isolationLevel` is not one of the values below.
 
 | Option | Default | Description |
 | --- | --- | --- |
@@ -279,7 +283,7 @@ export class PrismaErrorsModule {}
 - A mapper that throws, or returns something other than an `HttpException`, produces a masked
   `500`.
 - `map` must be a plain object whose values are all functions; anything else throws `KneadError`
-  from `forRoot()`. A frozen copy is stored.
+  from `forRoot()`. A frozen copy of the options, and of `map`, is stored.
 
 For GraphQL resolvers or your own filters, `toHttpException(error, { map, development })` returns
 the same `HttpException` (or `undefined` for non-Prisma errors), and `isPrismaError()` tells you

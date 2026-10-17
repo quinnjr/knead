@@ -39,8 +39,13 @@ export function logError(
 function redactedError(error: unknown): unknown {
   const redacted = redactValue(error);
   if (!(error instanceof Error) || typeof redacted !== 'string') return redacted;
-  const copy = new Error(redactCredentials(String(error.message)));
-  Object.defineProperty(copy, 'name', { value: error.name, enumerable: false });
-  Object.defineProperty(copy, 'stack', { value: redacted, enumerable: false });
-  return copy;
+  try {
+    const copy = new Error(redactCredentials(String(error.message)));
+    Object.defineProperty(copy, 'name', { value: error.name, enumerable: false });
+    Object.defineProperty(copy, 'stack', { value: redacted, enumerable: false });
+    return copy;
+  } catch {
+    // A throwing message or name getter: log the redacted text rather than nothing.
+    return redacted;
+  }
 }

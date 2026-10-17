@@ -23,6 +23,15 @@ export const SECURITY_HEADERS_META = Symbol('knead:security-headers');
 /** The shortest HSTS max-age that does not log a warning: 180 days. */
 export const MIN_RECOMMENDED_HSTS_MAX_AGE = 15_552_000;
 
+/**
+ * Stands in for the nonce when a header list is built ahead of time. Validation rejects line
+ * feeds in every CSP token, so it can only appear where the nonce goes.
+ */
+const NONCE_SLOT = '\n';
+
+/** A built header list; a value with nonce slots is kept as the parts between them. */
+type CompiledHeaders = readonly (readonly [string, string | readonly string[]])[];
+
 const override = createRouteDecorator<SecurityHeadersOptions>(SECURITY_HEADERS_META);
 
 /** Per-controller or per-route overrides merged over the module options. */
@@ -41,6 +50,11 @@ export class SecurityHeadersMiddleware implements Middleware {
     return options;
   }
   readonly #cache = new WeakMap<object, SecurityHeadersOptions>();
+  /** Built headers per effective options object, for plain and secure requests. */
+  readonly #compiled = new WeakMap<
+    SecurityHeadersOptions,
+    { plain?: CompiledHeaders; secure?: CompiledHeaders }
+  >();
   readonly #logger = inject(LOGGER, { optional: true });
   #warnedShortHsts = false;
 
@@ -68,7 +82,30 @@ export class SecurityHeadersMiddleware implements Middleware {
     const nonce = nonceTargets(options.contentSecurityPolicy) ? generateNonce() : undefined;
     if (nonce) ctx.state.cspNonce = nonce;
     const res = await next();
-    return withHeaders(res, buildHeaders(options, { secure: ctx.secure, nonce }), false);
+    return withHeaders(res, this.#headers(options, ctx.secure, nonce), false);
+  }
+
+  /** The same list as buildHeaders(), built once per options and secure flag; only the nonce varies. */
+  #headers(options: SecurityHeadersOptions, secure: boolean, nonce: string | undefined) {
+    let entry = this.#compiled.get(options);
+    if (!entry) {
+      entry = {};
+      this.#compiled.set(options, entry);
+    }
+    const key = secure ? 'secure' : 'plain';
+    let compiled = entry[key];
+    if (!compiled) {
+      const slot = nonceTargets(options.contentSecurityPolicy) ? NONCE_SLOT : undefined;
+      compiled = buildHeaders(options, { secure, nonce: slot }).map(
+        ([name, value]) =>
+          [name, slot && value.includes(slot) ? value.split(slot) : value] as const,
+      );
+      entry[key] = compiled;
+    }
+    return compiled.map(([name, value]): [string, string] => [
+      name,
+      typeof value === 'string' ? value : value.join(nonce ?? ''),
+    ]);
   }
 
   #effective(ctx: Ctx): SecurityHeadersOptions {

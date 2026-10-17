@@ -168,10 +168,13 @@ default uses. An `onError` that throws or rejects is caught and logged as
 <<< schedule/options.ts#options title="app.module.ts"
 
 `logger` receives the scheduler's warnings and the default error reports. It needs only `warn()`
-and `error()` (the `ScheduleLogger` interface); the default is `console`. `ConsoleLogger` from
-`@knead-js/core` and the other Knead loggers fit. `forRoot()` options are static, so the
-scheduler cannot use the application's injected `LOGGER`; construct the logger you want and pass
-it.
+and `error()` (the `ScheduleLogger` interface); the default is the application's injected
+`LOGGER`, so scheduler messages go wherever the rest of the application logs. Pass a logger only to
+send them somewhere else; `ConsoleLogger` from `@knead-js/core` and the other Knead loggers fit.
+Every message is a single redacted string, and control characters in job names are escaped
+(`\n`), so a job name built at runtime cannot forge log lines. A `RedisLockStore` is built outside
+dependency injection, so its plaintext warning goes to a `ConsoleLogger` unless you pass it a
+`logger`.
 
 See the [options table](/packages/schedule/#schedulemodule) for every option and default.
 

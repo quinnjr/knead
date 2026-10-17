@@ -926,8 +926,12 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
       return spec;
     }
     const sub = options as SubscriptionMethodOptions;
+    // The arguments validated at subscribe time, reused for every event of that subscription
+    // (graphql-js passes each event the same contextValue; a subscription has one root field).
+    const validated = new WeakMap<OperationContext, unknown>();
     spec.subscribe = marked(async (parent, args, op: OperationContext, info) => {
       const ctx = await prepare(parent, args, op, info, true);
+      validated.set(op, ctx.args);
       const topics = typeof sub.topic === 'function' ? sub.topic(ctx) : sub.topic;
       // A computed topic usually embeds client input; a wildcard there would let the client
       // listen to other topics on engines that support patterns.
@@ -961,16 +965,16 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
       const refresh = subscriptions === false ? undefined : subscriptions.refreshContext;
       return recheckEvents(events, async () => {
         if (refresh) {
-          let refreshed: object | false;
+          let refreshed: unknown;
           try {
             refreshed = await refresh({ http: op.http, context: op.user });
           } catch (error) {
             throw toSafeError(error, this.masking, 'subscriptions.refreshContext');
           }
-          if (refreshed === false) throw new ForbiddenException();
-          if (typeof refreshed === 'object' && refreshed !== null) {
-            op.user = { ...op.user, ...refreshed };
-          }
+          // Fail closed: only an object keeps the subscription alive (false, undefined, null,
+          // true or anything else ends it).
+          if (typeof refreshed !== 'object' || refreshed === null) throw new ForbiddenException();
+          op.user = { ...op.user, ...refreshed };
         }
         // ctx.args are the validated arguments from subscribe time, as authorize expects.
         const recheck = createResolverCtx(op, injector, meta, ctx.args, parent, info);
@@ -982,7 +986,10 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
       if (payload instanceof RevokedEvent) throw payload.error;
       op.resetForEvent();
       const value = sub.resolve ? await sub.resolve(payload) : payload;
-      const result = await call(await prepare(value, args, op, info, false));
+      const ctx = validated.has(op)
+        ? createResolverCtx(op, injector, meta, validated.get(op), value, info)
+        : await prepare(value, args, op, info, false);
+      const result = await call(ctx);
       return result === undefined ? value : result;
     });
     return spec;

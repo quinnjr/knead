@@ -64,8 +64,9 @@ router and binds the server. `GET /greet/ada` answers `{"message":"hello ada"}`.
   `HttpConfigError` at `listen()`, not a silent pass.
 - **RFC 9457 errors** as `application/problem+json`, with 5xx details masked outside development
   and every 5xx logged, redacted, under a correlation id.
-- **Bounded input.** 1 MiB bodies, 1000 query parameters or form fields, and
-  `__proto__`-style keys dropped from parsed queries, forms and JSON.
+- **Bounded input.** 1 MiB bodies, 1000 query parameters or form fields. Parsed queries and
+  forms drop `__proto__`, `constructor` and `prototype` keys; JSON drops `__proto__` at every
+  depth and `constructor` and `prototype` keys holding objects.
 - **Production server.** TLS, an HTTP to HTTPS redirect listener, certificate hot reload,
   `allowedHosts` against DNS rebinding, proxy trust by CIDR or hop count, graceful shutdown.
 - **WebSockets.** Exact-path endpoints behind the same middleware and guards, a same-origin check,
@@ -114,9 +115,12 @@ export class TodosController {
 ```
 
 - A handler's return value becomes the response: objects as JSON, strings as text, `Blob`s,
-  bytes and streams as bytes, `undefined` as `204`. A returned `Response` is sent as is.
-- Set a status with the route's `status` option or `ctx.res.status`, headers with
-  `ctx.res.headers`.
+  bytes and streams as bytes, `undefined` as `204`. A returned `Response` keeps its status, body
+  and headers; `ctx.res.headers` it does not have are added (`Set-Cookie` is appended), and
+  `defaultCacheControl` when it has no `Cache-Control`.
+- Set a status with the route's `status` option (an integer from 200 to 599, checked at
+  `listen()`) or `ctx.res.status`, headers with `ctx.res.headers`. With `204`, `205` or `304` the
+  returned value is dropped and the response has no body.
 - Responses built from a return value, problem responses and redirects carry
   `x-content-type-options: nosniff`. When serving user uploads, set
   `Content-Disposition: attachment` so they are not rendered in your origin.
@@ -154,7 +158,9 @@ is denied.
 - `ctx.meta` is the matched route's metadata, written by `createRouteDecorator()` and the `meta`
   option, so one role guard works on every route (and on GraphQL resolvers).
 - Register application-wide pieces with the `APP_MIDDLEWARE`, `APP_GUARD` and `APP_FILTER` multi
-  providers, or `useGlobalMiddleware()`, `useGlobalGuards()` and `useGlobalFilters()`.
+  providers, or `useGlobalMiddleware()`, `useGlobalGuards()` and `useGlobalFilters()`. These
+  throw an `HttpConfigError` once `listen()` has started (including while it is still
+  initializing) or after `close()`.
 - An exception filter returns a `Response`, or `undefined` to pass the error on to the next filter
   and finally to the default problem response.
 
@@ -220,7 +226,7 @@ export async function bootstrap(
 | `trustProxy` | `false` | A list of proxy CIDRs (preferred) or a hop count, for `ctx.ip` and `ctx.secure`. |
 | `maxRequestBodySize` | 1 MiB | Larger bodies get `413`. |
 | `maxParams` | `1000` | More query parameters get `400`, more form fields `413`. |
-| `defaultCacheControl` | none | Added to responses without `Cache-Control`, such as `'no-store'`. |
+| `defaultCacheControl` | none | Added to every response without `Cache-Control` (including 404s, `421`s and rejected upgrades), such as `'no-store'`. A value that is not a valid header value is an `HttpConfigError` at `listen()`. |
 | `shutdownTimeout` | `10000` | Milliseconds `close()` waits for in-flight requests. |
 
 - `enableShutdownHooks()` closes the application on `SIGTERM` or `SIGINT` and exits: `close()`
@@ -241,8 +247,9 @@ export async function bootstrap(
 Inject `WsRegistry` and `register(path, endpoint, options?)` an endpoint at an exact path. Its
 `upgrade(ctx)` returns the socket data, or `false` for a 403. An upgrade passes the host check,
 global middleware, a same-origin `Origin` check and global guards first; when its path is also a
-`GET` route's, that route's middleware and guards run too. Guards can tell upgrades apart by
-`ctx.upgrade`.
+`GET` route's, that route's middleware and guards run too. A parametric or wildcard `GET` route
+that covers the path (`/ws/:id`, `/*`) does not take its upgrades. Guards can tell upgrades apart
+by `ctx.upgrade`.
 
 | `listen({ websocket })` limit | Default |
 | --- | --- |
@@ -254,8 +261,11 @@ global middleware, a same-origin `Origin` check and global guards first; when it
 | `idleTimeout` | 120 seconds |
 
 Per endpoint, set `allowedOrigins`, `messageRate` and `maxConnectionLifetime`. To revoke sockets
-(on sign-out), `closeWhere(predicate)` closes every matching socket, including ones still
-upgrading when they open. Browsers cannot send an `Authorization` header on a WebSocket, so
+(on sign-out), `closeWhere(predicate)` closes every socket for which the predicate returns a
+truthy value, including ones still upgrading when they open. The connection slot of an upgrade
+whose socket has not opened after 30 seconds is given back; if it opens later it takes a slot
+again, or is closed with `1013` when none is free. A limit option passed as `undefined` keeps its
+default. Browsers cannot send an `Authorization` header on a WebSocket, so
 authenticate in `upgrade()` (for example with a one-time ticket) rather than in a header guard.
 
 ## Logging

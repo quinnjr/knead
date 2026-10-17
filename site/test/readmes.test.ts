@@ -3,7 +3,13 @@
 import { describe, expect, test } from 'bun:test';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
-import { slugify, snippetCode, snippetRegions } from '../src/lib/server/markdown.js';
+import {
+  type RenderedPage,
+  renderPage,
+  slugify,
+  snippetCode,
+  snippetRegions,
+} from '../src/lib/server/markdown.js';
 
 const site = join(import.meta.dir, '..');
 const packagesDir = join(site, '..', 'packages');
@@ -13,11 +19,13 @@ const snippetFiles = readdirSync(join(site, 'snippets'), { recursive: true, with
   .filter((e) => e.isFile() && e.name.endsWith('.ts'))
   .map((e) => join(e.parentPath, e.name));
 
+const snippetSources = new Map(
+  snippetFiles.map((f) => [relative(join(site, 'snippets'), f), readFileSync(f, 'utf8')]),
+);
+
 /** Every block a page could show: each snippet whole and each of its regions, keyed by origin. */
 const shown = new Map<string, string>();
-for (const file of snippetFiles) {
-  const source = readFileSync(file, 'utf8');
-  const path = relative(join(site, 'snippets'), file);
+for (const [path, source] of snippetSources) {
   shown.set(snippetCode(source)!, path);
   for (const region of snippetRegions(source)) {
     const code = snippetCode(source, region);
@@ -43,6 +51,23 @@ function fences(markdown: string): { lang: string; code: string }[] {
 /** Markdown with fenced code removed, so links are only looked for in prose. */
 function prose(markdown: string): string {
   return markdown.replace(/^(`{3,})[^\n]*\n[\s\S]*?\n\1[ \t]*$/gm, '');
+}
+
+const rendered = new Map<string, Promise<RenderedPage>>();
+
+/** The heading ids of a rendered content page (every level, as the browser resolves #id). */
+async function headingIds(slug: string): Promise<Set<string>> {
+  let page = rendered.get(slug);
+  if (!page) {
+    page = renderPage(readFileSync(join(site, 'content', `${slug}.md`), 'utf8'), {
+      snippets: snippetSources,
+      href: (p) => p,
+      file: `content/${slug}.md`,
+    });
+    rendered.set(slug, page);
+  }
+  const { html } = await page;
+  return new Set([...html.matchAll(/<h[2-6] id="([^"]+)"/g)].map((m) => m[1]!));
 }
 
 describe('package READMEs', () => {
@@ -81,16 +106,22 @@ describe('package READMEs', () => {
         expect(prose(readme)).not.toMatch(/<img\s[^>]*src="(?!https:\/\/)/);
       });
 
-      test('docs links point at pages that exist', () => {
-        for (const [, path] of readme.matchAll(
-          /https:\/\/quinnjr\.github\.io\/knead(\/[^)\s#"]*)/g,
+      test('docs links point at pages and headings that exist', async () => {
+        for (const [, path, fragment] of readme.matchAll(
+          /https:\/\/quinnjr\.github\.io\/knead(\/[^)\s#"]*)(?:#([^)\s"]*))?/g,
         )) {
-          if (path === '/') continue;
+          if (path === '/') {
+            expect(fragment).toBeUndefined();
+            continue;
+          }
           expect(path!.endsWith('/')).toBe(true);
           const slug = path!.slice(1, -1);
           expect(readdirSync(join(site, 'content', slug.split('/')[0]!))).toContain(
             `${slug.split('/')[1]}.md`,
           );
+          if (fragment !== undefined) {
+            expect([...(await headingIds(slug))]).toContain(fragment);
+          }
         }
       });
     });

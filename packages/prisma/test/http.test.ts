@@ -298,6 +298,22 @@ describe('PrismaHttpModule.forRoot map hardening', () => {
     expect(typeof stored.P2002).toBe('function');
     expect('P2003' in stored).toBe(false);
   });
+
+  test('without a map, forRoot() and forRoot({}) still store a frozen copy', () => {
+    const storedOf = (mod: ReturnType<typeof PrismaHttpModule.forRoot>) => {
+      const provider = (mod.providers ?? []).find(
+        (p) => typeof p === 'object' && 'useValue' in p && 'provide' in p && p.multi !== true,
+      ) as { useValue: Record<string, unknown> };
+      return provider.useValue;
+    };
+    expect(Object.isFrozen(storedOf(PrismaHttpModule.forRoot()))).toBe(true);
+    const original: Record<string, unknown> = {};
+    const stored = storedOf(PrismaHttpModule.forRoot(original));
+    expect(stored).not.toBe(original);
+    expect(Object.isFrozen(stored)).toBe(true);
+    original.map = { P2002: 'broken' };
+    expect(stored.map).toBeUndefined();
+  });
 });
 
 describe('PrismaHttpModule.forRoot map snapshot', () => {

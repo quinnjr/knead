@@ -32,6 +32,12 @@ export class ContainerState {
   readonly injectors: ModuleInjector[] = [];
   readonly overrides: ReadonlyMap<Token, NormalizedProvider>;
   globals: readonly ModuleInjector[] = [];
+  /**
+   * True while the application starts (ApplicationContext.create clears it). Afterwards a
+   * transient is tracked only when it is a dependency of a singleton being constructed (a guard
+   * built at listen()), so transients resolved at runtime are neither kept nor given hooks.
+   */
+  bootstrapping = true;
   readonly #tracked = new Set<unknown>();
 
   constructor(overrides: Iterable<readonly [Token, Provider]> = []) {
@@ -61,7 +67,9 @@ export class ContainerState {
     this.stack.push(record);
     try {
       const value = record.owner.instantiate(record);
-      if (p.kind !== 'existing') this.#track(value);
+      if (p.kind !== 'existing' && (p.scope !== 'transient' || this.#tracksTransient())) {
+        this.#track(value);
+      }
       if (p.scope === 'transient') return value;
       record.value = value;
       record.state = 'ready';
@@ -114,6 +122,17 @@ export class ContainerState {
     }
   }
 
+  /**
+   * Whether a transient being constructed now is a startup instance: during bootstrap, or as a
+   * dependency of a singleton under construction (created at most once per singleton).
+   */
+  #tracksTransient(): boolean {
+    if (this.bootstrapping) return true;
+    return this.stack.some(
+      (r) => r.provider.scope === 'singleton' && r.provider.kind !== 'existing',
+    );
+  }
+
   #track(value: unknown): void {
     if (value !== null && typeof value === 'object' && !this.#tracked.has(value)) {
       this.#tracked.add(value);
@@ -163,8 +182,13 @@ export class ModuleInjector implements InjectorLike {
       if (options?.optional) return undefined;
       throw this.noProvider(token);
     }
-    if (records[0]!.provider.multi) return records.map((r) => this.state.resolve(r)) as T;
-    return this.state.resolve(records[0]!) as T;
+    return this.resolveRecords(records) as T;
+  }
+
+  /** @internal Resolves lookup() records: all of a multi token, else the single one. */
+  resolveRecords(records: readonly ProviderRecord[]): unknown {
+    if (records[0]!.provider.multi) return records.map((r) => this.state.resolve(r));
+    return this.state.resolve(records[0]!);
   }
 
   /** Own providers first, then exports of imported modules, then exports of global modules. */
@@ -228,7 +252,10 @@ export class ModuleInjector implements InjectorLike {
 
   *#sources(): IterableIterator<ModuleInjector> {
     yield* this.imports;
-    for (const g of this.state.globals) if (g !== this && !this.imports.includes(g)) yield g;
+    const globals = this.state.globals;
+    if (globals.length === 0) return;
+    const imported = this.imports.length > 0 ? new Set(this.imports) : undefined;
+    for (const g of globals) if (g !== this && !imported?.has(g)) yield g;
   }
 
   /**
@@ -238,7 +265,8 @@ export class ModuleInjector implements InjectorLike {
   resolveOrConstruct<T>(cls: Type<T>): T {
     let record = this.#constructed.get(cls);
     if (!record) {
-      if (this.lookup(cls)) return this.get(cls) as T;
+      const visible = this.lookup(cls);
+      if (visible) return this.resolveRecords(visible) as T;
       const provider = this.state.overrides.get(cls) ?? {
         kind: 'class' as const,
         token: cls,

@@ -1,7 +1,26 @@
 {
   "name": "@knead-js/testing",
   "version": "0.2.1",
-  "description": "Testing utilities for Knead applications",
+  "description": "Testing utilities with real ephemeral servers for Knead, the NestJS-style web framework for Bun",
+  "keywords": [
+    "bun",
+    "bunjs",
+    "bun-framework",
+    "knead",
+    "web-framework",
+    "http-framework",
+    "typescript",
+    "testing",
+    "test",
+    "bun-test",
+    "integration-testing",
+    "e2e",
+    "mocking"
+  ],
+  "homepage": "https://quinnjr.github.io/knead/packages/testing/",
+  "bugs": {
+    "url": "https://github.com/quinnjr/knead/issues"
+  },
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",

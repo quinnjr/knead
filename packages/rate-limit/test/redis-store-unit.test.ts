@@ -1,8 +1,8 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { HttpConfigError, MemoryLogger } from '@knead-js/http';
 import type { RedisClient } from 'bun';
 import { hashKey, RedisStore } from '../src/index.js';
-import { resetUnkeyedHashWarning } from '../src/redis-store.js';
+import { ownedClientOptions, resetUnkeyedHashWarning } from '../src/redis-store.js';
 
 describe('RedisStore plaintext guardrails', () => {
   test('warns at construction about plaintext redis:// to a non-loopback host', async () => {
@@ -117,9 +117,90 @@ describe('keyed hashes', () => {
     expect(raw.entries).toEqual([]);
   });
 
+  // Pinned with the node:crypto createHmac implementation: existing Redis keys must not change.
+  test('hashKey output is stable', () => {
+    expect(hashKey('global|203.0.113.9', 's'.repeat(32))).toBe('5c3f41ca62a9f2ca3fd81f2dad635553');
+    expect(hashKey('guard:GET /x|2001:db8::/64', new Uint8Array(32).fill(9))).toBe(
+      '11dacf063780084dad93167aea8e9ff9',
+    );
+    expect(hashKey('\u00e9\u{1F600}|k', 'p\u00e4ss-'.repeat(8))).toBe(
+      '89027d271ebb39985b25af90f2f5eabe',
+    );
+  });
+
   test('a hashSecret shorter than 32 bytes is rejected', () => {
     expect(() => new RedisStore({ client: {} as RedisClient, hashSecret: 'short' })).toThrow(
       RangeError,
     );
+  });
+});
+
+describe('RedisStore owned client', () => {
+  test('is built without the offline queue and with a bounded connection timeout', () => {
+    expect(ownedClientOptions(250)).toEqual({
+      enableOfflineQueue: false,
+      connectionTimeout: 1_000,
+    });
+    expect(ownedClientOptions(5_000)).toEqual({
+      enableOfflineQueue: false,
+      connectionTimeout: 5_000,
+    });
+  });
+
+  test('an unreachable server fails within commandTimeout instead of queueing', async () => {
+    const store = new RedisStore({
+      url: 'redis://127.0.0.1:1',
+      commandTimeout: 50,
+      logger: new MemoryLogger(),
+      hashKeys: false,
+    });
+    const started = performance.now();
+    await expect(
+      store.consume('k', { limit: 1, windowMs: 1000, algorithm: 'sliding-window' }),
+    ).rejects.toThrow();
+    expect(performance.now() - started).toBeLessThan(1_000);
+    await store.close();
+  });
+});
+
+describe('RedisStore logger', () => {
+  const client = { send: async () => [1, 1, Date.now() + 1000] } as unknown as RedisClient;
+  const rule = { limit: 1, windowMs: 1000, algorithm: 'sliding-window' as const };
+
+  test('without a logger option, construction warnings wait for setLogger()', () => {
+    resetUnkeyedHashWarning();
+    const store = new RedisStore({ client });
+    const app = new MemoryLogger();
+    store.setLogger(app);
+    expect(app.entries.filter((e) => e.message.includes('no hashSecret'))).toHaveLength(1);
+    // Delivered once.
+    const again = new MemoryLogger();
+    store.setLogger(again);
+    expect(again.entries).toEqual([]);
+  });
+
+  test('without setLogger(), they go to a ConsoleLogger at the first consume()', async () => {
+    resetUnkeyedHashWarning();
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const store = new RedisStore({ client });
+      expect(warn).not.toHaveBeenCalled();
+      await store.consume('k', rule);
+      await store.consume('k', rule);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]?.[0])).toContain('[knead:rate-limit]');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test('an explicit logger option wins over setLogger()', () => {
+    resetUnkeyedHashWarning();
+    const own = new MemoryLogger();
+    const store = new RedisStore({ client, logger: own });
+    expect(own.entries).toHaveLength(1);
+    const app = new MemoryLogger();
+    store.setLogger(app);
+    expect(app.entries).toEqual([]);
   });
 });

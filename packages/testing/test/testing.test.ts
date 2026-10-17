@@ -107,6 +107,12 @@ describe('Test.createModule', () => {
     expect(await mod.createApp()).toBe(app);
   });
 
+  test('concurrent createApp() calls listen once and return the same TestApp', async () => {
+    mod = await Test.createModule({ imports: [GreetModule] }).compile();
+    const [a, b] = await Promise.all([mod.createApp(), mod.createApp()]);
+    expect(a).toBe(b);
+  });
+
   test('development defaults to true and errors are captured in logs', async () => {
     mod = await Test.createModule({ imports: [GreetModule] }).compile();
     const app = await mod.createApp();

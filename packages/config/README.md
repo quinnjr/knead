@@ -94,7 +94,9 @@ server never starts with a broken configuration.
 - **Your schema library.** Zod, ArkType or Valibot, through Standard Schema and Standard JSON
   Schema.
 - **Validated once, at boot.** Every source is merged and validated before any `onModuleInit` hook
-  runs. The result is deep-frozen.
+  runs. The result is deep-frozen: plain objects and arrays (and their own properties, at any
+  depth) cannot change, though the contents of a `Map`, `Set` or `Date` from a schema transform
+  stay mutable.
 - **Environment names.** `DATABASE_URL` becomes `databaseUrl`; only keys the schema declares are
   read.
 - **Async loaders.** Fetch from a secret store or a file at startup, with dependencies injected.

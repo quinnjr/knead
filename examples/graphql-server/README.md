@@ -1,6 +1,6 @@
 # Knead GraphQL server example
 
-A small blog (authors, posts and comments, kept in memory and seeded at startup) served over GraphQL with every Knead package working together: code-first types, DataLoader-batched field resolvers, valibot argument validation, bearer-token auth with `@knead-js/casl` permissions (token grants, `@Can`, field-level `@AbilitySubject`), subscriptions over `graphql-transport-ws` (in memory or on Redis), CORS, rate limiting, security headers and HTML sanitization, plus a plain REST `GET /health` route next to `/graphql` that returns only `{ "status": "ok" }`. Private; not published.
+A small blog (authors, posts and comments, kept in memory and seeded at startup) served over GraphQL with most Knead packages working together (all but `@knead-js/config`, `@knead-js/logging`, `@knead-js/schedule` and `@knead-js/prisma`): code-first types, DataLoader-batched field resolvers, valibot argument validation, bearer-token auth with `@knead-js/casl` permissions (token grants, `@Can`, field-level `@AbilitySubject`), subscriptions over `graphql-transport-ws` (in memory or on Redis), CORS, rate limiting, security headers and HTML sanitization, plus a plain REST `GET /health` route next to `/graphql` that returns only `{ "status": "ok" }`. Private; not published.
 
 ## Run
 

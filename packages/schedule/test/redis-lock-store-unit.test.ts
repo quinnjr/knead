@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from 'bun:test';
+import { describe, expect, mock, spyOn, test } from 'bun:test';
 import type { RedisClient } from 'bun';
 import { RedisLockStore, ScheduleConfigError } from '../src/index.js';
 
@@ -16,6 +16,18 @@ describe('RedisLockStore plaintext guardrails', () => {
       expect([url, messages.some((m) => m.includes('rediss://'))]).toEqual([url, warns]);
       expect(messages.some((m) => m.includes('pw@'))).toBe(false);
       await store.close();
+    }
+  });
+
+  test('without a logger, the warning goes to a ConsoleLogger', async () => {
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const store = new RedisLockStore({ url: 'redis://cache.internal:6379' });
+      await store.close();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]?.[0])).toStartWith('[knead] [knead:schedule] ');
+    } finally {
+      warn.mockRestore();
     }
   });
 

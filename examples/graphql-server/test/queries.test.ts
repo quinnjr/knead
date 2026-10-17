@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { AuthorsById, PostsByAuthor } from '../src/blog/blog.loaders.js';
+import { AuthorsById, CommentsByPost, PostsByAuthor } from '../src/blog/blog.loaders.js';
 import { ada, frontend, grace, type Started, start } from './helpers.js';
 
 let s: Started;
@@ -110,6 +110,23 @@ describe('queries', () => {
       { name: 'Grace Hopper', posts: [{ id: 'p2' }] },
       { name: 'Alan Turing', posts: [{ id: 'p3' }] },
     ]);
+    expect(loader.batchCalls - before).toBe(1);
+  });
+
+  test('Post.comments is batched through CommentsByPost', async () => {
+    const loader = s.mod.get(CommentsByPost);
+    const before = loader.batchCalls;
+    const res = await s.app.graphql<{
+      posts: { id: string; comments: { author: { name: string } }[] }[];
+    }>('{ posts { id comments { author { name } } } }', { headers: ada });
+    expect(res.errors).toBeUndefined();
+    expect(res.data?.posts).toEqual([
+      { id: 'p1', comments: [] },
+      { id: 'p2', comments: [{ author: { name: 'Ada Lovelace' } }] },
+      { id: 'p3', comments: [] },
+      { id: 'p4', comments: [] },
+    ]);
+    // Four posts, one batch.
     expect(loader.batchCalls - before).toBe(1);
   });
 

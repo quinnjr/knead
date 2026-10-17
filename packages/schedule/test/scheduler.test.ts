@@ -1,4 +1,5 @@
-import { describe, expect, mock, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
+import { MemoryLogger } from '@knead-js/core';
 import type { JobContext } from '../src/decorators.js';
 import { ScheduleConfigError, ScheduleJobNotFoundError } from '../src/errors.js';
 import { MemoryLockStore, type ScheduleLockStore } from '../src/lock-store.js';
@@ -11,9 +12,11 @@ const T0 = Date.parse('2026-01-01T00:00:00.000Z');
 
 function setup(options: Partial<ResolvedScheduleOptions> = {}, clock = new ManualClock(T0)) {
   const errors: [unknown, JobContext][] = [];
+  // The fallback logger SchedulerRegistry passes is the application's LOGGER.
+  const logger = new MemoryLogger();
   const scheduler = new Scheduler(
     {
-      ...resolveScheduleOptions({}),
+      ...resolveScheduleOptions({}, logger),
       onError: (error, ctx) => {
         errors.push([error, ctx]);
       },
@@ -21,7 +24,7 @@ function setup(options: Partial<ResolvedScheduleOptions> = {}, clock = new Manua
     },
     clock,
   );
-  return { scheduler, clock, errors };
+  return { scheduler, clock, errors, logger };
 }
 
 function recorder() {
@@ -137,26 +140,35 @@ describe('cron jobs', () => {
   });
 
   test('a pattern with no future match is stopped with a warning', async () => {
-    const warn = mock(() => {});
-    const original = console.warn;
-    console.warn = warn;
-    try {
-      const { scheduler, clock } = setup();
-      const { handler } = recorder();
-      scheduler.add({
-        name: 'past',
-        schedule: cronSchedule('0 0 0 1 1 * 2020', 'UTC'),
-        handler,
-        lock: noLock,
-      });
-      scheduler.start();
-      expect(scheduler.get('past')).toMatchObject({ state: 'stopped', nextRunAt: undefined });
-      expect(clock.pending).toBe(0);
-      expect(warn).toHaveBeenCalledTimes(1);
-      expect(String((warn.mock.calls[0] as unknown[])[0])).toContain('past');
-    } finally {
-      console.warn = original;
-    }
+    const { scheduler, clock, logger } = setup();
+    const { handler } = recorder();
+    scheduler.add({
+      name: 'past',
+      schedule: cronSchedule('0 0 0 1 1 * 2020', 'UTC'),
+      handler,
+      lock: noLock,
+    });
+    scheduler.start();
+    expect(scheduler.get('past')).toMatchObject({ state: 'stopped', nextRunAt: undefined });
+    expect(clock.pending).toBe(0);
+    expect(logger.entries).toHaveLength(1);
+    expect(logger.entries[0]).toMatchObject({ level: 'warn' });
+    expect(logger.entries[0]!.message).toContain('"past"');
+  });
+
+  test('job names in warnings have control characters escaped', () => {
+    const warnings: string[] = [];
+    const { scheduler } = setup({ logger: { warn: (m) => warnings.push(m), error: () => {} } });
+    scheduler.add({
+      name: 'tenant\r\n[knead] forged',
+      schedule: cronSchedule('0 0 0 1 1 * 2020', 'UTC'),
+      handler: () => {},
+      lock: noLock,
+    });
+    scheduler.start();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('"tenant\\r\\n[knead] forged"');
+    expect(warnings[0]).not.toMatch(/[\r\n]/);
   });
 
   test('timezones are honoured', () => {
@@ -317,30 +329,23 @@ describe('errors', () => {
   });
 
   test('a throwing onError is contained and logged', async () => {
-    const logged = mock(() => {});
-    const original = console.error;
-    console.error = logged;
-    try {
-      const { scheduler, clock } = setup({
-        onError: () => {
-          throw new Error('handler of handlers');
-        },
-      });
-      scheduler.add({
-        name: 'bad',
-        schedule: intervalSchedule(100),
-        handler: () => {
-          throw new Error('boom');
-        },
-        lock: noLock,
-      });
-      scheduler.start();
-      await clock.advance(200);
-      expect(logged).toHaveBeenCalledTimes(2);
-      expect(scheduler.get('bad')!.state).toBe('scheduled');
-    } finally {
-      console.error = original;
-    }
+    const { scheduler, clock, logger } = setup({
+      onError: () => {
+        throw new Error('handler of handlers');
+      },
+    });
+    scheduler.add({
+      name: 'bad',
+      schedule: intervalSchedule(100),
+      handler: () => {
+        throw new Error('boom');
+      },
+      lock: noLock,
+    });
+    scheduler.start();
+    await clock.advance(200);
+    expect(logger.entries.filter((e) => e.level === 'error')).toHaveLength(2);
+    expect(scheduler.get('bad')!.state).toBe('scheduled');
   });
 
   test('trigger resolves after the run settles, even when it fails', async () => {
@@ -488,31 +493,26 @@ describe('shutdown', () => {
   });
 
   test('gives up after shutdownTimeout and names the jobs still running', async () => {
-    const warn = mock(() => {});
-    const original = console.warn;
-    console.warn = warn;
-    try {
-      const { scheduler, clock } = setup({ shutdownTimeout: 1_000 });
-      scheduler.add({
-        name: 'stuck',
-        schedule: intervalSchedule(100),
-        handler: () => new Promise(() => {}),
-        lock: noLock,
-      });
-      scheduler.start();
-      await clock.advance(100);
-      let done = false;
-      const closing = scheduler.shutdown().then(() => {
-        done = true;
-      });
-      await clock.advance(999);
-      expect(done).toBe(false);
-      await clock.advance(1);
-      await closing;
-      expect(String((warn.mock.calls[0] as unknown[])[0])).toContain('stuck');
-    } finally {
-      console.warn = original;
-    }
+    const { scheduler, clock, logger } = setup({ shutdownTimeout: 1_000 });
+    scheduler.add({
+      name: 'stuck\nline',
+      schedule: intervalSchedule(100),
+      handler: () => new Promise(() => {}),
+      lock: noLock,
+    });
+    scheduler.start();
+    await clock.advance(100);
+    let done = false;
+    const closing = scheduler.shutdown().then(() => {
+      done = true;
+    });
+    await clock.advance(999);
+    expect(done).toBe(false);
+    await clock.advance(1);
+    await closing;
+    expect(logger.entries).toHaveLength(1);
+    expect(logger.entries[0]!.level).toBe('warn');
+    expect(logger.entries[0]!.message).toContain('"stuck\\nline"');
   });
 
   test('a removed job that is still running is awaited', async () => {
@@ -549,6 +549,8 @@ describe('shutdown', () => {
     ).toThrow(ScheduleConfigError);
     expect(() => scheduler.pause('a')).toThrow(ScheduleConfigError);
     expect(() => scheduler.resume('a')).toThrow(ScheduleConfigError);
+    expect(() => scheduler.remove('a')).toThrow(ScheduleConfigError);
+    expect(() => scheduler.remove('missing')).toThrow(ScheduleConfigError);
     await expect(scheduler.trigger('a')).rejects.toThrow(ScheduleConfigError);
   });
 });
@@ -709,6 +711,28 @@ describe('review regressions', () => {
     expect(runs).toBe(2);
   });
 
+  test('a timeout handler that resumes itself before its first await is re-armed', async () => {
+    const { scheduler, clock } = setup();
+    let runs = 0;
+    scheduler.add({
+      name: 't',
+      schedule: timeoutSchedule(100),
+      handler: async () => {
+        runs++;
+        if (runs === 1) scheduler.resume('t');
+        await Promise.resolve();
+      },
+      lock: noLock,
+    });
+    scheduler.start();
+    await clock.advance(100);
+    expect(runs).toBe(1);
+    expect(scheduler.get('t')).toMatchObject({ state: 'scheduled' });
+    await clock.advance(100);
+    expect(runs).toBe(2);
+    expect(scheduler.get('t')).toBeUndefined();
+  });
+
   test('every job reports stopped after shutdown', async () => {
     const { scheduler } = setup();
     const { handler } = recorder();
@@ -779,5 +803,82 @@ describe('review regressions', () => {
     expect(errors[0]).toHaveLength(1);
     expect(String(errors[0]![0])).toContain('onError failed for job "bad"');
     expect(String(errors[0]![0])).not.toContain('abc123');
+  });
+});
+
+describe('daylight saving time', () => {
+  const NY = 'America/New_York';
+
+  test('spring forward: a job in the skipped hour runs an hour later, once', async () => {
+    // 2026-03-08 02:00 EST jumps to 03:00 EDT, so 02:30 does not exist that day.
+    const { scheduler, clock } = setup({}, new ManualClock('2026-03-07T12:00:00.000Z'));
+    const { runs, handler } = recorder();
+    scheduler.add({
+      name: 'nightly',
+      schedule: cronSchedule('30 2 * * *', NY),
+      handler,
+      lock: noLock,
+    });
+    scheduler.start();
+    await clock.advance(3 * 86_400_000);
+    expect(runs.map((r) => r.scheduledAt.toISOString())).toEqual([
+      '2026-03-08T07:30:00.000Z', // 03:30 EDT
+      '2026-03-09T06:30:00.000Z', // 02:30 EDT
+      '2026-03-10T06:30:00.000Z',
+    ]);
+  });
+
+  test('fall back: a job in the repeated hour runs once, in its first occurrence', async () => {
+    // 2026-11-01 02:00 EDT falls back to 01:00 EST, so 01:30 happens twice.
+    const { scheduler, clock } = setup({}, new ManualClock('2026-10-31T12:00:00.000Z'));
+    const { runs, handler } = recorder();
+    scheduler.add({
+      name: 'early',
+      schedule: cronSchedule('30 1 * * *', NY),
+      handler,
+      lock: noLock,
+    });
+    scheduler.add({
+      name: 'nightly',
+      schedule: cronSchedule('30 2 * * *', NY),
+      handler,
+      lock: noLock,
+    });
+    scheduler.start();
+    await clock.advance(2 * 86_400_000);
+    expect(runs.map((r) => `${r.name} ${r.scheduledAt.toISOString()}`)).toEqual([
+      'early 2026-11-01T05:30:00.000Z', // 01:30 EDT; 01:30 EST is skipped
+      'nightly 2026-11-01T07:30:00.000Z', // 02:30 EST
+      'early 2026-11-02T06:30:00.000Z',
+      'nightly 2026-11-02T07:30:00.000Z',
+    ]);
+  });
+
+  test('fall back: a job armed inside the repeated hour never fires in the past', async () => {
+    // 06:00Z is 01:00 EST, the second 01:00 of the day. croner answers nextRun() there with the
+    // first occurrence (05:xx Z), which is already past: armed as is, the job would fire on every
+    // tick until 07:00Z.
+    const { scheduler, clock } = setup({}, new ManualClock('2026-11-01T06:00:00.000Z'));
+    const { runs, handler } = recorder();
+    scheduler.add({ name: 'q', schedule: cronSchedule('*/15 * * * *', NY), handler, lock: noLock });
+    scheduler.add({
+      name: 'early',
+      schedule: cronSchedule('30 1 * * *', NY),
+      handler,
+      lock: noLock,
+    });
+    scheduler.start();
+    for (const job of ['q', 'early']) {
+      expect(scheduler.get(job)!.nextRunAt!.getTime()).toBeGreaterThan(clock.now());
+    }
+    await clock.advance(3_600_000);
+    const times = runs.map((r) => `${r.name} ${r.scheduledAt.toISOString()}`);
+    expect(times).toEqual([
+      'q 2026-11-01T06:15:00.000Z', // 01:15 EST
+      'early 2026-11-01T06:30:00.000Z', // 01:30 EST
+      'q 2026-11-01T06:30:00.000Z',
+      'q 2026-11-01T06:45:00.000Z',
+      'q 2026-11-01T07:00:00.000Z', // 02:00 EST
+    ]);
   });
 });

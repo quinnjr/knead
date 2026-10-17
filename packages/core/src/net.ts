@@ -61,7 +61,7 @@ export function isLoopbackHostname(hostname: string): boolean {
 /**
  * The `host[:port]` of a plaintext Redis/Valkey URL (`redis://`, `valkey://`) to a host that is
  * not loopback, or undefined: TLS URLs (`rediss://`, `valkeys://`), Unix sockets, loopback hosts
- * and unparseable URLs are not plaintext remote connections.
+ * unparseable URLs and URLs with no host are not plaintext remote connections.
  */
 export function plaintextRedisHost(url: string | undefined): string | undefined {
   if (url === undefined || url === '') return undefined;
@@ -72,6 +72,7 @@ export function plaintextRedisHost(url: string | undefined): string | undefined 
     return undefined;
   }
   if (parsed.protocol !== 'redis:' && parsed.protocol !== 'valkey:') return undefined;
+  if (parsed.hostname === '') return undefined;
   return isLoopbackHostname(parsed.hostname) ? undefined : parsed.host;
 }
 

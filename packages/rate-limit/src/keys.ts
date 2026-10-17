@@ -1,5 +1,3 @@
-import { createHmac } from 'node:crypto';
-
 /**
  * A store key's digest, as the first 32 hex characters (128 bits): HMAC-SHA256 under `secret`
  * when one is given, otherwise plain SHA-256. A plain hash does not hide low-entropy keys: every
@@ -9,7 +7,7 @@ export function hashKey(key: string, secret?: string | Uint8Array): string {
   const digest =
     secret === undefined
       ? new Bun.CryptoHasher('sha256').update(key).digest('hex')
-      : createHmac('sha256', secret).update(key).digest('hex');
+      : new Bun.CryptoHasher('sha256', secret).update(key).digest('hex');
   return digest.slice(0, 32);
 }
 

@@ -206,11 +206,15 @@ Authorization is decided when the socket connects and when each subscription sta
 later:
 
 - `recheckGuards: true` re-runs the root and `authorize` guards before every event; pair it with
-  `subscriptions.refreshContext` for a live identity lookup (`false` ends the subscription).
+  `subscriptions.refreshContext` for a live identity lookup (an object is merged over the
+  context; `false`, or anything else that is not an object, ends the subscription).
 - `subscriptions.maxConnectionLifetime` closes every socket with `4408` after that many
   milliseconds.
 - `inject(GraphQLSubscriptions).closeWhere(predicate)` closes matching sockets (code `1008`),
-  including ones whose `onConnect` is still pending.
+  including ones whose `onConnect` is still pending. Its `connection.context` is the `context`
+  factory result from connection init (plus `onConnect`'s); resolvers see the factory's result
+  for each `subscribe`, which can differ if the factory reads changing state. Key revocation on
+  values fixed for the socket's life, such as a session id.
 
 ### Several instances: `RedisPubSub`
 
@@ -223,7 +227,8 @@ several instances serve subscriptions.
 - **Encrypt payloads.** `encryptionKey` (AES-256-GCM) hides payloads from the Redis server. Both
   keys take an array to rotate: sign with the first, accept any.
 - **Use TLS.** A plaintext `redis://` or `valkey://` URL to a non-loopback host logs a warning;
-  `requireTls: true` makes it throw. A caller-supplied `client` bypasses the check.
+  `requireTls: true` makes it throw. A caller-supplied `client` bypasses this check and the
+  missing-`signingKey` warning: configure TLS and signing for it yourself.
 - **Replay window.** Messages older than `maxSignatureAge` (default 60 s) are dropped, but a
   captured message can be replayed on the same channel within it.
 - **Publishing.** `publish()` never rejects (a failure is logged and the event lost);
@@ -260,10 +265,10 @@ The application calls the engine's `close()` on shutdown, including one you pass
 ## HTTP transport
 
 - `POST` requires `Content-Type: application/json` (`415` otherwise) and runs queries and
-  mutations. A subscription over HTTP is a `400`.
-- `GET` runs queries only (a mutation is `405`) and, as a CSRF defense, must carry one of
-  `csrf.requiredHeaders` (default `x-graphql-request`). A `GET` puts the query and variables in the
-  URL, which proxies and logs record: send tokens and secrets in a `POST` body.
+  mutations. A subscription over `POST` is a `400`.
+- `GET` runs queries only (a mutation or subscription is `405`) and, as a CSRF defense, must carry
+  one of `csrf.requiredHeaders` (default `x-graphql-request`). A `GET` puts the query and variables
+  in the URL, which proxies and logs record: send tokens and secrets in a `POST` body.
 - Responses carry `Cache-Control: no-store` (change it with `cacheControl`) and
   `X-Content-Type-Options: nosniff`.
 - Clients that accept `application/graphql-response+json` get GraphQL-over-HTTP status codes; all
@@ -305,8 +310,10 @@ production defaults even when `NODE_ENV=development`.
 
 - Enabling the playground outside development logs a warning at bootstrap.
 - The playground is served only to `GET` requests that list `text/html` in `Accept`. Its page sends
-  its own CSP and pins every asset with Subresource Integrity; if Leaven's page no longer matches
-  the pinned hashes, the playground answers `503`.
+  its own CSP; its scripts and stylesheets carry Subresource Integrity hashes, and its favicon is
+  pinned by exact URL in the CSP's `img-src`. If Leaven's page no longer matches the pinned
+  hashes, the playground answers `503`. A `playground.subscriptionEndpoint` on another origin is
+  added to the CSP's `connect-src` by its exact origin.
 - The playground stores the headers you type, including `Authorization` tokens, in `localStorage`.
   Clear it after using a real token, and do not enable it on an origin that serves untrusted
   scripts.

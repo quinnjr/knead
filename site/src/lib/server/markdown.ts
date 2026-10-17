@@ -226,7 +226,10 @@ export async function renderMarkdown(
   marked.use({
     walkTokens(token) {
       if (token.type === 'blockquote') markCallout(token as Tokens.Blockquote);
-      if (token.type === 'text' || token.type === 'codespan') text.push(token.text);
+      // Only leaf text: a list item's block-level text token also holds inline children, which
+      // walkTokens visits too, so pushing both would index the item twice.
+      if (token.type === 'text' && !(token as Tokens.Text).tokens?.length) text.push(token.text);
+      if (token.type === 'codespan' || token.type === 'escape') text.push(token.text);
       if (token.type === 'code') text.push(token.text);
     },
     renderer: {

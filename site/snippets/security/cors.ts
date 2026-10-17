@@ -29,9 +29,14 @@ export const previewCors: CorsOptions = {
 // #region predicate
 const tenants = new Set(['https://acme.example.com', 'https://globex.example.com']);
 
+// Browsers never send author headers such as x-tenant on a preflight, so the predicate
+// requires the header only on the actual request.
+const isPreflight = (ctx: Ctx) =>
+  ctx.req.method === 'OPTIONS' && ctx.req.headers.has('access-control-request-method');
+
 export const tenantCors: CorsOptions = {
   origin: (origin: string, ctx: Ctx) =>
-    tenants.has(origin) && ctx.req.headers.get('x-tenant') !== null,
+    tenants.has(origin) && (isPreflight(ctx) || ctx.req.headers.get('x-tenant') !== null),
   allowedHeaders: ['content-type', 'authorization', 'x-tenant'],
   methods: ['GET', 'POST'],
 };

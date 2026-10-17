@@ -1,7 +1,29 @@
 {
   "name": "@knead-js/schedule",
   "version": "0.2.1",
-  "description": "Cron, interval and timeout jobs with optional distributed locking for the Knead framework",
+  "description": "Cron, interval and timeout jobs with distributed locking for Knead, the NestJS-style web framework for Bun",
+  "keywords": [
+    "bun",
+    "bunjs",
+    "bun-framework",
+    "knead",
+    "web-framework",
+    "http-framework",
+    "typescript",
+    "schedule",
+    "scheduler",
+    "cron",
+    "cron-jobs",
+    "jobs",
+    "interval",
+    "timeout",
+    "distributed-lock",
+    "redis"
+  ],
+  "homepage": "https://quinnjr.github.io/knead/packages/schedule/",
+  "bugs": {
+    "url": "https://github.com/quinnjr/knead/issues"
+  },
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",

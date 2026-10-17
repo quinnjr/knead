@@ -57,8 +57,9 @@ to every other origin carry no CORS headers, so the browser keeps them from the 
   middleware priority 1000, before rate limiting, routing and guards, on every path.
 - **Every response.** 404, 405, guard rejections and errors get CORS headers too, so the browser
   can read the error.
-- **Unsafe configurations fail at startup.** `'*'` with credentials, `'*'` inside a list, and
-  unanchored RegExps are a `CorsConfigError` at `forRoot()`.
+- **Unsafe configurations fail at startup.** `'*'` with credentials, `'*'` inside a list,
+  unanchored RegExps and an `origin` of the wrong type (missing, a number, a list with a
+  non-string entry) are a `CorsConfigError` at `forRoot()`.
 - **Cache-safe.** Unless `origin` is `'*'`, every response gets `Vary: Origin`.
 - **WebSocket upgrades guarded.** An upgrade from a disallowed origin is rejected with 403.
 - **Bounded input.** An `Origin` header longer than 2048 characters is treated as disallowed.
@@ -81,7 +82,7 @@ to every other origin carry no CORS headers, so the browser keeps them from the 
 | `'*'` | Any origin. The response says `Access-Control-Allow-Origin: *`, never the request's origin. |
 | A string or string array | The `Origin` header equals an entry exactly (scheme, host and port). |
 | A `RegExp` | The pattern matches the whole `Origin` header. |
-| A function | It returns or resolves to `true`. It receives the origin and the request `Ctx`. |
+| A function | It returns or resolves to exactly `true` (a truthy non-`true` value disallows). It receives the origin and the request `Ctx`. |
 
 A RegExp must start with `^`, end with `$`, and keep alternatives inside a group. Otherwise
 `/app\.example/` would also match `https://app.example.evil`, so both mistakes are rejected:
@@ -96,15 +97,21 @@ export const previewCors: CorsOptions = {
 Keep the pattern linear: nested quantifiers such as `(a+)+` backtrack catastrophically on a
 crafted `Origin`, and this is not detected for you.
 
-A predicate can look at the whole request. It runs for every request with an `Origin` header, so
-keep it cheap:
+A predicate can look at the whole request. It runs for every request with an `Origin` header,
+preflights included, so keep it cheap. Browsers never send your own headers on a preflight, so
+check them only on the actual request:
 
 ```ts
 const tenants = new Set(['https://acme.example.com', 'https://globex.example.com']);
 
+// Browsers never send author headers such as x-tenant on a preflight, so the predicate
+// requires the header only on the actual request.
+const isPreflight = (ctx: Ctx) =>
+  ctx.req.method === 'OPTIONS' && ctx.req.headers.has('access-control-request-method');
+
 export const tenantCors: CorsOptions = {
   origin: (origin: string, ctx: Ctx) =>
-    tenants.has(origin) && ctx.req.headers.get('x-tenant') !== null,
+    tenants.has(origin) && (isPreflight(ctx) || ctx.req.headers.get('x-tenant') !== null),
   allowedHeaders: ['content-type', 'authorization', 'x-tenant'],
   methods: ['GET', 'POST'],
 };

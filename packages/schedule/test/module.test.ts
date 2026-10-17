@@ -1,7 +1,8 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import {
   ApplicationContext,
   inject,
+  MemoryLogger,
   Module,
   type ModuleImport,
   type OnModuleDestroy,
@@ -290,6 +291,32 @@ describe('ScheduleModule', () => {
     expect(errors).toHaveLength(1);
     expect(errors[0]).toEqual(['[knead:schedule] Job "Jobs.bad" failed: Error: boom']);
     expect(() => ScheduleModule.forRoot({ logger: {} as never })).toThrow(/logger/);
+  });
+
+  test("without a logger option, reports go to the application's LOGGER", async () => {
+    class Jobs {
+      @Interval(100) bad() {
+        throw new Error('boom');
+      }
+    }
+    clock = new ManualClock(T0);
+    const logger = new MemoryLogger();
+    @Module({ imports: [ScheduleModule.forRoot()], providers: [Jobs] })
+    class AppModule {}
+    ctx = await ApplicationContext.create(AppModule, {
+      logger,
+      overrides: [[SCHEDULE_CLOCK, { provide: SCHEDULE_CLOCK, useValue: clock }]],
+    });
+    const error = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await clock.advance(100);
+      expect(error).not.toHaveBeenCalled();
+    } finally {
+      error.mockRestore();
+    }
+    expect(logger.entries).toEqual([
+      { level: 'error', message: '[knead:schedule] Job "Jobs.bad" failed: Error: boom', meta: [] },
+    ]);
   });
 
   test('the default failure report is a redacted summary, never the raw error', async () => {

@@ -160,12 +160,13 @@ export class PagesController {
 `forRoot()`, `@SecurityHeaders()` and the middleware throw an `HttpConfigError` for:
 
 - directive names that are not lowercase letters, digits and hyphens (`Script-Src` is rejected);
-- directive sources containing `;`, `,`, a carriage return or a line feed, and array elements
-  containing whitespace;
+- directive sources containing `;`, `,`, a control character other than tab (CR, LF, NUL, ...) or
+  a character above U+00FF, and array elements containing whitespace;
 - an HSTS `maxAge` that is not a non-negative integer, and `preload` with
   `includeSubDomains: false` or a `maxAge` under one year;
 - any header-valued option (`referrerPolicy`, `xFrameOptions`, `permissionsPolicy` and the rest)
-  that is neither `false` nor a string without control characters other than tab.
+  that is neither `false` nor a string without control characters other than tab and without
+  characters above U+00FF (Bun cannot send those in a header, so every response would fail).
 
 The error names the header, so a line break cannot slip into a response:
 

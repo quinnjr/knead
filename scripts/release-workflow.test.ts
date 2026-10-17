@@ -15,7 +15,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-// Every test here runs the real publish step: bash, GNU tar over twelve tarballs and a node
+// Every test here runs the real publish step: bash, GNU tar over every allowed tarball and a node
 // process loading pacote. That normally takes 0.3-1 s, but under load (for example `pnpm test`
 // next to another `bun test scripts`) it exceeded bun's 5 s default and failed spuriously.
 setDefaultTimeout(60_000);
@@ -42,6 +42,8 @@ const REGISTRY_FLAGS =
 // view <name>@<version> version: prints the version for specs in FAKE_EXISTING.
 // view <name> dist-tags.latest: prints the version from FAKE_LATEST ("name=version ...").
 // Otherwise fails with FAKE_VIEW_ERROR (default E404).
+// publish <path>: fails for tarballs named in FAKE_PUBLISH_ERROR ("file=code ..."); code
+// `conflict` prints npm's "previously published versions" error, any other code is printed as is.
 const fakeNpm = `#!/usr/bin/env bash
 echo "npm $*" >> "$FAKE_LOG"
 pwd >> "$FAKE_CWD_LOG"
@@ -59,7 +61,18 @@ case "$1" in
       echo "\${2##*@}"; exit 0
     fi
     echo "npm error code \${FAKE_VIEW_ERROR:-E404}" >&2; exit 1 ;;
-  publish) exit 0 ;;
+  publish)
+    for entry in \${FAKE_PUBLISH_ERROR:-}; do
+      if [ "\${2##*/}" = "\${entry%=*}" ]; then
+        if [ "\${entry#*=}" = conflict ]; then
+          echo "npm error 403 403 Forbidden - PUT https://registry.npmjs.org/x - You cannot publish over the previously published versions: 1.2.3." >&2
+        else
+          echo "npm error code \${entry#*=}" >&2
+        fi
+        exit 1
+      fi
+    done
+    exit 0 ;;
   # The publish step loads node-tar and pacote from the real npm's global root.
   root) exec "$REAL_NPM" "$@" ;;
 esac
@@ -432,6 +445,36 @@ describe('release.yml publish step', () => {
     expect(r.exitCode).toBe(0);
     expect(r.output).toContain('skip @knead-js/core@1.2.3');
     expect(r.publishes).toEqual([publishCmd('knead-js-http-1.2.3.tgz', 'latest')]);
+  });
+
+  describe('publish errors', () => {
+    test('a version published concurrently is skipped and the rest are still published', () => {
+      const r = publish('v1.2.3', [['@knead-js/core', '1.2.3']], {
+        env: { FAKE_PUBLISH_ERROR: 'knead-js-core-1.2.3.tgz=conflict' },
+      });
+      expect(r.exitCode).toBe(0);
+      expect(r.output).toContain('skip @knead-js/core@1.2.3 (published concurrently)');
+      // core was attempted, and every other package was published after it.
+      expect(r.allPublishes).toContain(publishCmd('knead-js-core-1.2.3.tgz', 'latest'));
+      expect(r.allPublishes).toHaveLength(ALLOWED.length);
+      expect(r.allPublishes.at(-1)).toBe(publishCmd('knead-js-testing-1.2.3.tgz', 'latest'));
+    });
+
+    test('any other publish error stops the run, after the packages already published', () => {
+      const r = publish('v1.2.3', [['@knead-js/http', '1.2.3']], {
+        env: { FAKE_PUBLISH_ERROR: 'knead-js-http-1.2.3.tgz=E500' },
+      });
+      expect(r.exitCode).not.toBe(0);
+      expect(r.output).toContain('npm error code E500');
+      expect(r.output).not.toContain('published concurrently');
+      const files = r.allPublishes.map((c) => c.split(' ')[2]);
+      const failed = files.indexOf('./knead-js-http-1.2.3.tgz');
+      // Packages before http were published; http was the last attempt.
+      expect(failed).toBeGreaterThan(0);
+      expect(failed).toBe(files.length - 1);
+      expect(files).toContain('./knead-js-core-1.2.3.tgz');
+      expect(files).not.toContain('./knead-js-testing-1.2.3.tgz');
+    });
   });
 
   test('publishes nothing when any tarball does not match the tag', () => {
@@ -935,3 +978,49 @@ function publishWithConsistentDigest(
 ) {
   return publish(tag, packages, { tamperSums: rewrite, digestAfterTamper: true });
 }
+
+describe('release.yml build job', () => {
+  const build = workflow.jobs.build?.steps;
+  const index = (pred: (s: Step) => boolean) => build?.findIndex(pred) ?? -1;
+
+  test('checks the packed tarballs themselves, after packing and before SHA256SUMS', () => {
+    const pack = index((s) => s.name === 'Pack publishable packages');
+    const check = index((s) => s.name === 'Check packed tarballs');
+    const sums = index((s) => s.name === 'Write SHA256SUMS');
+    expect(build?.[pack]?.run).toBe('bun scripts/release.ts pack "$RUNNER_TEMP/npm-tarballs"');
+    expect(build?.[check]?.run).toBe(
+      'bun scripts/check-pack.ts --tarballs "$RUNNER_TEMP/npm-tarballs"',
+    );
+    expect(pack).toBeGreaterThan(index((s) => s.run === 'pnpm build'));
+    expect(check).toBe(pack + 1);
+    expect(sums).toBe(check + 1);
+    // No second, separately packed set.
+    expect(index((s) => s.run === 'pnpm check:pack')).toBe(-1);
+  });
+});
+
+describe('toolchain pins', () => {
+  const names = ['ci.yml', 'release.yml', 'docs.yml'];
+  const workflows = names.map(
+    (name) =>
+      Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows', name), 'utf8')) as {
+        env: Record<string, string>;
+        jobs: Record<string, { steps?: Step[] }>;
+      },
+  );
+
+  test('every workflow pins the same Node, Bun and Bun revision', () => {
+    const pins = workflows.map(({ env }) => [env.NODE_VERSION, env.BUN_VERSION, env.BUN_REVISION]);
+    expect(pins[0]?.every((p) => typeof p === 'string' && p.length > 0)).toBe(true);
+    for (const p of pins) expect(p).toEqual(pins[0] as string[]);
+  });
+
+  test.each(names)('%s checks the pnpm, Node and Bun versions it set up', (name) => {
+    const wf = workflows[names.indexOf(name)];
+    const steps = Object.values(wf?.jobs ?? {})
+      .flatMap((job) => job.steps ?? [])
+      .map((s) => s.name);
+    for (const check of ['Check pnpm version', 'Check Node version', 'Check Bun revision'])
+      expect(steps).toContain(check);
+  });
+});

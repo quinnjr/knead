@@ -36,3 +36,17 @@ test('deep-freezes children of an already shallow-frozen object, and handles cyc
   cyclic.self = cyclic;
   expect(Object.isFrozen(new Config(cyclic).all())).toBe(true);
 });
+test('freezes own enumerable properties only: Map, Set and Date contents stay mutable', () => {
+  const config = new Config({
+    map: new Map([['a', 1]]),
+    set: new Set([1]),
+    date: new Date(0),
+  });
+  expect(Object.isFrozen(config.get('map'))).toBe(true);
+  config.get('map').set('b', 2);
+  config.get('set').add(2);
+  config.get('date').setTime(1);
+  expect(config.get('map').get('b')).toBe(2);
+  expect(config.get('set').has(2)).toBe(true);
+  expect(config.get('date').getTime()).toBe(1);
+});

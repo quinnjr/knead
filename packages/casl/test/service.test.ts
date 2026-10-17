@@ -58,6 +58,39 @@ test('ability is built once per request', async () => {
   expect(builds).toBe(2);
 });
 
+test('a malformed or missing grant skips defineUserAbility and still denies', async () => {
+  let builds = 0;
+  @Controller()
+  @UseGuards(AbilityGuard)
+  class C {
+    @Get('/posts') @Can('read', 'Post') list() {
+      return [];
+    }
+  }
+  const mod = await Test.createModule({
+    imports: [
+      CaslModule.forRoot<TestUser>({
+        ...options,
+        defineUserAbility: (user, builder) => {
+          builds++;
+          defineUserAbility(user, builder);
+        },
+      }),
+    ],
+    controllers: [C],
+  }).compile();
+  app = await mod.createApp();
+  for (const grant of [{ posts: 'nope' }, { unknown: 'read' }, 42, null]) {
+    expect((await app.request('GET', '/posts', bearer('alice', grant))).status).toBe(403);
+  }
+  expect(
+    (await app.request('GET', '/posts', { headers: { authorization: 'Bearer alice' } })).status,
+  ).toBe(403);
+  expect(builds).toBe(0);
+  expect((await app.request('GET', '/posts', bearer('alice', { posts: 'read' }))).status).toBe(200);
+  expect(builds).toBe(1);
+});
+
 test('a rejected build is not cached', async () => {
   let calls = 0;
   const abilities = await service({

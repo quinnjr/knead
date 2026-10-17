@@ -89,6 +89,21 @@ export function requestUrl(req: Request): URL {
   return URL.canParse(req.url) ? new URL(req.url) : new URL(req.url, 'http://host.invalid');
 }
 
+const pathnames = new WeakMap<Request, string>();
+
+/**
+ * @internal `requestUrl(req).pathname`, parsed once per request: the fetch fallback, its 405
+ * detection and error responses all need it.
+ */
+export function requestPathname(req: Request): string {
+  let pathname = pathnames.get(req);
+  if (pathname === undefined) {
+    pathname = requestUrl(req).pathname;
+    pathnames.set(req, pathname);
+  }
+  return pathname;
+}
+
 /**
  * Query parameters as a null-prototype object (repeated keys become arrays; `__proto__`,
  * `constructor` and `prototype` are dropped). More than `maxParams` parameters is a 400; given

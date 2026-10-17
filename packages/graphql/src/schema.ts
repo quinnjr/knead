@@ -332,13 +332,17 @@ export class SchemaBuilder {
     const fields = () => this.#outputFields(cls, def);
     let type: GraphQLObjectType | GraphQLInterfaceType;
     if (def.kind === 'interface') {
+      // Computed on first use, at execution time, when every object class is known.
+      let implementations: Class[] | undefined;
       type = new GraphQLInterfaceType({
         name: def.name,
         description: def.description,
         interfaces,
         fields,
-        resolveType: (value, _ctx, info) =>
-          this.#resolveName(def.resolveType?.(value, info), value, this.#implementationsOf(cls)),
+        resolveType: (value, _ctx, info) => {
+          implementations ??= this.#implementationsOf(cls);
+          return this.#resolveName(def.resolveType?.(value, info), value, implementations);
+        },
       });
     } else {
       this.#objectClasses.set(cls, def);
@@ -445,13 +449,17 @@ export class SchemaBuilder {
     const cached = this.#unions.get(handle);
     if (cached) return cached;
     this.#claim(handle.name, handle, `union ${handle.name}`);
+    // handle.types() runs once (the first successful call), not once per resolved value.
+    let memo: readonly Class[] | undefined;
     const members = () => {
+      if (memo) return memo;
       const classes = handle.types();
       if (classes.some((c) => c === undefined)) {
         throw new SchemaBuildError(
           `${where}: union ${handle.name} types() returned undefined — check for a circular import.`,
         );
       }
+      memo = classes;
       return classes;
     };
     const type = new GraphQLUnionType({

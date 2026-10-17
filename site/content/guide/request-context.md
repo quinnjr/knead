@@ -131,7 +131,7 @@ it:
   `prototype`, and are `null`-prototype objects.
 - JSON bodies drop `__proto__` keys at every depth, and drop `constructor` and `prototype` keys
   whose value is an object (a `constructor` key holding a string is kept). Keys spelled with
-  `\u` escapes, such as `"__proto__"`, are dropped the same way.
+  `\u` escapes, such as `"\u005f\u005fproto\u005f\u005f"`, are dropped the same way.
 
 So `Object.assign(entity, await ctx.json())` cannot change `entity`'s prototype. It can still set
 any other property, so validate the body and copy only the fields you expect.

@@ -506,6 +506,93 @@ describe('review hardening', () => {
   });
 });
 
+describe('depth limit', () => {
+  test('an object 4 levels below a meta argument becomes "[Object]"', () => {
+    const { records } = (() => {
+      const c = capture();
+      c.logger.info('x', { a: { b: { c: { d: { e: { f: 1 } } } } } });
+      return c;
+    })();
+    expect(records()[0]!.a).toEqual({ b: { c: { d: '[Object]' } } });
+  });
+
+  test('an array 4 levels below a meta argument becomes "[Array]"', () => {
+    const { logger, records } = capture();
+    logger.info('x', [[[[[[1]]]]]]);
+    expect(records()[0]!.meta).toEqual([[[[['[Array]']]]]]);
+  });
+});
+
+describe('development errors are bounded', () => {
+  /** Logs `error` in development and returns the line, failing if it took longer than 2 s. */
+  const logTimed = (error: unknown) => {
+    const { logger, lines } = capture({ development: true });
+    const started = performance.now();
+    logger.error('x', error);
+    expect(performance.now() - started).toBeLessThan(2_000);
+    expect(lines).toHaveLength(1);
+    return lines[0]!.line;
+  };
+
+  test('an error that contains itself is written once, then "[Circular]"', () => {
+    const error = new Error('boom') as Error & { self?: unknown };
+    error.self = error;
+    const line = logTimed(error);
+    expect(line.length).toBeLessThan(20_000);
+    const err = JSON.parse(line).err as string;
+    expect(err).toContain('Error: boom');
+    expect(err).toContain('{"self":"[Circular]"}');
+  });
+
+  test('two errors referencing each other end in "[Circular]"', () => {
+    const a = new Error('a') as Error & { other?: unknown };
+    const b = new Error('b') as Error & { other?: unknown };
+    a.other = b;
+    b.other = a;
+    const line = logTimed(a);
+    expect(line.length).toBeLessThan(20_000);
+    expect(line).toContain('[Circular]');
+  });
+
+  test('an error that is its own cause ends in "Caused by: [Circular]"', () => {
+    const a = new Error('a');
+    const b = new Error('b', { cause: a });
+    a.cause = b;
+    const err = JSON.parse(logTimed(a)).err as string;
+    expect(err).toContain('Caused by: [Circular]');
+    expect(err.match(/Error: b/g)).toHaveLength(1);
+  });
+
+  test('a 50-level chain of errors in properties stops at the depth limit', () => {
+    let error = new Error('level 0') as Error & { inner?: unknown };
+    for (let i = 1; i < 50; i++) error = Object.assign(new Error(`level ${i}`), { inner: error });
+    const line = logTimed(error);
+    expect(line.length).toBeLessThan(50_000);
+    expect(line).toContain('level 49');
+    expect(line).not.toContain('level 40');
+  });
+
+  test('a 50-level chain of errors in properties and causes stays bounded', () => {
+    let error = new Error('level 0');
+    for (let i = 1; i < 50; i++) {
+      error = Object.assign(new Error(`level ${i}`, { cause: error }), { inner: error });
+    }
+    const line = logTimed(error);
+    expect(line.length).toBeLessThan(500_000);
+    expect(line).toContain('level 49');
+  });
+
+  test('wide graphs of distinct errors are capped per record', () => {
+    const errors = Array.from({ length: 1000 }, (_, i) =>
+      Object.assign(new Error(`e${i}`), {
+        list: Array.from({ length: 10 }, (_, j) => new Error(`e${i}.${j}`)),
+      }),
+    );
+    const line = logTimed(Object.assign(new Error('top'), { errors }));
+    expect(line.length).toBeLessThan(500_000);
+  });
+});
+
 describe('childLogger()', () => {
   test('uses child() for a JsonLogger', () => {
     const { logger, records } = capture();

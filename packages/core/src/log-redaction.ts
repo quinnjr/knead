@@ -245,13 +245,24 @@ function readProps(value: object, state: Walk): [PropertyKey, unknown][] {
 }
 
 /**
+ * Whether redactValue walks `value` as its entries: Headers, Map and other objects with
+ * `entries()` or `toJSON()`, except dates and binary data.
+ */
+function isMapLike(value: object): boolean {
+  if (value instanceof Date || ArrayBuffer.isView(value) || value instanceof ArrayBuffer) {
+    return false;
+  }
+  if (value instanceof Headers || value instanceof Map) return true;
+  const candidate = value as { entries?: unknown; toJSON?: unknown };
+  return typeof candidate.entries === 'function' || typeof candidate.toJSON === 'function';
+}
+
+/**
  * The entries of a header or map-like object (Headers, Map, AxiosHeaders and other objects with
  * `entries()` or `toJSON()`) as a plain object, or undefined for anything else.
  */
 function entriesOf(value: object): Record<string, unknown> | undefined {
-  if (value instanceof Date || ArrayBuffer.isView(value) || value instanceof ArrayBuffer) {
-    return undefined;
-  }
+  if (!isMapLike(value)) return undefined;
   const candidate = value as { entries?: unknown; toJSON?: unknown };
   if (value instanceof Headers || value instanceof Map || typeof candidate.entries === 'function') {
     const out: Record<string, unknown> = {};
@@ -296,9 +307,20 @@ function walk(value: unknown, depth: number, state: Walk): unknown {
   if (!isError && !Array.isArray(value) && !isPlainObject(value)) {
     // Headers, Map and header-like objects (err.config.headers.Authorization): walked as
     // their entries, and replaced only when something in them was redacted.
+    // Like plain objects, a map-like object in a cycle or past the depth limit is replaced, so
+    // its unwalked entries (a nested Authorization header) never reach the log.
     let entries: Record<string, unknown> | undefined;
     try {
-      entries = depth < REDACT_DEPTH && !state.seen.has(value) ? entriesOf(value) : undefined;
+      if (!isMapLike(value)) return value;
+      if (state.seen.has(value)) {
+        state.changed = true;
+        return '[Circular]';
+      }
+      if (depth >= REDACT_DEPTH) {
+        state.changed = true;
+        return '[Object]';
+      }
+      entries = entriesOf(value);
     } catch {
       state.changed = true;
       return UNREADABLE;
@@ -365,15 +387,25 @@ function redactError(error: Error, props: Record<string, unknown>, depth: number
   const parts: string[] = [];
   let current: unknown = error;
   for (let level = 0; current !== undefined && level < MAX_CAUSES; level++) {
+    if (typeof current === 'object' && current !== null && !(current instanceof Error)) {
+      // A non-Error cause (`{ cause: { headers } }`) is walked like any other value.
+      parts.push(`Caused by: ${Bun.inspect(walk(current, depth + 1, state))}`);
+      current = undefined;
+      break;
+    }
     const raw =
       current instanceof Error ? errorText(current) : typeof current === 'string' ? current : '';
     const text = raw || String(current);
     const redacted = redactCredentials(text);
     if (redacted !== text) state.changed = true;
     parts.push(`${level === 0 ? '' : 'Caused by: '}${redacted}`);
-    if (level > 0 && current instanceof Error && Object.keys(current).length > 0) {
-      const nested = walk(Object.fromEntries(ownProps(current)), depth + 1, state);
-      parts.push(`  ${Bun.inspect(nested)}`);
+    if (level > 0 && current instanceof Error) {
+      // ownProps includes the non-enumerable AggregateError.errors.
+      const props = ownProps(current, state);
+      if (props.length > 0) {
+        const nested = walk(Object.fromEntries(props), depth + 1, state);
+        parts.push(`  ${Bun.inspect(nested)}`);
+      }
     }
     current = current instanceof Error ? current.cause : undefined;
   }
@@ -393,7 +425,9 @@ function redactError(error: Error, props: Record<string, unknown>, depth: number
  * to 4 levels deep, with the values of sensitive keys (`authorization`, `cookie`, `password`,
  * `token`, `apikey`, ..., and any key containing such a word whatever its case or separators,
  * such as `db_password` or `x-api-key`) replaced by `***`, credentials in keys redacted too;
- * cycles become `[Circular]`. An Error that needed redacting, or whose cause chain is longer
+ * Headers, Maps and other objects with `entries()` or `toJSON()` are walked as their entries;
+ * deeper values become `[Object]`/`[Array]` and cycles become `[Circular]`. Causes that are not
+ * Errors are walked too. An Error that needed redacting, or whose cause chain is longer
  * than 16, becomes its redacted stack text. Other objects (class instances) are returned as is.
  * The original is never modified, and a value with nothing to redact is returned unchanged.
  */

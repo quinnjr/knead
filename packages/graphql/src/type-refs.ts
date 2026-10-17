@@ -121,7 +121,14 @@ export function defineEnum<const E extends Record<string, string | number>>(
   values: E,
   config: EnumConfig<E>,
 ): EnumHandle<E[keyof E]> {
-  const entries = Object.entries(values).filter(([key]) => Number.isNaN(Number(key)));
+  // A numeric enum's reverse mapping is a key whose string value names a key mapping back to it.
+  const record = values as Record<string, string | number>;
+  const isReverse = (key: string, value: string | number) =>
+    typeof value === 'string' &&
+    Object.hasOwn(record, value) &&
+    typeof record[value] === 'number' &&
+    String(record[value]) === key;
+  const entries = Object.entries(values).filter(([key, value]) => !isReverse(key, value));
   if (entries.length === 0) throw new TypeError(`Enum ${config.name} has no values.`);
   const graphql = new GraphQLEnumType({
     name: config.name,

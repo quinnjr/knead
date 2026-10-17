@@ -102,6 +102,34 @@ describe('normalizeProvider', () => {
     expect(() => normalizeProvider({ provide: CONFIG } as never)).toThrow(ProviderConfigError);
     expect(() => normalizeProvider(42 as never)).toThrow(/Invalid provider: 42/);
   });
+
+  test('an invalid provider message names its keys, never its values', () => {
+    let message = '';
+    try {
+      normalizeProvider({ provde: CONFIG, useValue: 'postgres://u:pw@h/db' } as never);
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toContain('provde');
+    expect(message).toContain('useValue');
+    expect(message).not.toContain('pw@');
+    expect(message).not.toContain('postgres://');
+  });
+
+  test('an invalid provider message is bounded and redacted', () => {
+    const many = Object.fromEntries(Array.from({ length: 10_000 }, (_, i) => [`k${i}`, i]));
+    expect(() => normalizeProvider(many as never)).toThrow(ProviderConfigError);
+    try {
+      normalizeProvider(many as never);
+    } catch (error) {
+      expect((error as Error).message.length).toBeLessThan(600);
+    }
+    try {
+      normalizeProvider('redis://u:strsecret@h' as never);
+    } catch (error) {
+      expect((error as Error).message).not.toContain('strsecret');
+    }
+  });
 });
 
 describe('errors', () => {

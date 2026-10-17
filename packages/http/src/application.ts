@@ -89,7 +89,10 @@ export interface ListenOptions {
    * and shared caches according to their heuristics.
    */
   defaultCacheControl?: string;
-  /** Request validation: `redactIssueMessages` makes body and query issue messages generic. */
+  /**
+   * Request validation: `redactIssueMessages` makes params, query and body issue messages
+   * generic.
+   */
   validation?: ValidationOptions;
   /** Largest accepted request body in bytes; larger bodies get 413. Default 1 MiB. */
   maxRequestBodySize?: number;
@@ -128,6 +131,17 @@ export class KneadFactory {
       globalModules: [core],
     });
     return new HttpApplication(context, context.get(LOGGER), development);
+  }
+}
+
+/** Whether `value` can be set as a header value (no CR, LF or NUL, Latin-1 only). */
+function isHeaderValue(value: string): boolean {
+  if (/[\r\n]/.test(value)) return false;
+  try {
+    new Headers({ 'cache-control': value });
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -242,6 +256,8 @@ export class HttpApplication {
   #closing: Promise<void> | undefined;
   /** The in-flight listen(), so close() can wait for it to settle. */
   #pendingListen: Promise<unknown> | undefined;
+  /** True from the start of listen() until it settles (#pendingListen is set once it yields). */
+  #inListen = false;
   readonly #signalHandlers: [NodeJS.Signals, () => void][] = [];
   #compiled: CompiledApp | undefined;
   readonly #extraMiddleware: GlobalMiddleware[] = [];
@@ -424,14 +440,17 @@ export class HttpApplication {
     if (this.#closing || this.context.closed) {
       throw new HttpConfigError('The application is closed.');
     }
-    if (this.#server || this.#pendingListen) {
+    if (this.#server || this.#inListen) {
       throw new HttpConfigError('listen() was already called.');
     }
-    const pending = this.#listen(options);
-    this.#pendingListen = pending;
+    // Set before #listen() runs: hooks it calls synchronously already see a listen in progress.
+    this.#inListen = true;
     try {
+      const pending = this.#listen(options);
+      this.#pendingListen = pending;
       return await pending;
     } finally {
+      this.#inListen = false;
       this.#pendingListen = undefined;
     }
   }
@@ -444,7 +463,7 @@ export class HttpApplication {
     }
     const hosts = this.#allowedHosts(options);
     const cc = options.defaultCacheControl;
-    if (cc !== undefined && (typeof cc !== 'string' || cc === '' || /[\r\n]/.test(cc))) {
+    if (cc !== undefined && (typeof cc !== 'string' || cc === '' || !isHeaderValue(cc))) {
       throw new HttpConfigError(
         `defaultCacheControl must be a header value, got ${JSON.stringify(cc)}.`,
       );
@@ -467,35 +486,39 @@ export class HttpApplication {
       .sort((a, b) => (b.entry.priority ?? 0) - (a.entry.priority ?? 0) || a.index - b.index);
     const ws = this.context.get(WsRegistry);
     ws.configure(options.websocket ?? {});
-    const compiled = compileApplication({
-      modules: this.context.modules,
-      globalMiddleware: entries.map(({ entry, injector }) =>
-        resolveMiddleware(entry.middleware, injector),
-      ),
-      globalGuards: [
-        ...this.context
-          .collectEntries(APP_GUARD)
-          .map(({ value, injector }) => resolveGuard(value, injector, 'APP_GUARD')),
-        ...this.#extraGuards.map((g) => resolveGuard(g, root, 'useGlobalGuards()')),
-      ],
-      globalFilters: [
-        ...this.context
-          .collectEntries(APP_FILTER)
-          .map(({ value, injector }) => resolveFilter(value, injector)),
-        ...this.#extraFilters.map((f) => resolveFilter(f, root)),
-      ],
-      logger: this.logger,
-      development: this.development,
-      net: {
-        trust: compileTrust(options.trustProxy ?? false),
-        tls: options.tls !== undefined,
-        maxParams: options.maxParams ?? DEFAULT_MAX_PARAMS,
-      },
-      ws,
-      hosts,
-      validation: options.validation,
-      defaultCacheControl: options.defaultCacheControl,
-    });
+    // Transients built for the routes here (guards, middleware, filters) are startup instances:
+    // tracked, so initializeLate() below gives them init hooks and close() shutdown hooks.
+    const compiled = this.context.trackConstructed(() =>
+      compileApplication({
+        modules: this.context.modules,
+        globalMiddleware: entries.map(({ entry, injector }) =>
+          resolveMiddleware(entry.middleware, injector),
+        ),
+        globalGuards: [
+          ...this.context
+            .collectEntries(APP_GUARD)
+            .map(({ value, injector }) => resolveGuard(value, injector, 'APP_GUARD')),
+          ...this.#extraGuards.map((g) => resolveGuard(g, root, 'useGlobalGuards()')),
+        ],
+        globalFilters: [
+          ...this.context
+            .collectEntries(APP_FILTER)
+            .map(({ value, injector }) => resolveFilter(value, injector)),
+          ...this.#extraFilters.map((f) => resolveFilter(f, root)),
+        ],
+        logger: this.logger,
+        development: this.development,
+        net: {
+          trust: compileTrust(options.trustProxy ?? false),
+          tls: options.tls !== undefined,
+          maxParams: options.maxParams ?? DEFAULT_MAX_PARAMS,
+        },
+        ws,
+        hosts,
+        validation: options.validation,
+        defaultCacheControl: options.defaultCacheControl,
+      }),
+    );
     // Middleware, guards and filters constructed by the compiler get their init hooks now (and
     // shutdown hooks at close()); a failing hook rejects listen() before anything is bound.
     await this.context.initializeLate();
@@ -592,7 +615,10 @@ export class HttpApplication {
     });
   }
 
+  /** Global middleware, guards and filters are compiled by listen(): later calls would be lost. */
   #assertNotListening(method: string): void {
-    if (this.#server) throw new HttpConfigError(`${method}() must be called before listen().`);
+    if (this.#server || this.#inListen || this.#closing) {
+      throw new HttpConfigError(`${method}() must be called before listen() and close().`);
+    }
   }
 }

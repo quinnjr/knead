@@ -91,6 +91,45 @@ describe('new default headers', () => {
     ).toThrow(`Invalid ${header}: 42`);
   });
 
+  test('header values Bun cannot send (characters above U+00FF) are configuration errors', () => {
+    for (const value of ['n\u0100', 'no-referrer\u2028', '\u{1F600}']) {
+      expect(() => validateSecurityHeadersOptions({ referrerPolicy: value })).toThrow(
+        `Invalid Referrer-Policy: ${JSON.stringify(value)}`,
+      );
+    }
+    // Latin-1 is a valid header value, so it is accepted.
+    expect(() => validateSecurityHeadersOptions({ referrerPolicy: 'caf\u00e9' })).not.toThrow();
+  });
+
+  test('CSP tokens with control characters or characters above U+00FF are rejected', () => {
+    for (const token of ['a\u0000b', 'a\u0007b', 'a\u007fb', 'https://\u0100.example']) {
+      for (const value of [[token], token]) {
+        expect(() =>
+          validateSecurityHeadersOptions({
+            contentSecurityPolicy: { directives: { 'img-src': value } },
+          }),
+        ).toThrow(`Invalid CSP value for img-src: ${JSON.stringify(token)}`);
+      }
+    }
+  });
+
+  test('every value that passes validation can be sent by Headers', () => {
+    const accepted: SecurityHeadersOptions[] = [
+      { referrerPolicy: 'caf\u00e9\tx' },
+      {
+        contentSecurityPolicy: { directives: { 'img-src': ["'self'", 'https://\u00e9.example'] } },
+      },
+    ];
+    for (const options of accepted) {
+      validateSecurityHeadersOptions(options);
+      const h = new Headers();
+      for (const [name, value] of buildHeaders(mergeOptions(DEFAULT_OPTIONS, options), {
+        secure: true,
+      }))
+        h.set(name, value);
+    }
+  });
+
   test('header values may contain tabs, and false turns a header off', () => {
     expect(() =>
       validateSecurityHeadersOptions({

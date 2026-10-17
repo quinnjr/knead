@@ -35,4 +35,13 @@ describe('sanitizedHtml', () => {
       issues: [{ message: 'sanitizedHtml() requires the inner schema to output a string' }],
     });
   });
+
+  test('an unknown preset name fails when the schema is created', () => {
+    for (const name of ['Basic', 'toString', 'hasOwnProperty']) {
+      expect(() => sanitizedHtml(str, name as 'basic')).toThrow(TypeError);
+      expect(() => sanitizedHtml(str, name as 'basic')).toThrow(
+        `Unknown sanitize preset ${JSON.stringify(name)}: use 'strict', 'basic' or 'rich'`,
+      );
+    }
+  });
 });

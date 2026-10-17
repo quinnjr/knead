@@ -185,6 +185,17 @@ describe('TransactionHost', () => {
     await ctx.close();
   });
 
+  test('run rejects an unknown isolationLevel with a KneadError', async () => {
+    const { fake, ctx, host } = await setup();
+    for (const isolationLevel of ['serializable', 'Chaos', 1]) {
+      await expect(host.run(async () => 1, { isolationLevel } as never)).rejects.toBeInstanceOf(
+        KneadError,
+      );
+    }
+    expect(fake.transactions).toHaveLength(0);
+    await ctx.close();
+  });
+
   test('passes only the transaction options that are set', async () => {
     const { fake, ctx, host } = await setup();
     await host.run(async () => {});

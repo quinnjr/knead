@@ -1,5 +1,10 @@
 // Packs every publishable package, checks the tarball contents, then installs the tarballs into
 // a throwaway consumer project that typechecks and boots a small app. Exits 1 on any problem.
+//
+//   bun scripts/check-pack.ts                    pack into a temporary directory, check, delete
+//   bun scripts/check-pack.ts --tarballs <dir>   check the tarballs already in <dir> (written by
+//                                                `bun scripts/release.ts pack <dir>`) instead of
+//                                                packing; <dir> is only read, never modified
 import {
   existsSync,
   mkdirSync,
@@ -12,7 +17,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 
 const root = join(import.meta.dir, '..');
 const run = (cmd: string[], cwd: string) => {
@@ -34,6 +39,21 @@ const requiredByPackage: Record<string, string[]> = {
 };
 const forbidden = [/\.map$/, /\.tsbuildinfo$/, /\/src\//, /\/test\//];
 const problems: string[] = [];
+const args = process.argv.slice(2);
+let tarballDir: string | undefined;
+if (args.length === 2 && args[0] === '--tarballs' && args[1]) {
+  tarballDir = resolve(args[1]);
+  if (!existsSync(tarballDir)) {
+    console.error(`check-pack: ${tarballDir} does not exist`);
+    process.exit(2);
+  }
+} else if (args.length > 0) {
+  console.error('usage: bun scripts/check-pack.ts [--tarballs <dir>]');
+  process.exit(2);
+}
+const tarballFile = (name: string, version: string) =>
+  `${name.replace(/^@/, '').replace('/', '-')}-${version}.tgz`;
+
 const tmp = mkdtempSync(join(tmpdir(), 'knead-pack-'));
 const tarballs = new Map<string, string>();
 
@@ -46,12 +66,11 @@ try {
     if (pkg.private) continue;
     const label = pkg.name as string;
     try {
-      run(['pnpm', 'pack', '--pack-destination', tmp], pkgDir);
-      const tgz = readdirSync(tmp).find((f) =>
-        f.startsWith(`${label.replace('@', '').replace('/', '-')}-`),
-      );
-      if (!tgz) throw new Error('tarball not found');
-      const tarball = join(tmp, tgz);
+      const expected = tarballFile(label, pkg.version);
+      if (tarballDir === undefined) run(['pnpm', 'pack', '--pack-destination', tmp], pkgDir);
+      const from = tarballDir ?? tmp;
+      if (!readdirSync(from).includes(expected)) throw new Error(`tarball ${expected} not found`);
+      const tarball = join(from, expected);
       tarballs.set(label, tarball);
       const entries = run(['tar', 'tzf', tarball], tmp)
         .stdout.split('\n')
@@ -73,7 +92,17 @@ try {
     } catch (err) {
       problems.push(`${label}: ${(err as Error).message}`);
     }
-    for (const f of ['LICENSE-MIT', 'LICENSE-APACHE']) rmSync(join(pkgDir, f), { force: true });
+    if (tarballDir === undefined) {
+      // prepack copies the root licenses in; don't leave them in the working tree.
+      for (const f of ['LICENSE-MIT', 'LICENSE-APACHE']) rmSync(join(pkgDir, f), { force: true });
+    }
+  }
+  if (tarballDir !== undefined) {
+    // Every tarball there is the one about to be published, so none may go unchecked.
+    const checked = new Set([...tarballs.values()].map((t) => basename(t)));
+    for (const f of readdirSync(tarballDir)) {
+      if (f.endsWith('.tgz') && !checked.has(f)) problems.push(`unexpected tarball ${f}`);
+    }
   }
   if (problems.length === 0) {
     try {
@@ -190,7 +219,9 @@ function smokeTest(dir: string, names: string[], source: string): void {
 
 function consumerApp(): string {
   return `
+import type { StandardJSONSchemaV1, StandardSchemaV1 } from '@standard-schema/spec';
 import { AbilityGuard, Can, CaslModule, definePermissions } from '@knead-js/casl';
+import { ConfigModule, defineConfig } from '@knead-js/config';
 import { inject, Module } from '@knead-js/core';
 import { CorsModule } from '@knead-js/cors';
 import { Field, GraphQLModule, ID, ObjectType, Query, Resolver, type ResolverCtx } from '@knead-js/graphql';
@@ -198,11 +229,34 @@ import { Controller, type Ctx, Get, KneadFactory, UseGuards } from '@knead-js/ht
 import { JsonLogger, LoggingModule } from '@knead-js/logging';
 import { PrismaModule } from '@knead-js/prisma';
 import { toHttpException } from '@knead-js/prisma/http';
+import { withRollback } from '@knead-js/prisma/testing';
 import { RateLimitModule } from '@knead-js/rate-limit';
 import { sanitize, type SanitizePolicy } from '@knead-js/sanitize';
 import { Interval, ScheduleModule, SchedulerRegistry } from '@knead-js/schedule';
 import { SecurityHeadersModule } from '@knead-js/security-headers';
-import type { TestingModuleBuilder } from '@knead-js/testing';
+import { Test } from '@knead-js/testing';
+
+// A hand-written Standard Schema with Standard JSON Schema, so the consumer needs no validator.
+interface Settings {
+  greeting: string;
+}
+const settingsSchema: StandardSchemaV1<Settings> & StandardJSONSchemaV1<Settings> = {
+  '~standard': {
+    version: 1,
+    vendor: 'knead-consumer',
+    validate: (value) => {
+      const greeting = (value as Partial<Settings> | undefined)?.greeting;
+      return typeof greeting === 'string'
+        ? { value: { greeting } }
+        : { issues: [{ message: 'Missing value', path: ['greeting'] }] };
+    },
+    jsonSchema: {
+      input: () => ({ type: 'object', properties: { greeting: { type: 'string' } } }),
+      output: () => ({ type: 'object', properties: { greeting: { type: 'string' } } }),
+    },
+  },
+};
+const AppConfig = defineConfig(settingsSchema, { name: 'AppConfig' });
 
 class Greeter {
   greet(name: string): string {
@@ -289,6 +343,7 @@ const logLines: string[] = [];
     }),
     ScheduleModule.forRoot(),
     PrismaModule.forRoot({ instance: fakePrisma }),
+    ConfigModule.forRoot(AppConfig, { loaders: [() => ({ GREETING: 'hello from config' })] }),
   ],
   controllers: [GreetController, SecretController],
   providers: [Greeter, GreetingResolver, Ticker],
@@ -296,8 +351,20 @@ const logLines: string[] = [];
 class AppModule {}
 
 const policy: SanitizePolicy = { allowedTags: ['b'], allowedAttributes: {} };
-const builder: TestingModuleBuilder | undefined = undefined;
-void builder;
+
+// @knead-js/testing compiles a module, and @knead-js/prisma/testing rolls back through it.
+const testing = await Test.createModule({
+  imports: [PrismaModule.forRoot({ instance: fakePrisma })],
+  providers: [Greeter],
+}).compile();
+let rolledBack: number | undefined;
+let testingGreeting: string | undefined;
+try {
+  rolledBack = await withRollback(testing, async () => 42);
+  testingGreeting = testing.get(Greeter).greet('ada');
+} finally {
+  await testing.close();
+}
 
 const app = await KneadFactory.create(AppModule);
 await app.listen({ port: 0, hostname: '127.0.0.1' });
@@ -332,6 +399,10 @@ try {
     toHttpException({ name: 'PrismaClientValidationError' })?.status === 400,
     app.logger instanceof JsonLogger,
     logLines.some((line) => (JSON.parse(line) as { msg: string }).msg.startsWith('Listening')),
+    app.get(AppConfig).get('greeting') === 'hello from config',
+    JSON.stringify(app.get(AppConfig)) === '{"greeting":"[redacted]"}',
+    rolledBack === 42,
+    testingGreeting === body.message,
   ];
   if (checks.includes(false)) throw new Error(\`checks failed: \${JSON.stringify(checks)}\`);
 } finally {

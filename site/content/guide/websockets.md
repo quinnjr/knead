@@ -155,12 +155,14 @@ Invalid values are an `HttpConfigError` at `listen()`, for example
 
 The per-IP count uses `ctx.ip`, in which an IPv4-mapped IPv6 address is its IPv4 address. A
 connection slot is taken just before the socket is upgraded and given back when it closes, or
-right away when the upgrade fails.
+right away when the upgrade fails. An upgrade whose socket has not opened after 30 seconds gives
+its slot back too, so aborted upgrades cannot exhaust the limits; a socket that opens later takes
+a slot again, or is closed with `1013` when none is free.
 
 ## Revoking sockets
 
 `registry.closeWhere(predicate, code = 1008, reason = 'Connection revoked')` closes every open
-socket for which `predicate(ws)` returns `true`, and returns how many it closed. The example's
+socket for which `predicate(ws)` returns a truthy value, and returns how many it closed. The example's
 `signOut()` uses it to disconnect a user who signed out. `closeAll(code = 1001, reason = 'Server
 shutting down')` closes every socket; `close()` calls it during
 [shutdown](/guide/server/#graceful-shutdown).
@@ -168,7 +170,7 @@ shutting down')` closes every socket; `close()` calls it during
 A socket whose upgrade is still in progress (in middleware or guards, or between the handshake and
 `open`) is not open yet, so `closeWhere()` also keeps the predicate, for up to 30 seconds and at
 most `maxPendingRevocations` predicates, and applies it to such a socket when it opens, before
-the endpoint's `open` runs. Revocation is fail-closed:
+the endpoint's `open` runs. The same rule holds there: any truthy result closes the socket. Revocation is fail-closed:
 
 - Write predicates against `ws.data` alone. A predicate leaving the kept list early is checked
   against upgrades that already have their socket data, using a stand-in socket that has only

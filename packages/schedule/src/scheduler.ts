@@ -1,4 +1,4 @@
-import { summarizeError } from '@knead-js/core';
+import { logValue, summarizeError } from '@knead-js/core';
 import type { Clock } from './clock.js';
 import type { JobContext, JobHandler, LockSetting } from './decorators.js';
 import { ScheduleConfigError, ScheduleJobNotFoundError } from './errors.js';
@@ -106,8 +106,12 @@ export class Scheduler {
     return [...this.#jobs.values()].map((job) => this.#info(job));
   }
 
-  /** Disarms and forgets the job; runs in progress finish and are awaited at shutdown. */
+  /**
+   * Disarms and forgets the job; runs in progress finish and are awaited at shutdown. Throws
+   * after shutdown, like every other change.
+   */
   remove(name: string): boolean {
+    this.#assertOpen();
     const job = this.#jobs.get(name);
     if (!job) return false;
     this.#disarm(job);
@@ -156,7 +160,7 @@ export class Scheduler {
     const late = await Promise.race([settled, timedOut]);
     this.clock.clearTimeout(timer);
     if (late) {
-      const names = [...new Set(this.#inflight.values())].map((n) => `"${n}"`).join(', ');
+      const names = [...new Set(this.#inflight.values())].map((n) => `"${logValue(n)}"`).join(', ');
       this.options.logger.warn(
         `[knead:schedule] Shutdown timed out after ${this.options.shutdownTimeout}ms with jobs ` +
           `still running: ${names}.`,
@@ -169,7 +173,7 @@ export class Scheduler {
     if (next === null) {
       job.stopped = true;
       this.options.logger.warn(
-        `[knead:schedule] Job "${job.name}" has no future run and was stopped.`,
+        `[knead:schedule] Job "${logValue(job.name)}" has no future run and was stopped.`,
       );
       return;
     }
@@ -194,16 +198,18 @@ export class Scheduler {
       return;
     }
     job.nextAt = undefined;
-    const run = this.#run(job, scheduledAt, 'schedule');
     if (job.schedule.kind === 'timeout') {
       // Stays listed (stopped) while it runs; leaves the registry once the run settles, unless it
-      // was resumed or replaced meanwhile.
+      // was resumed or replaced meanwhile. Stopped before the handler starts, so a handler that
+      // resumes its own job before its first await is not overridden.
       job.stopped = true;
+      const run = this.#run(job, scheduledAt, 'schedule');
       void run.then(() => {
         if (job.stopped && this.#jobs.get(job.name) === job) this.#jobs.delete(job.name);
       });
       return;
     }
+    void this.#run(job, scheduledAt, 'schedule');
     // The handler has already started: it may have removed, paused or re-armed this job, or shut
     // the scheduler down. Only an untouched job is armed again.
     if (!this.#isLive(job) || job.paused || job.timer !== undefined) return;
@@ -258,7 +264,7 @@ export class Scheduler {
       await this.options.onError(error, ctx);
     } catch (handlerError) {
       this.options.logger.error(
-        `[knead:schedule] onError failed for job "${ctx.name}": ${summarizeError(handlerError)}`,
+        `[knead:schedule] onError failed for job "${logValue(ctx.name)}": ${summarizeError(handlerError)}`,
       );
     }
   }

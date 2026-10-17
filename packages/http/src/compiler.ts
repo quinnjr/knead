@@ -20,7 +20,7 @@ import {
   ROUTES,
 } from './metadata.js';
 import type { HostMatcher } from './net.js';
-import { compileMatcher, joinPaths, routeShape } from './path.js';
+import { compilePathIndex, joinPaths, routeShape } from './path.js';
 import {
   composeMiddleware,
   createErrorHandler,
@@ -28,7 +28,7 @@ import {
   type Handler,
   runGuards,
 } from './pipeline.js';
-import { requestUrl } from './request.js';
+import { requestPathname } from './request.js';
 import { resolveFilter, resolveGuard, resolveMiddleware } from './resolve.js';
 import { toResponse, withHeaders } from './response.js';
 import type { ExceptionFilter, Guard, HttpMethod, Middleware, RouteInfo } from './types.js';
@@ -188,13 +188,15 @@ export function compileApplication(input: CompileInput): CompiledApp {
     cacheControl === undefined || res.headers.has('cache-control')
       ? res
       : withHeaders(res, { 'cache-control': cacheControl });
+  /** A rejected upgrade's answer gets the default Cache-Control; an accepted one is undefined. */
+  const upgradeResult = (res: Response | undefined) => res && withCacheDefault(res);
   const checkForwarded = forwardedWarning(net, logger);
   const globalOnError = createErrorHandler(input.globalFilters, logger, development);
   const routes: CompiledApp['routes'] = {};
   const table: RouteTableEntry[] = [];
   const owners = new Map<string, string>();
   const shapes = new Map<string, string>();
-  const allowed = new Map<string, { matcher: RegExp; methods: Set<HttpMethod> }>();
+  const allowed = new Map<string, Set<HttpMethod>>();
 
   const wsHandlers = new Map<string, Handler>();
   for (const [path, endpoint] of input.ws.entries()) {
@@ -253,6 +255,12 @@ export function compileApplication(input: CompileInput): CompiledApp {
         if (path.includes('*') && !path.endsWith('/*')) {
           throw new HttpConfigError(
             `Route ${path} has a "*" that is not the whole last segment (${label}); Bun only matches a trailing "/*".`,
+          );
+        }
+        const status = route.options.status;
+        if (status !== undefined && (!Number.isInteger(status) || status < 200 || status > 599)) {
+          throw new HttpConfigError(
+            `Route ${path} has status ${String(status)}; a route status must be an integer from 200 to 599 (${label}).`,
           );
         }
         const shape = routeShape(path);
@@ -321,36 +329,47 @@ export function compileApplication(input: CompileInput): CompiledApp {
           const ws = endpoint
             ? upgradeChain(path, endpoint, input.ws, chain, [...guards, ...authorize], onError)
             : undefined;
+          // A parametric or wildcard GET route can cover the exact path of an endpoint: its
+          // upgrades go to that endpoint (global middleware and guards, ctx.route null), as if no
+          // route matched, instead of being answered as an ordinary GET.
+          const covers = method === 'GET' && !ws && (path.includes(':') || path.includes('*'));
           let byMethod = routes[path];
           if (!byMethod) {
             byMethod = {};
             routes[path] = byMethod;
           }
           byMethod[method] = async (req, server) => {
-            if (misdirected(req)) return misdirectedResponse();
+            if (misdirected(req)) return withCacheDefault(misdirectedResponse());
             checkForwarded(req);
-            if (ws && isUpgrade(req)) return runUpgrade(input.ws, path, ws, req, server, net, info);
+            if (ws && isUpgrade(req)) {
+              return upgradeResult(await runUpgrade(input.ws, path, ws, req, server, net, info));
+            }
+            if (covers && isUpgrade(req)) {
+              const pathname = requestPathname(req);
+              const covered = wsHandlers.get(pathname);
+              if (covered) {
+                return upgradeResult(
+                  await runUpgrade(input.ws, pathname, covered, req, server, net),
+                );
+              }
+            }
             return withCacheDefault(await handle(new RequestContext(req, server, info, net)));
           };
-          const entry = allowed.get(path) ?? {
-            matcher: compileMatcher(path),
-            methods: new Set<HttpMethod>(),
-          };
-          entry.methods.add(method);
-          allowed.set(path, entry);
+          const methods = allowed.get(path) ?? new Set<HttpMethod>();
+          methods.add(method);
+          allowed.set(path, methods);
           table.push({ method, path, handler: label });
         }
       }
     }
   }
 
+  const allowedFor = compilePathIndex(allowed);
   const unmatched: Handler = async (ctx) => {
     try {
-      const pathname = requestUrl(ctx.req).pathname;
+      const pathname = requestPathname(ctx.req);
       const methods = new Set<string>();
-      for (const { matcher, methods: m } of allowed.values()) {
-        if (matcher.test(pathname)) for (const x of m) methods.add(x);
-      }
+      for (const m of allowedFor(pathname)) for (const x of m) methods.add(x);
       if (methods.size > 0) {
         if (methods.has('GET')) methods.add('HEAD');
         throw new MethodNotAllowedException(`${ctx.req.method} is not allowed on ${pathname}`, {
@@ -363,14 +382,18 @@ export function compileApplication(input: CompileInput): CompiledApp {
     }
   };
   const fallback = composeMiddleware(input.globalMiddleware, unmatched, globalOnError);
+  // Bun hands WebSocket handshakes for a root "/*" route to fetch instead of the route, so one
+  // without an endpoint is dispatched to that route here: an ordinary GET, as without the header.
+  const rootWildcard = routes['/*']?.GET;
 
   const fetch: BunHandler = async (req, server) => {
-    if (misdirected(req)) return misdirectedResponse();
+    if (misdirected(req)) return withCacheDefault(misdirectedResponse());
     checkForwarded(req);
     if (isUpgrade(req)) {
-      const pathname = requestUrl(req).pathname;
+      const pathname = requestPathname(req);
       const ws = wsHandlers.get(pathname);
-      if (ws) return runUpgrade(input.ws, pathname, ws, req, server, net);
+      if (ws) return upgradeResult(await runUpgrade(input.ws, pathname, ws, req, server, net));
+      if (rootWildcard) return rootWildcard(req, server);
     }
     return withCacheDefault(await fallback(new RequestContext(req, server, null, net)));
   };

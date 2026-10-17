@@ -1,6 +1,7 @@
 import {
   type BeforeApplicationShutdown,
   inject,
+  LOGGER,
   MODULES,
   type OnApplicationBootstrap,
 } from '@knead-js/core';
@@ -23,7 +24,7 @@ export class SchedulerRegistry implements OnApplicationBootstrap, BeforeApplicat
   static readonly #claimed = new WeakSet<object>();
   readonly #modules = inject(MODULES);
   readonly #scheduler = new Scheduler(
-    resolveScheduleOptions(inject(SCHEDULE_OPTIONS)),
+    resolveScheduleOptions(inject(SCHEDULE_OPTIONS), inject(LOGGER)),
     inject(SCHEDULE_CLOCK),
   );
 

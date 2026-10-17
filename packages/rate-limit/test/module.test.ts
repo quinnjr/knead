@@ -13,6 +13,7 @@ import {
   RedisStore,
   SkipRateLimit,
 } from '../src/index.js';
+import { resetUnkeyedHashWarning } from '../src/redis-store.js';
 
 @Controller('/r')
 class LimitedController {
@@ -171,5 +172,47 @@ describe('RateLimitModule', () => {
     expect(() => RateLimit({ window: 'soon' as never })).toThrow(RangeError);
     expect(() => RateLimit({ window: -5 })).toThrow(RangeError);
     expect(() => RateLimit({ key: () => 'k' })).not.toThrow();
+    // A non-function key would be a 500 on every request.
+    for (const key of ['ip', 1, null, {}]) {
+      expect(() => RateLimit({ key: key as never })).toThrow(RangeError);
+    }
+  });
+
+  // A store without consume() threw inside the store call on every request, so the default
+  // onStoreError 'allow' let everything through.
+  test.each([{}, { consume: 'yes' }, null, 'redis'])('forRoot rejects store %p', (store) => {
+    expect(() =>
+      RateLimitModule.forRoot({ limit: 1, window: '1m', store: store as never }),
+    ).toThrow(RangeError);
+  });
+
+  test.each(['ip', 1, null, {}])('forRoot rejects key %p', (key) => {
+    expect(() => RateLimitModule.forRoot({ limit: 1, window: '1m', key: key as never })).toThrow(
+      RangeError,
+    );
+  });
+
+  test.each(['false', 0, null, 1])('forRoot rejects middleware %p', (middleware) => {
+    expect(() =>
+      RateLimitModule.forRoot({ limit: 1, window: '1m', middleware: middleware as never }),
+    ).toThrow(RangeError);
+  });
+
+  test('forRoot accepts valid store, key and middleware values', () => {
+    const store = new MemoryStore({ sweepIntervalMs: 0 });
+    expect(() =>
+      RateLimitModule.forRoot({ limit: 1, window: '1m', store, key: () => 'k', middleware: false }),
+    ).not.toThrow();
+    store.close();
+  });
+
+  test("RedisStore's construction warnings go to the application LOGGER", async () => {
+    resetUnkeyedHashWarning();
+    const client = { send: async () => [1, 1, Date.now() + 1000] } as unknown as RedisClient;
+    const store = new RedisStore({ client });
+    await serve({ store });
+    expect(mod!.logs.some((e) => e.level === 'warn' && e.message.includes('no hashSecret'))).toBe(
+      true,
+    );
   });
 });
