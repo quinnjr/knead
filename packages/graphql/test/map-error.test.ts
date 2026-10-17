@@ -102,6 +102,26 @@ describe('mapError', () => {
     expect(result.value?.errors?.[0]?.message).toBe('no');
   });
 
+  test('over HTTP, a context factory error is an HTTP problem and is not mapped', async () => {
+    let thrown: Error = new ForbiddenException('ctx no');
+    s = await startGraphQL([M], {
+      context: () => {
+        throw thrown;
+      },
+      mapError: () => new ForbiddenException('mapped'),
+    });
+    const forbidden = await s.app.graphql('{ n }');
+    expect(forbidden.status).toBe(403);
+    expect(forbidden.headers.get('content-type')).toContain('application/problem+json');
+    expect(forbidden).toMatchObject({ status: 403, detail: 'ctx no' });
+    thrown = new Nope('context secret');
+    const internal = await s.app.graphql('{ n }');
+    expect(internal.status).toBe(500);
+    expect(internal.headers.get('content-type')).toContain('application/problem+json');
+    expect(JSON.stringify(internal)).not.toContain('context secret');
+    expect(JSON.stringify(internal)).not.toContain('mapped');
+  });
+
   test('a mapper throwing on a hook error leaves it masked', async () => {
     s = await startGraphQL([M], {
       hooks: {

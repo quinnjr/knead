@@ -126,7 +126,8 @@ by that same copy.
 ## The catalog
 
 `definePermissions(areas)` declares what a credential can be granted. Each area has ordered
-`levels`; `levels[0]` means no access and has no rules, and every other level adds at least one rule.
+`levels`; `levels[0]` means no access and has no rules, and every other level adds at least one
+rule.
 Levels are cumulative: `write` above includes `read`'s rules. A rule has only `action`, `subject`
 and optionally `fields` (strings or string arrays, `manage` and `all` allowed, no `*` in fields).
 Conditions do not belong in the catalog: they come from `defineUserAbility()` and are kept when the
@@ -223,9 +224,9 @@ Conditions are not evaluated then; they are enforced on every request, against t
   `@knead-js/graphql` or WebSocket endpoints, use `@UseGuards(AbilityGuard)` on the controllers
   instead, and `guards: [AbilityGuard]` for GraphQL.
 - **`AbilityService`** builds the caller's ability once per request (cached on `ctx.state`):
-  `forCtx(ctx)` returns it (or throws `UnauthorizedException`), and `authorize(ctx, action, subject,
-  field?)` throws `ForbiddenException` unless it allows the action. `@Can()` checks the subject type;
-  check conditions against the record itself:
+  `forCtx(ctx)` returns it (or throws `UnauthorizedException`), and `authorize(ctx, action,
+  subject, field?)` throws `ForbiddenException` unless it allows the action. `@Can()` checks the
+  subject type; check conditions against the record itself:
 
   ```ts
   import { AbilityGuard, AbilityService, asSubject, Can } from '@knead-js/casl';
@@ -335,12 +336,13 @@ export class AppModule {}
 - **`mapError: mapCaslError`** is needed for CASL's own errors: it reports a `ForbiddenError` thrown
   by a resolver as `FORBIDDEN` (without CASL's message, as over REST) instead of a masked internal
   error.
-- **`@AbilitySubject(subjectType)`** on an `@ObjectType()` class makes every field of the type (plain
-  `@Field` and `@ResolveField`) require `read` on `subjectType`, for the parent record and that
-  field, through `@knead-js/graphql` field guards (`FieldAbilityGuard`). Field rules therefore name
-  the GraphQL field names (which are also the JSON names). Put it on each concrete `@ObjectType`
-  class: `@InterfaceType` classes are not wrapped. It combines with `@UseFieldGuards()` and is
-  inherited by subclasses; a subclass's own `@AbilitySubject()` replaces the subject type.
+- **`@AbilitySubject(subjectType)`** on an `@ObjectType()` class makes every field of the type
+  (plain `@Field` and `@ResolveField`) require `read` on `subjectType`, for the parent record and
+  that field, through `@knead-js/graphql` field guards (`FieldAbilityGuard`). Field rules
+  therefore name the GraphQL field names (which are also the JSON names). Put it on each concrete
+  `@ObjectType` class: `@InterfaceType` classes are not wrapped. It combines with
+  `@UseFieldGuards()` and is inherited by subclasses; a subclass's own `@AbilitySubject()` replaces
+  the subject type.
 - **Anonymous callers.** A root field open to anonymous callers (`@SkipAbility()` or `@Public()`)
   may still return an `@AbilitySubject` type, but each of its fields then needs an identity: with
   none, every such field is `null` with an `UNAUTHENTICATED` error.
@@ -375,14 +377,14 @@ export class PostsController {
 }
 ```
 
-`@casl/prisma` and Prisma are not dependencies of this package; install them yourself, and keep the conditions in
-`defineUserAbility()` to what both CASL's matcher and Prisma understand.
+`@casl/prisma` and Prisma are not dependencies of this package; install them yourself, and keep
+the conditions in `defineUserAbility()` to what both CASL's matcher and Prisma understand.
 
 ## Limitations
 
-- **No action aliases.** CASL's `createAliasResolver` is not supported: an alias is not expanded when
-  the user's rules and the grant are intersected. `manage` (any action) and `all` (any subject) are
-  supported.
+- **No action aliases.** CASL's `createAliasResolver` is not supported: an alias is not expanded
+  when the user's rules and the grant are intersected. `manage` (any action) and `all` (any
+  subject) are supported.
 - **Top-level field stripping only.** `@PermittedFields()` strips the returned records, not records
   nested in envelopes or in other records' properties.
 - **Conditions on plain data.** Conditions are matched against the record's own data properties
