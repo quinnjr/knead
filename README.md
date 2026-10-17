@@ -5,6 +5,7 @@ A NestJS-style framework for [Bun](https://bun.sh): standard TC39 decorators, `i
 | Package | Purpose |
 |---|---|
 | `@knead-js/core` | DI container, modules, lifecycle hooks |
+| `@knead-js/config` | Typed, validated config from env vars, async loaders and code |
 | `@knead-js/http` | `Bun.serve` adapter, controllers, middleware/guards/filters, TLS, WebSocket registry |
 | `@knead-js/cors` | CORS with preflight handling |
 | `@knead-js/rate-limit` | Sliding-window / token-bucket limits, memory and Redis stores |

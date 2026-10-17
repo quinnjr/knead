@@ -10,3 +10,4 @@ export {
 } from './errors.js';
 export { convertSource, toCamelCase, toScreamingSnake } from './keys.js';
 export { type ConfigLoader, type ConfigSources, loadConfig } from './load.js';
+export { ConfigModule, type ConfigModuleAsyncOptions } from './module.js';
