@@ -53,6 +53,15 @@ class PostsController {
   }
 }
 
+@Controller('/public')
+@UseGuards(AbilityGuard)
+@SkipAbility()
+class PublicController {
+  @Get('/') @Can('update', 'Post') both() {
+    return 'public';
+  }
+}
+
 let app: TestApp | undefined;
 afterEach(async () => {
   await app?.close();
@@ -62,7 +71,7 @@ afterEach(async () => {
 async function serve(): Promise<TestApp> {
   const mod = await Test.createModule({
     imports: [CaslModule.forRoot(options)],
-    controllers: [PostsController],
+    controllers: [PostsController, PublicController],
   }).compile();
   app = await mod.createApp();
   return app;
@@ -117,6 +126,11 @@ test('a malformed grant denies everything', async () => {
 test('@SkipAbility() routes need no identity', async () => {
   const a = await serve();
   expect((await a.request('GET', '/open')).status).toBe(200);
+});
+
+test('@SkipAbility() wins over @Can() when both apply', async () => {
+  const a = await serve();
+  expect((await a.request('GET', '/public')).status).toBe(200);
 });
 
 test('a guarded route without @Can() fails closed', async () => {

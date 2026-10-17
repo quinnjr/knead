@@ -20,9 +20,36 @@ pnpm add @knead-js/casl
 ## Quick start
 
 ```ts
-import { AbilityGuard, Can, CaslModule, definePermissions, fullGrant } from '@knead-js/casl';
+import { AbilityGuard, Can, CaslModule, definePermissions } from '@knead-js/casl';
 import { Module } from '@knead-js/core';
-import { Controller, type Ctx, Get, Put, UseGuards } from '@knead-js/http';
+import { Controller, type Ctx, Get, type Guard, Put, UseGuards } from '@knead-js/http';
+
+interface User {
+  id: string;
+  admin: boolean;
+}
+
+interface Session {
+  user: User;
+  grant: unknown; // the credential's grant, e.g. a token's scopes
+}
+
+declare module '@knead-js/http' {
+  interface CtxState {
+    session?: Session;
+  }
+}
+
+// Your authentication: it looks up the caller's session.
+declare function sessionFrom(req: Request): Session | undefined;
+
+/** Stores the caller's session on ctx.state for AbilityGuard. */
+class AuthGuard implements Guard {
+  canActivate(ctx: Ctx): boolean {
+    ctx.state.session = sessionFrom(ctx.req);
+    return true;
+  }
+}
 
 export const permissions = definePermissions({
   posts: {
@@ -36,14 +63,14 @@ export const permissions = definePermissions({
 });
 
 @Controller('/posts')
-@UseGuards(AuthGuard, AbilityGuard) // your AuthGuard stores the session on ctx.state
+@UseGuards(AuthGuard, AbilityGuard)
 class PostsController {
   @Get('/') @Can('read', 'Post') list() {
-    /* ... */
+    return [];
   }
 
   @Put('/:id') @Can('update', 'Post') update(ctx: Ctx<{ params: { id: string } }>) {
-    /* ... */
+    return { id: ctx.params.id };
   }
 }
 
@@ -51,7 +78,7 @@ class PostsController {
   imports: [
     CaslModule.forRoot<User>({
       permissions,
-      // Who is calling, with which grant; undefined means unauthenticated (401).
+      // Who is calling, with which grant; undefined (or null) means unauthenticated (401).
       resolve: (ctx) => {
         const session = (ctx as Ctx).state.session;
         return session && { user: session.user, grant: session.grant };
@@ -66,12 +93,35 @@ class PostsController {
   ],
   controllers: [PostsController],
 })
-class AppModule {}
+export class AppModule {}
 ```
 
 `CaslModule.forRoot()` is global and provides `AbilityService` and `AbilityGuard`. It validates its
 options at startup (a `CaslConfigError`, a `KneadError`, names the problem); nothing about the
 configuration fails at request time.
+
+### Typed `@Can`
+
+`@Can()` accepts any strings. To have the compiler check the action and subject names, make your
+own `Can` with `createCan()` (it writes the same route meta, so `AbilityGuard` treats it alike):
+
+```ts
+import { createCan } from '@knead-js/casl';
+
+type AppActions = 'manage' | 'read' | 'create' | 'update' | 'delete';
+type AppSubjects = 'all' | 'Post' | 'User';
+
+export const Can = createCan<AppActions, AppSubjects>();
+// @Can('read', 'Post') compiles; @Can('read', 'Pots') does not.
+```
+
+### CASL exports
+
+`@knead-js/casl` re-exports `ForbiddenError` and `subject` from `@casl/ability`, and the
+`AbilityBuilder`, `MongoAbility` and `RawRuleOf` types. Import them from `@knead-js/casl` rather
+than from `@casl/ability`: the package pins its own copy of CASL, and `CaslForbiddenFilter` and
+`mapCaslError` recognise a `ForbiddenError` with `instanceof`, which only matches errors created
+by that same copy.
 
 ## The catalog
 
@@ -115,18 +165,36 @@ The user's own abilities still apply.
 Before issuing a token, check that its requested grant does not exceed the user:
 
 ```ts
-const result = await abilities.validateGrant(user, requested);
-if (!result.ok) {
-  // [{ reason: 'malformed' }] or
-  // [{ reason: 'exceeds-user', area, level, action, subject }, ...]
-  throw new BadRequestException('The token cannot be granted more than you can do');
+import { AbilityService } from '@knead-js/casl';
+import { inject } from '@knead-js/core';
+import { BadRequestException } from '@knead-js/http';
+
+interface User {
+  id: string;
 }
-store(token, result.grant); // the parsed, frozen grant
+
+export class TokenIssuer {
+  readonly #abilities = inject(AbilityService);
+
+  /** Returns the parsed, frozen grant to store with the new token. */
+  async grantFor(user: User, requested: unknown) {
+    const result = await this.#abilities.validateGrant(user, requested);
+    if (!result.ok) {
+      // [{ reason: 'malformed' }] or
+      // [{ reason: 'exceeds-user', area, level, action, subject, field? }, ...]
+      throw new BadRequestException('The token cannot be granted more than you can do');
+    }
+    return result.grant;
+  }
+}
 ```
 
-`validateGrant` checks action and subject coverage at issue time: every action/subject pair the
-grant's rules name must be something the user can do at least conditionally. Conditions and field
-restrictions are not evaluated then; they are enforced on every request, against the record.
+`validateGrant` checks coverage at issue time: every action/subject pair the grant's rules name
+must be something the user can do at least conditionally, and when a rule names `fields`, every one
+of those fields too. A user with `can('read', 'User', ['id', 'name'])` cannot be issued a level
+whose rule is `{ action: 'read', subject: 'User', fields: ['billingAddress'] }`: the problem names
+the field (`field: 'billingAddress'`). A user with an unrestricted `can('read', 'User')` can.
+Conditions are not evaluated then; they are enforced on every request, against the record.
 
 ## REST
 
@@ -135,12 +203,18 @@ restrictions are not evaluated then; they are enforced on every request, against
   identity is a `401` (`UnauthorizedException`), a denial a `403`. Like every Knead guard, it passes
   only on `=== true`.
 - **`@SkipAbility()`** makes `AbilityGuard` pass without resolving an identity: use it for public
-  routes.
+  routes. It wins over `@Can()` when both apply (for example `@SkipAbility()` on the controller and
+  `@Can()` on a method): the route passes and nothing is checked.
 - **Not global by default.** Put it on controllers or routes with `@UseGuards(AbilityGuard)`, or opt
   in for the whole app (every route then needs `@Can()` or `@SkipAbility()`):
 
   ```ts
-  providers: [{ provide: APP_GUARD, multi: true, useExisting: AbilityGuard }];
+  import { AbilityGuard } from '@knead-js/casl';
+  import { Module } from '@knead-js/core';
+  import { APP_GUARD } from '@knead-js/http';
+
+  @Module({ providers: [{ provide: APP_GUARD, multi: true, useExisting: AbilityGuard }] })
+  export class AppModule {}
   ```
 
   Global guards run before route guards, so `resolve()` must then identify the caller itself rather
@@ -154,18 +228,45 @@ restrictions are not evaluated then; they are enforced on every request, against
   check conditions against the record itself:
 
   ```ts
-  @Put('/:id') @Can('update', 'Post')
-  async update(ctx: Ctx<{ params: { id: string } }>) {
-    const post = await this.posts.get(ctx.params.id);
-    await this.abilities.authorize(ctx, 'update', asSubject('Post', post)); // { authorId: user.id }
-    // ...
+  import { AbilityGuard, AbilityService, asSubject, Can } from '@knead-js/casl';
+  import { inject } from '@knead-js/core';
+  import { Controller, type Ctx, NotFoundException, Put, UseGuards } from '@knead-js/http';
+
+  interface Post {
+    id: string;
+    authorId: string;
+  }
+
+  declare const posts: Map<string, Post>; // your data access
+
+  @Controller('/posts')
+  @UseGuards(AbilityGuard)
+  export class PostsController {
+    readonly #abilities = inject(AbilityService);
+
+    @Put('/:id') @Can('update', 'Post')
+    async update(ctx: Ctx<{ params: { id: string } }>) {
+      const post = posts.get(ctx.params.id);
+      if (!post) throw new NotFoundException();
+      // Checks the user's conditions, such as { authorId: user.id }, against this post.
+      await this.#abilities.authorize(ctx, 'update', asSubject('Post', post));
+      return post;
+    }
   }
   ```
 
   `asSubject(type, record)` tags a plain record with its CASL subject type without modifying it.
-- **CASL errors.** A CASL `ForbiddenError` thrown by your code (`ForbiddenError.from(ability)
-  .throwUnlessCan(...)`) is turned into a `403` problem by `CaslForbiddenFilter`, which `forRoot()`
-  registers. Its message is not sent.
+- **CASL errors.** A CASL `ForbiddenError` thrown by your code is turned into a `403` problem by
+  `CaslForbiddenFilter`, which `forRoot()` registers. Its message is not sent. Import
+  `ForbiddenError` from `@knead-js/casl` (see [CASL exports](#casl-exports)):
+
+  ```ts
+  import { type AppAbility, asSubject, ForbiddenError } from '@knead-js/casl';
+
+  export function assertCanPublish(ability: AppAbility, post: { authorId: string }): void {
+    ForbiddenError.from(ability).throwUnlessCan('publish', asSubject('Post', post));
+  }
+  ```
 - **`@PermittedFields(subjectType)`** strips the handler's result down to the fields the caller may
   `read` on `subjectType` (it needs `AbilityGuard` to have run, `403` otherwise). It strips the
   result itself, or each element of an array (recursively); class instances are stripped too, and an
@@ -176,16 +277,49 @@ restrictions are not evaluated then; they are enforced on every request, against
 ## GraphQL
 
 ```ts
-GraphQLModule.forRoot({
-  context: (http) => ({ session: sessions.fromRequest(http.req) }),
-  guards: [AbilityGuard],
-  mapError: mapCaslError,
+import {
+  AbilityGuard,
+  CaslModule,
+  definePermissions,
+  type Identity,
+  mapCaslError,
+} from '@knead-js/casl';
+import { Module } from '@knead-js/core';
+import { GraphQLModule } from '@knead-js/graphql';
+import type { Ctx } from '@knead-js/http';
+
+interface User {
+  id: string;
+}
+
+// Your authentication: the caller's identity and grant, or undefined.
+declare function sessionFrom(req: Request): Identity<User> | undefined;
+
+const permissions = definePermissions({
+  posts: { levels: ['none', 'read'], rules: { read: [{ action: 'read', subject: 'Post' }] } },
 });
-CaslModule.forRoot({
-  permissions,
-  defineUserAbility,
-  resolve: (ctx) => ('info' in ctx ? (ctx as unknown as ResolverCtx).session : restSession(ctx)),
-});
+
+@Module({
+  imports: [
+    GraphQLModule.forRoot({
+      // Fields of the context object are on every resolver ctx.
+      context: (http) => ({ session: sessionFrom(http.req) }),
+      guards: [AbilityGuard],
+      mapError: mapCaslError,
+    }),
+    CaslModule.forRoot<User>({
+      permissions,
+      defineUserAbility(_user, { can }) {
+        can('read', 'Post');
+      },
+      resolve: (ctx) =>
+        'info' in ctx
+          ? (ctx as unknown as { session?: Identity<User> }).session
+          : sessionFrom((ctx as Ctx).req),
+    }),
+  ],
+})
+export class AppModule {}
 ```
 
 - **`guards: [AbilityGuard]`** runs it on every query, mutation and subscription root field. Each
@@ -194,14 +328,22 @@ CaslModule.forRoot({
   included. The ability is built once per operation; a subscription root field's ability is
   rebuilt for every check, so with `recheckGuards: true` a revoked or narrowed grant takes effect at
   the next event.
+- **One ability per operation, not per HTTP request.** The GraphQL ability is cached on the
+  operation's own state. An `AbilityGuard` that also runs on the `/graphql` HTTP request itself
+  (for example as a REST `APP_GUARD`) builds a second one there, calling `resolve()` and
+  `defineUserAbility()` again.
 - **`mapError: mapCaslError`** is needed for CASL's own errors: it reports a `ForbiddenError` thrown
-  by a resolver as `FORBIDDEN` (with its message) instead of a masked internal error.
+  by a resolver as `FORBIDDEN` (without CASL's message, as over REST) instead of a masked internal
+  error.
 - **`@AbilitySubject(subjectType)`** on an `@ObjectType()` class makes every field of the type (plain
   `@Field` and `@ResolveField`) require `read` on `subjectType`, for the parent record and that
   field, through `@knead-js/graphql` field guards (`FieldAbilityGuard`). Field rules therefore name
   the GraphQL field names (which are also the JSON names). Put it on each concrete `@ObjectType`
   class: `@InterfaceType` classes are not wrapped. It combines with `@UseFieldGuards()` and is
   inherited by subclasses; a subclass's own `@AbilitySubject()` replaces the subject type.
+- **Anonymous callers.** A root field open to anonymous callers (`@SkipAbility()` or `@Public()`)
+  may still return an `@AbilitySubject` type, but each of its fields then needs an identity: with
+  none, every such field is `null` with an `UNAUTHENTICATED` error.
 - **Non-null fields.** A denied field is `null` with a `FORBIDDEN` error. For a non-null field
   graphql-js nulls the nearest nullable parent instead (possibly the whole `data`), so make fields
   that may be denied nullable.
@@ -213,16 +355,27 @@ caller may read. With Prisma, `@casl/prisma` turns the ability into a `where` cl
 
 ```ts
 import { accessibleBy } from '@casl/prisma';
+import { AbilityGuard, AbilityService, Can } from '@knead-js/casl';
+import { inject } from '@knead-js/core';
+import { Controller, type Ctx, Get, UseGuards } from '@knead-js/http';
+import { PrismaClient } from '@prisma/client';
 
-@Get('/') @Can('read', 'Post')
-async list(ctx: Ctx) {
-  return this.prisma.post.findMany({
-    where: accessibleBy(await this.abilities.forCtx(ctx)).Post,
-  });
+@Controller('/posts')
+@UseGuards(AbilityGuard)
+export class PostsController {
+  readonly #abilities = inject(AbilityService);
+  readonly #prisma = new PrismaClient();
+
+  @Get('/') @Can('read', 'Post')
+  async list(ctx: Ctx) {
+    return this.#prisma.post.findMany({
+      where: accessibleBy(await this.#abilities.forCtx(ctx)).Post,
+    });
+  }
 }
 ```
 
-`@casl/prisma` is not a dependency of this package; install it yourself, and keep the conditions in
+`@casl/prisma` and Prisma are not dependencies of this package; install them yourself, and keep the conditions in
 `defineUserAbility()` to what both CASL's matcher and Prisma understand.
 
 ## Limitations

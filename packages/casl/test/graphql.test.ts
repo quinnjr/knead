@@ -30,6 +30,7 @@ import {
   type Identity,
   type MongoAbility,
   mapCaslError,
+  SkipAbility,
 } from '../src/index.js';
 import { bearer, resolve as restIdentity, type TestUser } from './fixtures.js';
 
@@ -102,6 +103,9 @@ class Users {
     return [row('alice'), row('bob'), row('carol')];
   }
   @Query(() => GuardedUser) @Can('read', 'User') guarded() {
+    return row('bob');
+  }
+  @Query(() => User, { nullable: true }) @SkipAbility() publicUser() {
     return row('bob');
   }
   @Query(() => Int) undeclared() {
@@ -222,6 +226,17 @@ describe('@knead-js/casl on GraphQL', () => {
       ['users', 2, 'email'],
     ]);
     expect(res.errors?.every((e) => e.extensions?.code === 'FORBIDDEN')).toBe(true);
+  });
+
+  test('anonymous access to an @AbilitySubject type is UNAUTHENTICATED per field', async () => {
+    const a = await start();
+    const res = await a.graphql('{ publicUser { name email } }');
+    expect(res.data).toEqual({ publicUser: { name: null, email: null } });
+    expect(res.errors?.map((e) => e.path?.join('.')).sort()).toEqual([
+      'publicUser.email',
+      'publicUser.name',
+    ]);
+    expect(res.errors?.every((e) => e.extensions?.code === 'UNAUTHENTICATED')).toBe(true);
   });
 
   test('raw ForbiddenError in resolver → FORBIDDEN', async () => {
