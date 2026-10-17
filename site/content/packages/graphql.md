@@ -69,7 +69,7 @@ Both register a controller with `POST` and `GET` routes at the path, and provide
 | `subscriptions` | `GraphQLSubscriptionOptions \| false` | `{}` | Subscription transport options. The endpoint is registered only when the schema has subscriptions. |
 | `pubsub` | `PubSubEngine` | a Leaven `PubSub` logging through `LOGGER` | The engine behind `PUBSUB`. Its `close()` runs on shutdown. |
 | `guards` | `readonly GuardRef<ResolverCtx>[]` | `[]` | Guards run on every root field before its own guards, except `@Public()` ones. Not run for `@ResolveField`. |
-| `defaultDeny` | `boolean` | `false` | Deny every root field that is neither `@Public()` nor has a guard of its own. Module `guards` do not count. |
+| `defaultDeny` | `boolean` | `false` | Deny every root field that is neither `@Public()` nor has a guard of its own (`@UseGuards()`, `guards` or `authorize`). Module `guards` do not count. |
 
 Every limit accepts a positive integer, or `Infinity` or `false` to disable it; anything else is an
 `HttpConfigError`. Defaults are in `GRAPHQL_LIMITS`.
@@ -265,7 +265,9 @@ constructors, the handle's type, or the class's instance type.
 
 `@Resolver(type?: () => Class<T>): ResolverDecorator<T>` marks a class as a resolver and a singleton
 provider. With a type, the class may declare `@ResolveField()` methods for that type, and the type is
-built even when no field returns it.
+built even when no field returns it. The type must be an `@ObjectType()`: `@ResolveField()` on an
+`@InterfaceType()` (or `@InputType()`) target is a `SchemaBuildError`, since graphql-js resolves an
+interface's fields on the concrete type; resolve the field on each implementing type.
 
 ### `ResolverDecorator`
 
@@ -286,7 +288,9 @@ field resolved by the method. They return a `ResolverMethodDecorator`.
 ### `ResolveField()`
 
 `@ResolveField(type: () => R, options?: ResolverOptions): ResolveFieldDecorator` adds a field to
-the `@Resolver()` type; `ctx.parent` is the object.
+the `@Resolver()` type; `ctx.parent` is the object. `@ObjectType()` subclasses of the type inherit the
+field with its resolver and guards; a `@ResolveField()` of the same name on the subclass's own
+resolver wins.
 
 ### `ResolverOptions`
 
@@ -319,7 +323,10 @@ parameter, if any, must be a `ResolverCtx` (not a `SubscriptionCtx` or a look-al
 
 `@Subscription(type: () => R, options: SubscriptionOptions): SubscriptionMethodDecorator` adds a
 subscription field fed by `PUBSUB`. The method receives a `SubscriptionCtx` whose `parent` is the
-event (after `resolve`) and returns the value to send, or nothing to send the event.
+event (after `resolve`) and returns the value to send, or nothing to send the event. The field runs
+only for an operation that subscribed: a subscription document executed any other way (for example
+through `GraphQLRuntime.executor.execute`) is `BAD_USER_INPUT` and calls neither its guards nor the
+method.
 
 ### `SubscriptionOptions`
 
@@ -327,8 +334,8 @@ event (after `resolve`) and returns the value to send, or nothing to send the ev
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `topic` | `string \| ((ctx: SubscriptionCtx) => string \| readonly string[])` | required | A computed topic containing `*` or `#`, or longer than 256 characters, is `BAD_USER_INPUT`. |
-| `filter` | `({ payload, args, ctx }) => boolean \| Promise<boolean>` | none | Per event; `false` skips it. A throw is logged and becomes a masked error. |
+| `topic` | `string \| ((ctx: SubscriptionCtx) => string \| readonly string[])` | required | Duplicate topics are subscribed once. A computed topic list of more than 100 distinct topics, or a computed topic containing `*` or `#` or longer than 256 characters, is `BAD_USER_INPUT`. |
+| `filter` | `({ payload, args, ctx }) => boolean \| Promise<boolean>` | none | Per event; `false` skips it. Its `ctx` carries the current context, as last replaced by `refreshContext`. A throw is logged and becomes a masked error. |
 | `resolve` | `(payload) => unknown` | none | Transforms each event before the method. |
 | `recheckGuards` | `boolean` | `false` | Re-run the root guards and `authorize` before every event; a denial delivers `FORBIDDEN` and ends the subscription. |
 
@@ -351,7 +358,8 @@ The `ctx.meta` key `@Public()` sets: `Symbol('knead:graphql:public')`.
 `@UseFieldGuards(...guards: GuardRef<ResolverCtx<{}, any>>[])` on an `@ObjectType()` class runs the
 guards before every field of the type (plain and `@ResolveField`). Only `true` passes; a denied
 field is `FORBIDDEN` (null, bubbling to the nearest nullable parent). Repeated decorators append;
-subclasses inherit. Ignored on interfaces. Guard classes are resolved from the root module, and a
+subclasses inherit. On an `@InterfaceType()` or `@InputType()` it would have no effect, so it is a
+`SchemaBuildError`: decorate the implementing object types. Guard classes are resolved from the root module, and a
 type without field guards keeps graphql-js's default resolvers.
 
 ### `FIELD_GUARDS`
@@ -426,7 +434,8 @@ An empty interface to augment with the `context` factory's fields:
 
 `BatchLoader<K, V>`: `{ batch(keys: readonly K[]): Promise<readonly (V | Error)[]>; readonly options?: DataLoader.Options<K, V> }`.
 A singleton (the registered provider, or constructed once); `ctx.loader(Cls)` creates one DataLoader
-over it per operation, and per event for subscriptions.
+over it per operation and per module (each module resolves its own provider), and per event for
+subscriptions.
 
 ## Subscriptions
 

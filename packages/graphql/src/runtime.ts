@@ -1,6 +1,7 @@
 import {
   getMetadata,
   getMethodMetadata,
+  getOwnMetadata,
   inject,
   MODULES,
   type ModuleInjector,
@@ -70,6 +71,7 @@ import {
   RESOLVER_METHODS,
   type ResolverMethodDefinition,
   type SubscriptionMethodOptions,
+  TYPE_DEF,
 } from './metadata.js';
 import {
   GRAPHQL_OPTIONS,
@@ -121,6 +123,7 @@ function isClassWith(value: unknown, method: string): value is Type {
   );
 }
 
+/** Mirrors @knead-js/http's resolveGuard, which that package does not export. */
 function resolveGuard(ref: GuardRef<any>, injector: ModuleInjector): Guard<any> {
   if (isClassWith(ref, 'canActivate')) return injector.resolveOrConstruct(ref as Type<Guard<any>>);
   if (typeof ref === 'function') return { canActivate: ref as (ctx: unknown) => boolean };
@@ -129,6 +132,9 @@ function resolveGuard(ref: GuardRef<any>, injector: ModuleInjector): Guard<any> 
 
 /** Longest computed subscription topic, in characters. */
 export const MAX_TOPIC_LENGTH = 256;
+
+/** Most distinct topics a computed `topic` may return for one subscription. */
+export const MAX_SUBSCRIPTION_TOPICS = 100;
 
 /**
  * Rejects computed topics containing a wildcard ("*" or "#") or longer than 256 characters with
@@ -190,6 +196,14 @@ function recheckEvents<T>(
     },
   };
 }
+
+/** The decorator that declares each TYPE_DEF kind, for error messages. */
+const KIND_DECORATOR = {
+  object: 'ObjectType',
+  interface: 'InterfaceType',
+  input: 'InputType',
+  args: 'ArgsType',
+} as const;
 
 /** The guard defaultDeny puts on a root field that has no guard of its own. */
 const DENY: Guard<unknown> = { canActivate: () => false };
@@ -781,6 +795,7 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
     const subscription: FieldSpec[] = [];
     const typeFields = new Map<Class, FieldSpec[]>();
     const types: Class[] = [...this.options.orphanedTypes];
+    for (const ref of this.options.guards) assertGuardRef(ref, 'GraphQLModule guards');
     for (const resolver of discoverResolvers(this.#modules)) {
       const target = getMetadata(resolver.cls, RESOLVER)?.type?.();
       for (const def of getMetadata(resolver.cls, RESOLVER_METHODS) ?? []) {
@@ -792,6 +807,15 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
           if (!target) {
             throw new SchemaBuildError(
               `${spec.owner}: @ResolveField() requires @Resolver(() => Type) on ${resolver.cls.name}.`,
+            );
+          }
+          // graphql-js resolves an interface's fields on the concrete object type, so a resolver
+          // (and its guards) on an interface would never run: refuse it rather than serve raw values.
+          const kind = getOwnMetadata(target, TYPE_DEF)?.kind;
+          if (kind !== undefined && kind !== 'object') {
+            throw new SchemaBuildError(
+              `${spec.owner}: @ResolveField on @${KIND_DECORATOR[kind]} ${target.name} is not ` +
+                'supported; resolve it on each concrete type.',
             );
           }
           const list = typeFields.get(target) ?? [];
@@ -871,18 +895,17 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
       ...(getMethodMetadata(cls, def.method, GUARDS) ?? []),
     ];
     for (const ref of own) assertGuardRef(ref, `the guards of ${owner}`);
-    for (const ref of this.options.guards) assertGuardRef(ref, 'GraphQLModule guards');
+    const authorizeRefs = options.authorize ?? [];
+    for (const ref of authorizeRefs) assertGuardRef(ref, `the authorize guards of ${owner}`);
     // Module guards and defaultDeny apply to root fields (not @ResolveField) unless @Public().
     const root = def.kind !== 'field' && meta[IS_PUBLIC] !== true;
-    // An undefined entry (a circular import) is not a guard, so it never satisfies defaultDeny.
+    // The field's own guards and authorize guards satisfy defaultDeny; module guards do not.
     const denied =
-      root && this.options.defaultDeny && own.filter((ref) => ref !== undefined).length === 0;
+      root && this.options.defaultDeny && own.length === 0 && authorizeRefs.length === 0;
     const guards = [...(denied ? [DENY] : []), ...(root ? this.options.guards : []), ...own].map(
       (ref) => resolveGuard(ref, injector),
     );
-    for (const ref of options.authorize ?? [])
-      assertGuardRef(ref, `the authorize guards of ${owner}`);
-    const authorize = (options.authorize ?? []).map((ref) => resolveGuard(ref, injector));
+    const authorize = authorizeRefs.map((ref) => resolveGuard(ref, injector));
     const call = (ctx: ResolverCtx<any, any>) =>
       (method as (c: unknown) => unknown).call(instance, ctx);
     const prepare = async (
@@ -932,19 +955,29 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
     spec.subscribe = marked(async (parent, args, op: OperationContext, info) => {
       const ctx = await prepare(parent, args, op, info, true);
       validated.set(op, ctx.args);
-      const topics = typeof sub.topic === 'function' ? sub.topic(ctx) : sub.topic;
-      // A computed topic usually embeds client input; a wildcard there would let the client
-      // listen to other topics on engines that support patterns.
-      if (typeof sub.topic === 'function') rejectWildcards(topics);
+      const computed = typeof sub.topic === 'function' ? sub.topic(ctx) : sub.topic;
+      const topics = [...new Set(typeof computed === 'string' ? [computed] : computed)];
+      if (typeof sub.topic === 'function') {
+        // A computed topic usually embeds client input: bound how many the client can open, and
+        // reject wildcards, which would let it listen to other topics on engines with patterns.
+        if (topics.length > MAX_SUBSCRIPTION_TOPICS) {
+          throw new BadRequestException(
+            `A subscription cannot listen to more than ${MAX_SUBSCRIPTION_TOPICS} topics.`,
+          );
+        }
+        rejectWildcards(topics);
+      }
       const filter = sub.filter;
       let warned = false;
       const events = eventIterator(
         this.pubsub,
-        typeof topics === 'string' ? [topics] : [...topics],
+        topics,
         filter
           ? async (payload) => {
               try {
-                return await filter({ payload, args: ctx.args, ctx });
+                // Built per event from op.user, so the filter sees a refreshContext identity.
+                const current = createResolverCtx(op, injector, meta, ctx.args, parent, info);
+                return await filter({ payload, args: ctx.args, ctx: current });
               } catch (error) {
                 throw toSafeError(error, this.masking, `${owner} filter`);
               }
@@ -982,13 +1015,16 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
         await runGuards(authorize, recheck);
       });
     });
-    spec.resolve = marked(async (payload, args, op: OperationContext, info) => {
+    spec.resolve = marked(async (payload, _args, op: OperationContext, info) => {
       if (payload instanceof RevokedEvent) throw payload.error;
+      // Without a subscribe call for this operation (a subscription document executed as a
+      // query or mutation would be), no guard has run: refuse rather than call the method.
+      if (!validated.has(op)) {
+        throw new BadRequestException('Subscriptions are only available over WebSocket.');
+      }
       op.resetForEvent();
       const value = sub.resolve ? await sub.resolve(payload) : payload;
-      const ctx = validated.has(op)
-        ? createResolverCtx(op, injector, meta, validated.get(op), value, info)
-        : await prepare(value, args, op, info, false);
+      const ctx = createResolverCtx(op, injector, meta, validated.get(op), value, info);
       const result = await call(ctx);
       return result === undefined ? value : result;
     });

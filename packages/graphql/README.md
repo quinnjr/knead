@@ -153,7 +153,8 @@ Resolvers use the guards of `@knead-js/http` (a function, an object or a class w
 object, string or number, makes the field `FORBIDDEN`. For a root field the checks run in this
 order:
 
-1. With `defaultDeny: true`, a field that is not `@Public()` and has no guard of its own is denied.
+1. With `defaultDeny: true`, a field that is not `@Public()` and has no guard of its own (step 3 or
+   `authorize`) is denied.
 2. The module's `guards`, unless the field or its class is `@Public()`.
 3. The class's `@UseGuards()`, the field's `guards` option, then the method's `@UseGuards()`.
 4. The `validate` schemas.
@@ -172,7 +173,12 @@ Rules to keep in mind:
 - **Field guards.** `@UseFieldGuards(...guards)` on an `@ObjectType()` runs before every field of
   the type, wherever it appears. A denied field is `null` with `FORBIDDEN`; for a non-null field
   graphql-js nulls the nearest nullable parent, so make deniable fields nullable. Decorate concrete
-  object types: field guards on an `@InterfaceType()` are ignored.
+  object types: field guards on an `@InterfaceType()` or `@InputType()` would never run, so they are
+  a `SchemaBuildError`.
+- **Subclasses and interfaces.** An `@ObjectType()` subclass of a `@Resolver(() => T)` type inherits
+  its `@ResolveField()` methods and their guards. `@ResolveField()` on an `@InterfaceType()` is a
+  `SchemaBuildError`: graphql-js resolves the concrete type's field, so resolve it on each object
+  type.
 - **Bootstrap checks.** An `undefined` guard (a circular import), an arrow-function `canActivate`
   field or an object without `canActivate()` is an `HttpConfigError` naming the resolver or type,
   and never counts for `defaultDeny`.
@@ -195,8 +201,9 @@ a query or mutation sent over it never executes.
   `subscriptions.allowedOrigins`; others get `403`, as does `Origin: null`. Behind a proxy that
   rewrites `Host` or `X-Forwarded-Proto`, see the
   [WebSockets guide](https://quinnjr.github.io/knead/guide/websockets/).
-- **Topics.** A computed topic containing `*` or `#`, or longer than 256 characters, is rejected
-  with `BAD_USER_INPUT` before anything subscribes. Static topic strings are not checked.
+- **Topics.** Duplicate topics are subscribed once. A computed topic list of more than 100 distinct
+  topics, or a computed topic containing `*` or `#` or longer than 256 characters, is rejected with
+  `BAD_USER_INPUT` before anything subscribes. Static topic strings are not checked.
 - **Payloads are shared.** Plain objects and arrays are deep-frozen on arrival; class instances,
   `Date`s and `Map`s are not. Publish fresh DTOs, and build new objects in `resolve`.
 - **Per-event state.** Each event gets fresh DataLoaders and an empty `ctx.state`. A subscriber

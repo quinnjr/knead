@@ -59,7 +59,10 @@ export interface SchemaInput {
   query: readonly FieldSpec[];
   mutation: readonly FieldSpec[];
   subscription: readonly FieldSpec[];
-  /** @ResolveField specs keyed by the @Resolver(() => T) class. */
+  /**
+   * @ResolveField specs keyed by the @Resolver(() => T) class (an @ObjectType). An @ObjectType
+   * subclass of T gets them too; its own class's specs win.
+   */
   typeFields: ReadonlyMap<Class, readonly FieldSpec[]>;
   /** Built even when unreachable (orphanedTypes and resolver target types). */
   types: readonly Class[];
@@ -332,6 +335,13 @@ export class SchemaBuilder {
     const fields = () => this.#outputFields(cls, def);
     let type: GraphQLObjectType | GraphQLInterfaceType;
     if (def.kind === 'interface') {
+      // graphql-js resolves fields on the concrete object type: an interface's guards never run.
+      if (this.input.fieldGuards?.(cls)) {
+        throw new SchemaBuildError(
+          `@UseFieldGuards on @InterfaceType ${def.name} has no effect; put it on the ` +
+            'implementing object types.',
+        );
+      }
       // Computed on first use, at execution time, when every object class is known.
       let implementations: Class[] | undefined;
       type = new GraphQLInterfaceType({
@@ -371,8 +381,16 @@ export class SchemaBuilder {
             : { complexity: field.options.complexity },
       };
     }
-    for (const spec of this.input.typeFields.get(cls) ?? []) {
-      out[spec.name] = this.#field(spec, `${def.name}.${spec.name}`);
+    // The class's own @ResolveField specs, then its ancestors' (nearest wins): a subclass inherits
+    // the parent's fields, so it must inherit their resolvers and guards too, not serve raw values.
+    const resolved = new Set<string>();
+    for (let c: unknown = cls; typeof c === 'function' && c !== Function.prototype; ) {
+      for (const spec of this.input.typeFields.get(c as Class) ?? []) {
+        if (resolved.has(spec.name)) continue;
+        resolved.add(spec.name);
+        out[spec.name] = this.#field(spec, `${def.name}.${spec.name}`);
+      }
+      c = Object.getPrototypeOf(c);
     }
     // Interfaces are never wrapped: graphql-js resolves fields on the concrete object type.
     // Unguarded types keep graphql-js's default resolver, so they pay nothing per field.
@@ -388,6 +406,9 @@ export class SchemaBuilder {
   #input(cls: Class, def: TypeDefinition): GraphQLInputObjectType {
     const cached = this.#inputs.get(cls);
     if (cached) return cached;
+    if (this.input.fieldGuards?.(cls)) {
+      throw new SchemaBuildError(`@UseFieldGuards on @InputType ${def.name} has no effect.`);
+    }
     this.#claim(def.name, cls, cls.name);
     const type = new GraphQLInputObjectType({
       name: def.name,
