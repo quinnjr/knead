@@ -4,6 +4,7 @@ import {
   Controller,
   type Ctx,
   Get,
+  type GuardRef,
   MethodNotAllowedException,
   Post,
   requestUrl,
@@ -15,6 +16,17 @@ import { queryTooLongMessage } from './options.js';
 import { GraphQLRuntime, rejectionMessage } from './runtime.js';
 
 export const GRAPHQL_RESPONSE_JSON = 'application/graphql-response+json';
+
+/**
+ * Route-meta key on the GraphQL endpoint (its POST and GET routes, so also subscription upgrades).
+ * The value is a function returning the module's resolver `guards`, which lets an app-wide HTTP
+ * guard (an `APP_GUARD`) recognise the endpoint and defer to the guards that run on every root
+ * field. `Symbol.for` so packages can read it without importing this one.
+ */
+export const GRAPHQL_ENDPOINT = Symbol.for('knead:gql:endpoint');
+
+/** The value stored under `GRAPHQL_ENDPOINT`. */
+export type GraphQLEndpointGuards = () => readonly GuardRef<any>[];
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -185,9 +197,18 @@ export async function handleGet(runtime: GraphQLRuntime, ctx: Ctx): Promise<Resp
 
 /** The controller is built per module instance so the path stays configurable. */
 export function createGraphQLController(path: string): Type {
-  @Controller()
+  // Filled when the controller is constructed at bootstrap, before any request: the options may
+  // come from an async factory, so they are not known when the class is decorated.
+  let guards: readonly GuardRef<any>[] = [];
+  const endpoint: GraphQLEndpointGuards = () => guards;
+
+  @Controller('', { meta: { [GRAPHQL_ENDPOINT]: endpoint } })
   class GraphQLController {
     readonly #runtime = inject(GraphQLRuntime);
+
+    constructor() {
+      guards = this.#runtime.options.guards;
+    }
 
     @Post(path)
     post(ctx: Ctx) {

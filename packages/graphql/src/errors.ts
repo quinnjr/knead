@@ -68,6 +68,8 @@ export interface ErrorMaskingOptions {
    * truncated to 500 characters and a correlation id are logged. Default false.
    */
   development?: boolean;
+  /** Maps a non-framework error to an HttpException before masking; undefined leaves it. */
+  mapError?: (error: unknown) => HttpException | undefined;
 }
 
 /** Longest error message logged outside development. */
@@ -91,6 +93,17 @@ export function logInternalError(
   );
 }
 
+/** Applies `options.mapError`; a mapper that throws is logged and the error left as is. */
+function mapped(error: unknown, options: ErrorMaskingOptions, where: string): unknown {
+  if (!options.mapError) return error;
+  try {
+    return options.mapError(error) ?? error;
+  } catch (mapperError) {
+    logInternalError(options, `GraphQL mapError threw in ${where}`, mapperError);
+    return error;
+  }
+}
+
 /**
  * Converts an error raised outside resolvers (hooks, context factories, subscription filters)
  * into a LeavenError that is safe to send: framework client errors keep their code and message;
@@ -102,11 +115,12 @@ export function toSafeError(
   where: string,
 ): LeavenError {
   if (isLeavenError(error)) return error;
-  if (error instanceof HttpException) {
-    const code = httpCode(error);
+  const source = error instanceof GraphQLError ? error : mapped(error, options, where);
+  if (source instanceof HttpException) {
+    const code = httpCode(source);
     if (code) {
-      return new LeavenError(error.message, code as ErrorCode, {
-        extensions: { ...error.extensions },
+      return new LeavenError(source.message, code as ErrorCode, {
+        extensions: { ...source.extensions },
       });
     }
   }
@@ -152,13 +166,14 @@ export function createErrorFormatter(
     }
     if (original === undefined) return internal(error, json);
     if (isLeavenError(original)) return { ...json, extensions: { ...original.extensions } };
-    if (original instanceof HttpException) {
-      const code = httpCode(original);
+    const source = mapped(original, options, `resolver at ${error.path.join('.')}`);
+    if (source instanceof HttpException) {
+      const code = httpCode(source);
       if (code) {
         return {
           ...json,
-          message: original.message,
-          extensions: { ...original.extensions, code },
+          message: source.message,
+          extensions: { ...source.extensions, code },
         };
       }
     }

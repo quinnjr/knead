@@ -13,6 +13,7 @@ import {
 } from '@knead-js/http';
 import { RateLimit, RateLimitModule, SkipRateLimit } from '@knead-js/rate-limit';
 import { sanitize } from '@knead-js/sanitize';
+import { Interval, ScheduleModule, SchedulerRegistry } from '@knead-js/schedule';
 import { SecurityHeadersModule } from '@knead-js/security-headers';
 import { Test, type TestApp, type TestingModule } from '@knead-js/testing';
 
@@ -51,8 +52,16 @@ class Gateway implements OnModuleInit {
   }
 }
 
+class Heartbeat {
+  beats = 0;
+  @Interval(5) beat() {
+    this.beats++;
+  }
+}
+
 @Module({
   imports: [
+    ScheduleModule.forRoot(),
     CorsModule.forRoot({
       origin: ALLOWED,
       exposedHeaders: ['RateLimit-Limit', 'RateLimit-Remaining', 'RateLimit-Reset', 'Retry-After'],
@@ -61,7 +70,7 @@ class Gateway implements OnModuleInit {
     SecurityHeadersModule.forRoot(),
   ],
   controllers: [ItController],
-  providers: [Gateway],
+  providers: [Gateway, Heartbeat],
 })
 class IntegrationModule {}
 
@@ -95,7 +104,7 @@ function connect(originHeader: string): Promise<{ result: 'open' | 'error'; sock
   });
 }
 
-describe('integration: core + http + cors + rate-limit + security-headers + sanitize + testing', () => {
+describe('integration: core + http + cors + rate-limit + schedule + security-headers + sanitize + testing', () => {
   test('lazily constructed middleware was initialized at listen', () => {
     expect(lifecycle).toEqual(['init']);
   });
@@ -144,6 +153,14 @@ describe('integration: core + http + cors + rate-limit + security-headers + sani
     good.socket.close();
   });
 
+  test('scheduled jobs run alongside the HTTP app', async () => {
+    const heartbeat = mod.get(Heartbeat);
+    const start = heartbeat.beats;
+    await Bun.sleep(30);
+    expect(heartbeat.beats).toBeGreaterThan(start);
+    expect(mod.get(SchedulerRegistry).get('Heartbeat.beat')?.state).toBe('scheduled');
+  });
+
   test('graceful close() closes open sockets with 1001 and destroys the middleware', async () => {
     const { result, socket } = await connect(ALLOWED);
     expect(result).toBe('open');
@@ -154,5 +171,8 @@ describe('integration: core + http + cors + rate-limit + security-headers + sani
     closed = true;
     expect(await code).toBe(1001);
     expect(lifecycle).toEqual(['init', 'destroy']);
+    const beats = mod.get(Heartbeat).beats;
+    await Bun.sleep(30);
+    expect(mod.get(Heartbeat).beats).toBe(beats);
   });
 });

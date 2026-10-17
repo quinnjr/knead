@@ -1,8 +1,9 @@
+import { AbilityGuard, Can } from '@knead-js/casl';
 import { inject } from '@knead-js/core';
 import { Controller, type Ctx, Delete, Get, Post, UseGuards } from '@knead-js/http';
 import { sanitize } from '@knead-js/sanitize';
 import * as v from 'valibot';
-import { AuthGuard, Roles, RolesGuard } from '../auth/auth.js';
+import { AuthGuard } from '../auth/auth.js';
 import { UsersService } from './users.service.js';
 
 const CreateUser = v.object({
@@ -30,15 +31,15 @@ export class UsersController {
   }
 
   @Post('/', { body: CreateUser, status: 201 })
-  @UseGuards(AuthGuard, RolesGuard)
-  @Roles(['admin'])
+  @UseGuards(AuthGuard, AbilityGuard)
+  @Can('create', 'User')
   create({ body }: Ctx<{ body: v.InferOutput<typeof CreateUser> }>) {
     return this.#users.create(body);
   }
 
   @Delete('/:id')
-  @UseGuards(AuthGuard, RolesGuard)
-  @Roles(['admin'])
+  @UseGuards(AuthGuard, AbilityGuard)
+  @Can('delete', 'User')
   remove({ params }: Ctx<{ params: { id: string } }>) {
     this.#users.remove(params.id);
   }

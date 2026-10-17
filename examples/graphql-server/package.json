@@ -1,5 +1,6 @@
 {
   "name": "@knead-js/example-graphql-server",
+  "version": "0.0.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,6 +10,7 @@
     "smoke": "bun scripts/smoke.ts"
   },
   "dependencies": {
+    "@knead-js/casl": "workspace:^",
     "@knead-js/core": "workspace:^",
     "@knead-js/cors": "workspace:^",
     "@knead-js/graphql": "workspace:^",

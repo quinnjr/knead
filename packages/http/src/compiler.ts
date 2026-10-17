@@ -97,7 +97,13 @@ function upgradeChain(
       registry.reserve(socketData, ctx.ip, ctx);
       let accepted = false;
       try {
-        accepted = (ctx.server as Server<WsData>).upgrade(ctx.req, { data: socketData });
+        // Headers set on ctx.res so far (by middleware before next(), guards or the endpoint)
+        // go out with the 101. Bun writes the handshake here, so middleware that adds headers
+        // to the returned response after next() cannot reach it.
+        accepted = (ctx.server as Server<WsData>).upgrade(ctx.req, {
+          data: socketData,
+          headers: ctx.res.headers,
+        });
       } finally {
         if (!accepted) registry.release(socketData);
       }
@@ -120,7 +126,9 @@ async function runUpgrade(
   net: NetConfig,
   route: RouteInfo | null = null,
 ): Promise<Response | undefined> {
-  const ctx = new RequestContext(req, server, route, net, Object.freeze({ path }));
+  const endpointMeta = registry.meta(path);
+  const meta = endpointMeta && Object.freeze({ ...route?.meta, ...endpointMeta });
+  const ctx = new RequestContext(req, server, route, net, Object.freeze({ path }), meta);
   registry.beginUpgrade(ctx);
   try {
     const res = await handler(ctx);
@@ -241,6 +249,11 @@ export function compileApplication(input: CompileInput): CompiledApp {
         const path = joinPaths(def.prefix, route.path);
         if (path.split('*').length > 2) {
           throw new HttpConfigError(`Route ${path} has more than one "*" wildcard (${label}).`);
+        }
+        if (path.includes('*') && !path.endsWith('/*')) {
+          throw new HttpConfigError(
+            `Route ${path} has a "*" that is not the whole last segment (${label}); Bun only matches a trailing "/*".`,
+          );
         }
         const shape = routeShape(path);
         const known = shapes.get(shape);

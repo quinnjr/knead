@@ -1,0 +1,373 @@
+import { afterEach, describe, expect, test } from 'bun:test';
+import { getMetadata, Module, type ModuleImport } from '@knead-js/core';
+import {
+  FIELD_GUARDS,
+  Field,
+  GraphQLModule,
+  type GraphQLModuleOptions,
+  Int,
+  ObjectType,
+  PUBSUB,
+  type PubSub,
+  Query,
+  Resolver,
+  type ResolverCtx,
+  Subscription,
+  UseFieldGuards,
+} from '@knead-js/graphql';
+import { APP_GUARD, ROUTE_META } from '@knead-js/http';
+import { Test, type TestApp, type TestingModule } from '@knead-js/testing';
+import {
+  type AbilityBuilder,
+  AbilityGuard,
+  AbilitySubject,
+  Can,
+  CaslModule,
+  createAppAbility,
+  definePermissions,
+  FieldAbilityGuard,
+  ForbiddenError,
+  type Identity,
+  type MongoAbility,
+  mapCaslError,
+  SkipAbility,
+} from '../src/index.js';
+import { bearer, resolve as restIdentity, type TestUser } from './fixtures.js';
+
+const permissions = definePermissions({
+  posts: {
+    levels: ['none', 'read'],
+    rules: { read: [{ action: 'read', subject: 'Post' }] },
+  },
+  users: {
+    levels: ['none', 'read'],
+    rules: { read: [{ action: 'read', subject: 'User', fields: ['id', 'name', 'email'] }] },
+  },
+  billing: {
+    levels: ['none', 'read'],
+    rules: { read: [{ action: 'read', subject: 'User', fields: ['billingAddress'] }] },
+  },
+});
+
+let builds = 0;
+function defineUserAbility(user: TestUser, { can }: AbilityBuilder<MongoAbility>): void {
+  builds++;
+  can('read', 'Post');
+  can('read', 'User', ['id', 'name']);
+  can('read', 'User', ['email', 'billingAddress'], { id: user.id });
+}
+
+interface Row {
+  id: string;
+  name: string;
+  email: string;
+  billingAddress: string;
+}
+const row = (id: string): Row => ({
+  id,
+  name: `name-${id}`,
+  email: `${id}@example.com`,
+  billingAddress: `${id} street`,
+});
+
+const otherGuardSaw: string[] = [];
+const OtherGuard = (ctx: ResolverCtx<{}, any>) => {
+  otherGuardSaw.push(ctx.info.fieldName);
+  return ctx.info.fieldName !== 'name';
+};
+
+@ObjectType()
+@AbilitySubject('User')
+class User {
+  @Field(() => String) id!: string;
+  @Field(() => String, { nullable: true }) name?: string | null;
+  @Field(() => String, { nullable: true }) email?: string | null;
+  @Field(() => String, { nullable: true }) billingAddress?: string | null;
+}
+
+@ObjectType()
+@UseFieldGuards(OtherGuard)
+@AbilitySubject('User')
+class GuardedUser {
+  @Field(() => String) id!: string;
+  @Field(() => String, { nullable: true }) name?: string | null;
+  @Field(() => String, { nullable: true }) email?: string | null;
+}
+
+@Resolver()
+class Users {
+  @Query(() => User) @Can('read', 'User') me(ctx: ResolverCtx) {
+    return row((ctx as unknown as { currentUser: Identity<TestUser> }).currentUser.user.id);
+  }
+  @Query(() => [User]) @Can('read', 'User') users() {
+    return [row('alice'), row('bob'), row('carol')];
+  }
+  @Query(() => GuardedUser) @Can('read', 'User') guarded() {
+    return row('bob');
+  }
+  @Query(() => User, { nullable: true }) @SkipAbility() publicUser() {
+    return row('bob');
+  }
+  @Query(() => Int) undeclared() {
+    return 1;
+  }
+  @Query(() => Int) @Can('read', 'Post') boom(): number {
+    throw ForbiddenError.from(createAppAbility([])).setMessage('nope');
+  }
+  @Subscription(() => Int, { topic: 'posts', recheckGuards: true })
+  @Can('read', 'Post')
+  posts() {}
+  @Subscription(() => User, { topic: 'users', recheckGuards: true })
+  @Can('read', 'Post')
+  userEvents() {}
+}
+
+@Module({ providers: [Users] })
+class UsersModule {}
+
+let liveGrant: unknown;
+
+function gqlOptions(): GraphQLModuleOptions {
+  return {
+    context: (http) => ({ currentUser: restIdentity(http) }),
+    guards: [AbilityGuard],
+    mapError: mapCaslError,
+    subscriptions: {
+      refreshContext: ({ context }) => {
+        const current = context.currentUser as Identity<TestUser>;
+        return { currentUser: { user: current.user, grant: liveGrant } } as never;
+      },
+    },
+  };
+}
+
+let mod: TestingModule | undefined;
+let app: TestApp | undefined;
+afterEach(async () => {
+  await mod?.close();
+  mod = undefined;
+  app = undefined;
+  builds = 0;
+  otherGuardSaw.length = 0;
+  liveGrant = undefined;
+});
+
+const subscribers = (topic: string) => (mod!.get(PUBSUB) as PubSub).getSubscriberCount(topic);
+
+/** Polls until `check` is true, for state that settles asynchronously. */
+async function until(check: () => boolean, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!check()) {
+    if (Date.now() > deadline) throw new Error('until(): condition not met in time');
+    await Bun.sleep(5);
+  }
+}
+
+interface StartOptions {
+  /** Registers AbilityGuard as a global (APP_GUARD) guard. */
+  global?: boolean;
+  gql?: Partial<GraphQLModuleOptions>;
+}
+
+async function start(
+  imports: ModuleImport[] = [UsersModule],
+  options: StartOptions = {},
+): Promise<TestApp> {
+  mod = await Test.createModule({
+    providers: options.global
+      ? [{ provide: APP_GUARD, multi: true, useExisting: AbilityGuard }]
+      : [],
+    imports: [
+      GraphQLModule.forRoot({ ...gqlOptions(), ...options.gql }),
+      CaslModule.forRoot<TestUser>({
+        permissions,
+        defineUserAbility,
+        resolve: (ctx) =>
+          'info' in ctx
+            ? (ctx as unknown as { currentUser?: Identity<TestUser> }).currentUser
+            : restIdentity(ctx),
+      }),
+      ...imports,
+    ],
+  }).compile({ development: false });
+  app = await mod.createApp();
+  return app;
+}
+
+const all = { posts: 'read', users: 'read', billing: 'read' };
+
+describe('@knead-js/casl on GraphQL', () => {
+  test('root field requires @Can', async () => {
+    const a = await start();
+    const denied = await a.graphql('{ undeclared }', bearer('alice', all));
+    expect(denied.data).toBeNull();
+    expect(denied.errors?.[0]?.extensions?.code).toBe('FORBIDDEN');
+    const ok = await a.graphql('{ me { id } }', bearer('alice', all));
+    expect(ok.data).toEqual({ me: { id: 'alice' } });
+    expect(ok.errors).toBeUndefined();
+  });
+
+  test('strips fields on GraphQL', async () => {
+    const a = await start();
+    const res = await a.graphql(
+      '{ me { id name email billingAddress } }',
+      bearer('alice', { users: 'read' }),
+    );
+    expect(res.data).toEqual({
+      me: { id: 'alice', name: 'name-alice', email: 'alice@example.com', billingAddress: null },
+    });
+    expect(res.errors?.length).toBe(1);
+    expect(res.errors?.[0]?.path).toEqual(['me', 'billingAddress']);
+    expect(res.errors?.[0]?.extensions?.code).toBe('FORBIDDEN');
+    const full = await a.graphql('{ me { billingAddress } }', bearer('alice', all));
+    expect(full.data).toEqual({ me: { billingAddress: 'alice street' } });
+  });
+
+  test('per-record conditions', async () => {
+    const a = await start();
+    const res = await a.graphql('{ users { id email } }', bearer('alice', all));
+    expect(res.data).toEqual({
+      users: [
+        { id: 'alice', email: 'alice@example.com' },
+        { id: 'bob', email: null },
+        { id: 'carol', email: null },
+      ],
+    });
+    expect(res.errors?.map((e) => e.path)).toEqual([
+      ['users', 1, 'email'],
+      ['users', 2, 'email'],
+    ]);
+    expect(res.errors?.every((e) => e.extensions?.code === 'FORBIDDEN')).toBe(true);
+  });
+
+  test('anonymous access to an @AbilitySubject type is UNAUTHENTICATED per field', async () => {
+    const a = await start();
+    const res = await a.graphql('{ publicUser { name email } }');
+    expect(res.data).toEqual({ publicUser: { name: null, email: null } });
+    expect(res.errors?.map((e) => e.path?.join('.')).sort()).toEqual([
+      'publicUser.email',
+      'publicUser.name',
+    ]);
+    expect(res.errors?.every((e) => e.extensions?.code === 'UNAUTHENTICATED')).toBe(true);
+  });
+
+  test('raw ForbiddenError in resolver → FORBIDDEN', async () => {
+    const a = await start();
+    const res = await a.graphql('{ boom }', bearer('alice', all));
+    expect(res.errors?.[0]?.extensions?.code).toBe('FORBIDDEN');
+    expect(JSON.stringify(res)).not.toContain('nope');
+  });
+
+  test('shared key', async () => {
+    expect(FIELD_GUARDS === Symbol.for('knead:gql:field-guards')).toBe(true);
+    const a = await start();
+    const res = await a.graphql('{ guarded { id name email } }', bearer('alice', all));
+    // OtherGuard denies `name`; FieldAbilityGuard denies bob's `email` (readable only on self).
+    expect(res.data).toEqual({ guarded: { id: 'bob', name: null, email: null } });
+    expect(res.errors?.map((e) => e.path?.join('.')).sort()).toEqual([
+      'guarded.email',
+      'guarded.name',
+    ]);
+    expect(otherGuardSaw).toContain('name');
+    expect(otherGuardSaw).not.toContain('email');
+  });
+
+  test('one ability per operation', async () => {
+    const a = await start();
+    const res = await a.graphql('{ users { id name email } }', bearer('alice', all));
+    expect(res.data?.users).toHaveLength(3);
+    expect(builds).toBe(1);
+  });
+
+  test('subscription recheck rebuilds ability', async () => {
+    const a = await start();
+    liveGrant = { posts: 'read' };
+    const pubsub = mod!.get(PUBSUB);
+    const sub = await a.graphqlSubscribe('subscription { posts }', bearer('alice', liveGrant));
+    await until(() => subscribers('posts') === 1);
+    await pubsub.publish('posts', 1);
+    expect((await sub.next()).value).toEqual({ data: { posts: 1 } });
+    liveGrant = {};
+    await pubsub.publish('posts', 2);
+    expect((await sub.next()).value?.errors?.[0]?.extensions?.code).toBe('FORBIDDEN');
+    expect((await sub.next()).done).toBe(true);
+    await sub.close();
+  });
+
+  test('an @AbilitySubject subscription payload is re-checked per event', async () => {
+    const a = await start();
+    liveGrant = { posts: 'read', users: 'read' };
+    const pubsub = mod!.get(PUBSUB);
+    const sub = await a.graphqlSubscribe(
+      'subscription { userEvents { name } }',
+      bearer('alice', liveGrant),
+    );
+    await until(() => subscribers('users') === 1);
+    await pubsub.publish('users', row('bob'));
+    expect((await sub.next()).value).toEqual({ data: { userEvents: { name: 'name-bob' } } });
+    liveGrant = { posts: 'read' };
+    await pubsub.publish('users', row('bob'));
+    const denied = (await sub.next()).value;
+    expect(denied?.data).toEqual({ userEvents: { name: null } });
+    expect(denied?.errors?.[0]?.path).toEqual(['userEvents', 'name']);
+    expect(denied?.errors?.[0]?.extensions?.code).toBe('FORBIDDEN');
+    await sub.close();
+  });
+});
+
+describe('AbilitySubject metadata', () => {
+  test('never mutates the inherited route meta or guard list', () => {
+    @ObjectType()
+    @AbilitySubject('User')
+    class Base {
+      @Field(() => String) id!: string;
+    }
+    @ObjectType()
+    @AbilitySubject('Admin')
+    class Derived extends Base {}
+    const baseMeta = getMetadata(Base, ROUTE_META)!;
+    const derivedMeta = getMetadata(Derived, ROUTE_META)!;
+    expect(baseMeta[FIELD_GUARDS]).toEqual([FieldAbilityGuard]);
+    expect(Object.isFrozen(baseMeta[FIELD_GUARDS])).toBe(true);
+    expect(baseMeta[Symbol.for('knead:casl:subject')]).toBe('User');
+    expect(derivedMeta).not.toBe(baseMeta);
+    expect(derivedMeta[FIELD_GUARDS]).toEqual([FieldAbilityGuard]);
+    expect(Object.isFrozen(derivedMeta[FIELD_GUARDS])).toBe(true);
+    expect(derivedMeta[FIELD_GUARDS]).not.toBe(baseMeta[FIELD_GUARDS]);
+    expect(derivedMeta[Symbol.for('knead:casl:subject')]).toBe('Admin');
+  });
+});
+
+describe('a global AbilityGuard and the GraphQL endpoint', () => {
+  test('passes /graphql when the GraphQL module runs AbilityGuard on resolvers', async () => {
+    const a = await start([UsersModule], { global: true });
+    const ok = await a.graphql('{ me { id } }', bearer('alice', all));
+    expect(ok.status).toBe(200);
+    expect(ok.data).toEqual({ me: { id: 'alice' } });
+    const denied = await a.graphql('{ undeclared }', bearer('alice', all));
+    expect(denied.errors?.[0]?.extensions?.code).toBe('FORBIDDEN');
+  });
+
+  test('passes subscription upgrades on the GraphQL path', async () => {
+    const a = await start([UsersModule], { global: true });
+    liveGrant = all; // the recheck's refreshContext swaps this grant in
+    const sub = await a.graphqlSubscribe('subscription { posts }', bearer('alice', all));
+    await until(() => subscribers('posts') === 1);
+    await mod!.get(PUBSUB).publish('posts', 7);
+    expect((await sub.next()).value).toEqual({ data: { posts: 7 } });
+    await sub.close();
+  });
+
+  test('still denies /graphql when the GraphQL module does not run AbilityGuard', async () => {
+    const a = await start([UsersModule], { global: true, gql: { guards: [] } });
+    const res = await a.graphql('{ me { id } }', bearer('alice', all));
+    expect(res.status).toBe(403);
+  });
+
+  test('a subclass of AbilityGuard in the GraphQL guards counts', async () => {
+    class AppAbilityGuard extends AbilityGuard {}
+    const a = await start([UsersModule], { global: true, gql: { guards: [AppAbilityGuard] } });
+    const ok = await a.graphql('{ me { id } }', bearer('alice', all));
+    expect(ok.data).toEqual({ me: { id: 'alice' } });
+  });
+});

@@ -1,0 +1,70 @@
+{
+  "name": "@knead-js/prisma",
+  "version": "0.2.0",
+  "description": "Prisma 7 integration for the Knead framework",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/quinnjr/knead.git",
+    "directory": "packages/prisma"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./http": "./src/http/index.ts",
+    "./testing": "./src/testing/index.ts"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "bun": ">=1.4.3"
+  },
+  "scripts": {
+    "test": "bun test",
+    "test:db": "bun -e \"if (!process.env.KNEAD_PRISMA_TEST_DATABASE_URL) { console.error('Set KNEAD_PRISMA_TEST_DATABASE_URL to a disposable Postgres database.'); process.exit(1); }\" && prisma generate --config test/fixtures/prisma.config.ts && prisma db push --config test/fixtures/prisma.config.ts --force-reset && bun test",
+    "prepack": "bun ../../scripts/copy-licenses.ts"
+  },
+  "peerDependencies": {
+    "@knead-js/core": "workspace:^",
+    "@knead-js/http": "workspace:^",
+    "@prisma/client": "^7"
+  },
+  "peerDependenciesMeta": {
+    "@knead-js/http": {
+      "optional": true
+    },
+    "@prisma/client": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@knead-js/core": "workspace:^",
+    "@knead-js/http": "workspace:^",
+    "@knead-js/testing": "workspace:^",
+    "@prisma/adapter-pg": "7.9.1",
+    "@prisma/client": "7.9.1",
+    "prisma": "7.9.1"
+  },
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "./http": {
+        "types": "./dist/http/index.d.ts",
+        "default": "./dist/http/index.js"
+      },
+      "./testing": {
+        "types": "./dist/testing/index.d.ts",
+        "default": "./dist/testing/index.js"
+      }
+    }
+  }
+}

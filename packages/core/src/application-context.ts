@@ -1,14 +1,19 @@
 import type { ModuleImport } from './decorators.js';
 import { ContainerState, ModuleInjector } from './injector.js';
+import { ConsoleLogger, LOGGER, type Logger } from './logger.js';
 import { buildModuleGraph, MODULES, type ModuleRef } from './modules.js';
 import type { Provider } from './providers.js';
-import type { Token } from './tokens.js';
+import { DEVELOPMENT, type Token } from './tokens.js';
 
 export interface CreateContextOptions {
   /** Replace providers by token (used by @knead-js/testing). Applies to non-multi providers. */
   overrides?: Iterable<readonly [Token, Provider]>;
   /** Extra modules scanned before the root (e.g. framework core modules). */
   globalModules?: readonly ModuleImport[];
+  /** The LOGGER used unless a global module provides one. Default: a ConsoleLogger. */
+  logger?: Logger;
+  /** The DEVELOPMENT flag. Default: `NODE_ENV === 'development'`. */
+  development?: boolean;
 }
 
 export class ApplicationContext {
@@ -40,6 +45,24 @@ export class ApplicationContext {
       multi: false,
     });
     own.exported.set(MODULES, own);
+    // Defaults for LOGGER and DEVELOPMENT. `own` comes last in the globals, so a global module's
+    // own registration (e.g. the HTTP core module) wins.
+    own.addProvider({
+      kind: 'value',
+      token: LOGGER,
+      value: options.logger ?? new ConsoleLogger(),
+      scope: 'singleton',
+      multi: false,
+    });
+    own.exported.set(LOGGER, own);
+    own.addProvider({
+      kind: 'value',
+      token: DEVELOPMENT,
+      value: options.development ?? process.env.NODE_ENV === 'development',
+      scope: 'singleton',
+      multi: false,
+    });
+    own.exported.set(DEVELOPMENT, own);
     state.globals = [...state.globals, own];
 
     // Phase A: settle every singleton factory (async ones are awaited, dependents retried).

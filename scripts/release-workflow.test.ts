@@ -15,7 +15,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-// Every test here runs the real publish step: bash, GNU tar over eight tarballs and a node
+// Every test here runs the real publish step: bash, GNU tar over twelve tarballs and a node
 // process loading pacote. That normally takes 0.3-1 s, but under load (for example `pnpm test`
 // next to another `bun test scripts`) it exceeded bun's 5 s default and failed spuriously.
 setDefaultTimeout(60_000);
@@ -411,7 +411,8 @@ describe('release.yml publish step', () => {
       expect(r.publishes).toEqual([publishCmd('knead-js-core-0.1.0.tgz', 'latest')]);
     });
 
-    test('a garbled latest dist-tag stops the release', () => {
+    // core is not the first tarball, so this proves every dist-tag is resolved before any publish.
+    test('a garbled latest dist-tag stops the release before anything is published', () => {
       const r = publish('v1.2.3', [['@knead-js/core', '1.2.3']], {
         env: { FAKE_LATEST: '@knead-js/core=not-a-version' },
       });
@@ -465,7 +466,7 @@ describe('release.yml publish step', () => {
       expect(r.cwds[0]).not.toBe(r.tarballs);
       expect(readdirSync(r.cwds[0])).toEqual([]);
       const published = r.rawCalls.filter((c) => c.startsWith('npm publish'));
-      expect(published).toHaveLength(8);
+      expect(published).toHaveLength(ALLOWED.length);
       for (const c of published) expect(c.split(' ')[2].startsWith(`${r.tarballs}/`)).toBe(true);
       for (const c of r.rawCalls.filter((c) => c !== 'npm root -g'))
         expect(c).toContain('--@knead-js:registry=https://registry.npmjs.org/');
@@ -492,7 +493,7 @@ describe('release.yml publish step', () => {
 
     test('publishes nothing when the preflight query fails', () => {
       const r = publish('v1.2.3', [], { env: { FAKE_PREFLIGHT_ERROR: 'ETIMEDOUT' } });
-      expectRejected(r, 'could not query npm for @knead-js/core');
+      expectRejected(r, `could not query npm for ${ALLOWED[0]}`);
     });
   });
 
@@ -501,12 +502,15 @@ describe('release.yml publish step', () => {
       const r = publish('v1.2.3', []);
       expect(r.exitCode).toBe(0);
       expect(r.allPublishes).toHaveLength(ALLOWED.length);
-      expect(ALLOWED).toHaveLength(8);
+      expect(ALLOWED).toHaveLength(13);
     });
 
     test('publishes nothing when a package is missing from the artifact', () => {
       const r = publish('v1.2.3', [['@knead-js/core', '1.2.3']], { partial: true });
-      expectRejected(r, 'missing from the artifact: @knead-js/cors');
+      expectRejected(
+        r,
+        `missing from the artifact: ${ALLOWED.filter((n) => n !== '@knead-js/core').join(' ')}`,
+      );
     });
 
     test('publishes nothing when a package appears twice', () => {

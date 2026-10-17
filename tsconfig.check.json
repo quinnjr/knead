@@ -14,5 +14,6 @@
     "examples/*/test",
     "examples/*/scripts",
     "scripts"
-  ]
+  ],
+  "exclude": ["**/node_modules", "packages/prisma/test/fixtures/generated"]
 }

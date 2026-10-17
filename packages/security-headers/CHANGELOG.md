@@ -1,5 +1,20 @@
 # @knead-js/security-headers
 
+## 0.2.0
+
+### Patch Changes
+
+- f779f8a: Every header-valued option (`referrerPolicy`, `crossOriginOpenerPolicy`, `crossOriginResourcePolicy`, `xContentTypeOptions`, `xFrameOptions`, `xDnsPrefetchControl`, `permissionsPolicy`, `xPermittedCrossDomainPolicies`) must be a string without control characters other than tab, checked at startup. Only `permissionsPolicy` was checked before, so a line break in another value passed validation and then failed every response with a 500.
+- Updated dependencies [f779f8a]
+- Updated dependencies [5296955]
+- Updated dependencies [f779f8a]
+- Updated dependencies [7b77d69]
+- Updated dependencies [5296955]
+- Updated dependencies [82ce070]
+- Updated dependencies [871883c]
+  - @knead-js/core@0.2.0
+  - @knead-js/http@0.2.0
+
 ## 0.1.0
 
 ### Minor Changes

@@ -1,3 +1,4 @@
+import { SkipAbility } from '@knead-js/casl';
 import { inject } from '@knead-js/core';
 import { ID, Query, ResolveField, Resolver, type ResolverCtx } from '@knead-js/graphql';
 import * as v from 'valibot';
@@ -13,11 +14,13 @@ export class PostResolver {
   readonly #blog = inject(BlogService);
 
   @Query(() => [Post], { args: PostsArgs, validate: { first: PageSize, offset: Offset } })
+  @SkipAbility()
   posts(ctx: ResolverCtx<PostsArgs>): Post[] {
     return this.#blog.posts(ctx.args, ctx.currentUser);
   }
 
   @Query(() => Post, { nullable: true, args: { id: ID } })
+  @SkipAbility()
   post(ctx: ResolverCtx<{ id: string }>): Post | undefined {
     return this.#blog.post(ctx.args.id, ctx.currentUser);
   }

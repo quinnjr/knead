@@ -218,3 +218,139 @@ describe('WebSocket endpoints on the path of a guarded GET route', () => {
     expect(seen).toEqual([]);
   });
 });
+
+describe('WebSocket endpoint meta', () => {
+  const TAG = Symbol.for('test:tag');
+  const metaSeen: unknown[] = [];
+  const recordMeta = (ctx: Ctx) => {
+    metaSeen.push(
+      ctx.upgrade === null
+        ? 'request'
+        : { area: ctx.meta.area, owner: ctx.meta.owner, tag: ctx.meta[TAG] },
+    );
+    return true;
+  };
+  afterEach(() => {
+    metaSeen.length = 0;
+  });
+
+  test('guards see the endpoint meta on an upgrade without a GET route', async () => {
+    const meta: Record<PropertyKey, unknown> = { area: 'chat', [TAG]: 't' };
+    class MetaGateway implements OnModuleInit {
+      readonly ws = inject(WsRegistry);
+      onModuleInit() {
+        this.ws.register('/live', { upgrade: () => ({}) }, { meta });
+        meta.area = 'changed after register';
+      }
+    }
+    @Module({
+      providers: [MetaGateway, { provide: APP_GUARD, multi: true, useValue: recordMeta }],
+    })
+    class M {}
+    app = await start(M);
+    expect(await upgradeStatus(app)).toContain('101');
+    expect(metaSeen).toEqual([{ area: 'chat', owner: undefined, tag: 't' }]);
+  });
+
+  test('on the path of a GET route, endpoint meta is merged over the route meta', async () => {
+    class MetaGateway implements OnModuleInit {
+      readonly ws = inject(WsRegistry);
+      onModuleInit() {
+        this.ws.register('/live', { upgrade: () => ({}) }, { meta: { area: 'socket' } });
+      }
+    }
+    @Controller('/', { meta: { area: 'page', owner: 'route' } })
+    class Live {
+      @Get('/live') page(ctx: Ctx) {
+        return { area: ctx.meta.area };
+      }
+    }
+    @Module({
+      controllers: [Live],
+      providers: [MetaGateway, { provide: APP_GUARD, multi: true, useValue: recordMeta }],
+    })
+    class M {}
+    app = await start(M);
+    expect(await upgradeStatus(app)).toContain('101');
+    expect(metaSeen).toEqual([{ area: 'socket', owner: 'route', tag: undefined }]);
+    // Ordinary GETs keep the route's own meta.
+    expect(await (await fetch(new URL('/live', app.url))).json()).toEqual({ area: 'page' });
+  });
+
+  test('without endpoint meta, an upgrade without a GET route has empty meta', async () => {
+    @Module({
+      providers: [Gateway, { provide: APP_GUARD, multi: true, useValue: recordMeta }],
+    })
+    class M {}
+    app = await start(M);
+    expect(await upgradeStatus(app)).toContain('101');
+    expect(metaSeen).toEqual([{ area: undefined, owner: undefined, tag: undefined }]);
+  });
+});
+
+/** Sends a raw upgrade request to /live and returns the response head (status line and headers). */
+function upgradeHead(app: HttpApplication): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let buf = '';
+    Bun.connect({
+      hostname: '127.0.0.1',
+      port: app.port,
+      socket: {
+        open(sock) {
+          sock.write(
+            [
+              'GET /live HTTP/1.1',
+              `Host: 127.0.0.1:${app.port}`,
+              'Upgrade: websocket',
+              'Connection: Upgrade',
+              'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
+              'Sec-WebSocket-Version: 13',
+              '',
+              '',
+            ].join('\r\n'),
+          );
+        },
+        data(sock, chunk) {
+          buf += chunk.toString();
+          const end = buf.indexOf('\r\n\r\n');
+          if (end >= 0) {
+            resolve(buf.slice(0, end).toLowerCase());
+            sock.end();
+          }
+        },
+        error(_s, e) {
+          reject(e);
+        },
+      },
+    }).catch(reject);
+  });
+}
+
+describe('response headers on WebSocket upgrades', () => {
+  test('headers set on ctx.res before the upgrade are sent with the 101 handshake', async () => {
+    class CookieGateway implements OnModuleInit {
+      readonly ws = inject(WsRegistry);
+      onModuleInit() {
+        this.ws.register('/live', {
+          upgrade: (ctx) => {
+            ctx.res.headers.set('x-endpoint', 'yes');
+            return {};
+          },
+        });
+      }
+    }
+    const setCookie = (ctx: Ctx) => {
+      ctx.res.headers.set('set-cookie', 'sid=abc; HttpOnly');
+      return true;
+    };
+    @Module({
+      providers: [CookieGateway, { provide: APP_GUARD, multi: true, useValue: setCookie }],
+    })
+    class M {}
+    app = await start(M);
+    const head = await upgradeHead(app);
+    expect(head).toStartWith('http/1.1 101');
+    expect(head).toContain('set-cookie: sid=abc; httponly');
+    expect(head).toContain('x-endpoint: yes');
+  });
+});

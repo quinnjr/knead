@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { AuthService, ROLES, RolesGuard } from '../src/auth/auth.js';
+import { AuthService } from '../src/auth/auth.js';
 import { toCommentEvent, toPostEvent } from '../src/blog/blog.events.js';
 import {
   Comment,
@@ -79,22 +79,6 @@ describe('event payloads', () => {
       roles: ['admin'],
     });
     expect('roles' in comment).toBe(false);
-  });
-});
-
-describe('RolesGuard', () => {
-  const ctx = (meta: Record<PropertyKey, unknown>, roles?: string[]) =>
-    ({ meta, currentUser: roles && { id: 'u', name: 'U', roles } }) as never;
-
-  test('reads @Roles() from ctx.meta and passes only a user holding one of them', () => {
-    expect(RolesGuard(ctx({ [ROLES]: ['admin'] }, ['admin']))).toBe(true);
-    expect(RolesGuard(ctx({ [ROLES]: ['admin'] }, []))).toBe(false);
-    expect(RolesGuard(ctx({ [ROLES]: ['admin'] }))).toBe(false);
-  });
-
-  test('strict: without @Roles() metadata it denies', () => {
-    expect(RolesGuard(ctx({}, ['admin']))).toBe(false);
-    expect(RolesGuard(ctx({ [ROLES]: [] }, ['admin']))).toBe(false);
   });
 });
 

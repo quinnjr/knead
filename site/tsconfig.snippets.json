@@ -1,0 +1,11 @@
+{
+  // The docs' code snippets and tests, typechecked with the repo's TypeScript as their own program
+  // so module augmentations in snippets (e.g. PrismaClientRegistry) never meet the packages' tests.
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "declaration": false
+  },
+  "include": ["snippets", "test"]
+}

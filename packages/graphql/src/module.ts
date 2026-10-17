@@ -63,11 +63,7 @@ export class GraphQLModule {
           useFactory: () =>
             inject(GRAPHQL_OPTIONS).pubsub ??
             new PubSub({
-              logger: leavenLogger(
-                inject(LOGGER),
-                inject(HTTP_DEVELOPMENT, { optional: true }) ??
-                  process.env.NODE_ENV === 'development',
-              ),
+              logger: leavenLogger(inject(LOGGER), inject(HTTP_DEVELOPMENT)),
             }),
         },
         GraphQLRuntime,

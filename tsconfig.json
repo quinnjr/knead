@@ -5,9 +5,14 @@
     { "path": "packages/http" },
     { "path": "packages/testing" },
     { "path": "packages/cors" },
+    { "path": "packages/config" },
+    { "path": "packages/logging" },
     { "path": "packages/rate-limit" },
     { "path": "packages/security-headers" },
     { "path": "packages/sanitize" },
-    { "path": "packages/graphql" }
+    { "path": "packages/schedule" },
+    { "path": "packages/graphql" },
+    { "path": "packages/casl" },
+    { "path": "packages/prisma" }
   ]
 }

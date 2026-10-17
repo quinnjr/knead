@@ -1,9 +1,146 @@
 # @knead-js/cors
 
-`CorsModule.forRoot({ origin, credentials, … })`: global CORS middleware that answers preflight requests before routing and rejects unsafe configurations at startup (`origin: '*'` with credentials, or `'*'` inside an origin list).
+[![npm](https://img.shields.io/npm/v/@knead-js/cors?color=c2410c&label=npm)](https://www.npmjs.com/package/@knead-js/cors)
+[![CI](https://github.com/quinnjr/knead/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/quinnjr/knead/actions/workflows/ci.yml)
+[![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](https://github.com/quinnjr/knead#license)
 
-Browsers do not apply CORS to WebSockets, so the middleware also guards upgrades: a WebSocket upgrade request (`Upgrade: websocket`) whose `Origin` is not allowed is rejected with 403 before the endpoint's `upgrade()` runs. Upgrades without an `Origin` header (non-browser clients) are let through. `WsRegistry` separately accepts only same-origin upgrades unless the endpoint lists more in `allowedOrigins`, so list your cross-origin front-ends there too (`ws.register(path, endpoint, { allowedOrigins: ['https://app.example'] })`).
+Cross-Origin Resource Sharing for [Knead](https://github.com/quinnjr/knead) applications: a
+global middleware that adds CORS headers, answers preflights before routing, and rejects unsafe
+configurations at startup.
 
-An `Origin` header longer than 2048 characters is treated as disallowed without consulting the configured rule. A RegExp `origin` must be anchored and linear: write `/^https:\/\/([a-z0-9-]+\.)?app\.example$/`, not `/app\.example/` (which also matches `https://app.example.evil.com`). The anchoring is enforced: at `forRoot()`, a RegExp whose source does not start with `^` and end with `$` is a `CorsConfigError` naming the pattern ; a top-level `|` (outside groups and character classes, unescaped) is rejected too, because `^a|b$` anchors each side only once: group the alternatives inside the anchors, `/^(?:https:\/\/a\.example|https:\/\/b\.example)$/`. Also avoid nested quantifiers such as `(a+)+`, which can backtrack catastrophically on a crafted Origin.
+**[Documentation](https://quinnjr.github.io/knead/packages/cors/)** · [Guide](https://quinnjr.github.io/knead/guide/security/) · [Knead](https://github.com/quinnjr/knead)
 
-`bun add @knead-js/core @knead-js/http @knead-js/cors` (`@knead-js/core` and `@knead-js/http` are peer dependencies, so every package shares one copy). Licensed MIT OR Apache-2.0.
+## Install
+
+```bash
+bun add @knead-js/core @knead-js/http @knead-js/cors
+```
+
+Requires Bun 1.4.3 or newer. `@knead-js/core` and `@knead-js/http` are peer dependencies, so every
+package shares one copy.
+
+## Quick start
+
+```ts
+import { Module } from '@knead-js/core';
+import { CorsModule } from '@knead-js/cors';
+import { Controller, Get } from '@knead-js/http';
+
+@Controller('/api')
+export class ProjectsController {
+  @Get('/projects')
+  list() {
+    return [{ id: 1, name: 'Apollo' }];
+  }
+}
+
+@Module({
+  imports: [
+    CorsModule.forRoot({
+      origin: ['https://app.example.com', 'https://admin.example.com'],
+      credentials: true,
+      maxAge: 600,
+    }),
+  ],
+  controllers: [ProjectsController],
+})
+export class AppModule {}
+```
+
+Pages on the two listed origins can call the API with cookies and read the responses. Their
+preflights are answered with `204 No Content` and cached by the browser for 10 minutes. Responses
+to every other origin carry no CORS headers, so the browser keeps them from the page.
+
+## Features
+
+- **Preflights first.** `OPTIONS` requests with `Access-Control-Request-Method` are answered at
+  middleware priority 1000, before rate limiting, routing and guards, on every path.
+- **Every response.** 404, 405, guard rejections and errors get CORS headers too, so the browser
+  can read the error.
+- **Unsafe configurations fail at startup.** `'*'` with credentials, `'*'` inside a list, and
+  unanchored RegExps are a `CorsConfigError` at `forRoot()`.
+- **Cache-safe.** Unless `origin` is `'*'`, every response gets `Vary: Origin`.
+- **WebSocket upgrades guarded.** An upgrade from a disallowed origin is rejected with 403.
+- **Bounded input.** An `Origin` header longer than 2048 characters is treated as disallowed.
+
+## Options
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `origin` | required | Which origins are allowed. See [origin rules](#origin-rules). |
+| `methods` | `GET, HEAD, PUT, PATCH, POST, DELETE` | Sent as `Access-Control-Allow-Methods` on preflights. |
+| `allowedHeaders` | reflect the request | Sent as `Access-Control-Allow-Headers` on preflights. Unset, the preflight's `Access-Control-Request-Headers` is echoed back. |
+| `exposedHeaders` | none | Response headers the page may read, sent as `Access-Control-Expose-Headers`. |
+| `credentials` | `false` | Sends `Access-Control-Allow-Credentials: true`. Cannot be combined with `origin: '*'`. |
+| `maxAge` | none | Seconds a browser may cache a preflight. A non-negative integer. |
+
+## Origin rules
+
+| `origin` | Allowed when |
+| --- | --- |
+| `'*'` | Any origin. The response says `Access-Control-Allow-Origin: *`, never the request's origin. |
+| A string or string array | The `Origin` header equals an entry exactly (scheme, host and port). |
+| A `RegExp` | The pattern matches the whole `Origin` header. |
+| A function | It returns or resolves to `true`. It receives the origin and the request `Ctx`. |
+
+A RegExp must start with `^`, end with `$`, and keep alternatives inside a group. Otherwise
+`/app\.example/` would also match `https://app.example.evil`, so both mistakes are rejected:
+
+```ts
+export const previewCors: CorsOptions = {
+  // Anchored with ^ and $; alternatives grouped inside the anchors.
+  origin: /^https:\/\/(?:[a-z0-9-]+\.)?preview\.example\.com$/,
+};
+```
+
+Keep the pattern linear: nested quantifiers such as `(a+)+` backtrack catastrophically on a
+crafted `Origin`, and this is not detected for you.
+
+A predicate can look at the whole request. It runs for every request with an `Origin` header, so
+keep it cheap:
+
+```ts
+const tenants = new Set(['https://acme.example.com', 'https://globex.example.com']);
+
+export const tenantCors: CorsOptions = {
+  origin: (origin: string, ctx: Ctx) =>
+    tenants.has(origin) && ctx.req.headers.get('x-tenant') !== null,
+  allowedHeaders: ['content-type', 'authorization', 'x-tenant'],
+  methods: ['GET', 'POST'],
+};
+```
+
+## What CORS does not do
+
+- **It does not block requests.** A request from a disallowed origin still reaches your handler;
+  CORS only controls which pages may read the response, and it does nothing against clients that
+  are not browsers. Protect state-changing routes with authentication and guards.
+- **Disallowed preflights still get a 204**, without any `Access-Control-*` headers, so the browser
+  blocks the real request.
+- **Requests without an `Origin` header** never get CORS headers.
+
+## WebSocket upgrades
+
+Browsers do not apply CORS to WebSockets, so a page on any site could otherwise open a socket with
+the user's cookies. The middleware rejects an upgrade whose `Origin` is present but not allowed
+with `403 Forbidden`, before the endpoint's `upgrade()` runs. Upgrades without an `Origin` header
+come from non-browser clients and are let through.
+
+`WsRegistry` in `@knead-js/http` also accepts only same-origin upgrades unless the endpoint lists
+more, so add your cross-origin front ends to the endpoint's `allowedOrigins` as well.
+
+## Documentation
+
+- [`@knead-js/cors` reference](https://quinnjr.github.io/knead/packages/cors/): options, headers,
+  `Vary` handling and every export.
+- [Security guide](https://quinnjr.github.io/knead/guide/security/): how CORS fits with security
+  headers and rate limiting.
+- [Middleware guide](https://quinnjr.github.io/knead/guide/middleware/): global middleware and
+  priorities.
+- [WebSockets guide](https://quinnjr.github.io/knead/guide/websockets/): `allowedOrigins` and the
+  same-origin check.
+
+## License
+
+Licensed under either of [MIT](https://github.com/quinnjr/knead/blob/develop/LICENSE-MIT) or
+[Apache-2.0](https://github.com/quinnjr/knead/blob/develop/LICENSE-APACHE) at your option.

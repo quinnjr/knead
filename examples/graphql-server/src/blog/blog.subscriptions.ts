@@ -1,3 +1,4 @@
+import { Can } from '@knead-js/casl';
 import { inject } from '@knead-js/core';
 import { ID, Resolver, type ResolverCtx, Subscription } from '@knead-js/graphql';
 import { type Guard, UseGuards } from '@knead-js/http';
@@ -22,7 +23,10 @@ export class PostVisibleGuard implements Guard<ResolverCtx<{ postId: string }>> 
   }
 }
 
-/** Subscribers are authenticated once, by `subscriptions.onConnect` (see app.module.ts). */
+/**
+ * Subscribers are authenticated once, by `subscriptions.onConnect` (see app.module.ts), and need
+ * `read` on what they subscribe to.
+ */
 @Resolver()
 export class BlogSubscriptions {
   @Subscription(() => Post, {
@@ -33,6 +37,7 @@ export class BlogSubscriptions {
       isPostEvent(payload) && (args.authorId == null || payload.authorId === args.authorId),
     resolve: revivePost,
   })
+  @Can('read', 'Post')
   postPublished() {}
 
   // recheckGuards: PostVisibleGuard runs again before every comment, so a subscriber stops
@@ -44,6 +49,7 @@ export class BlogSubscriptions {
     resolve: reviveComment,
     recheckGuards: true,
   })
+  @Can('read', 'Comment')
   @UseGuards(PostVisibleGuard)
   commentAdded() {}
 }

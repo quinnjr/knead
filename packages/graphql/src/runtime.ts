@@ -64,6 +64,7 @@ import {
   SchemaBuildError,
   toSafeError,
 } from './errors.js';
+import { FIELD_GUARDS, type FieldGuardSet, guardField } from './field-guards.js';
 import {
   RESOLVER,
   RESOLVER_METHODS,
@@ -638,9 +639,8 @@ export class GraphQLExecutor extends LeavenExecutor {
 
 /** Owns the schema, the Leaven executor and the subscription endpoint. */
 export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
-  /** The application's development flag (HTTP_DEVELOPMENT), else NODE_ENV === 'development'. */
-  readonly development: boolean =
-    inject(HTTP_DEVELOPMENT, { optional: true }) ?? process.env.NODE_ENV === 'development';
+  /** The application's development flag (HTTP_DEVELOPMENT). */
+  readonly development: boolean = inject(HTTP_DEVELOPMENT);
   /** Playground, introspection, masking and emitSchemaFile defaults follow `development`. */
   readonly options: ResolvedGraphQLOptions = resolveOptions(
     inject(GRAPHQL_OPTIONS),
@@ -655,6 +655,7 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
   #executor: LeavenExecutor | undefined;
   #playground: PlaygroundGate | undefined;
   #endpoint: SubscriptionEndpoint | undefined;
+  readonly #fieldGuards = new Map<Class, FieldGuardSet | undefined>();
 
   get schema(): GraphQLSchema {
     if (!this.#schema)
@@ -679,6 +680,7 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
       maskErrors: this.options.maskErrors,
       logger: this.logger,
       development: this.development,
+      mapError: this.options.mapError,
     };
   }
 
@@ -805,7 +807,45 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
         }
       }
     }
-    return new SchemaBuilder({ query, mutation, subscription, typeFields, types }).build();
+    return new SchemaBuilder({
+      query,
+      mutation,
+      subscription,
+      typeFields,
+      types,
+      fieldGuards: (cls) => this.#fieldGuardsOf(cls),
+      wrapField: (cls, resolve) =>
+        guardField(this.#fieldGuardsOf(cls)!, this.#rootInjector(), resolve),
+    }).build();
+  }
+
+  /** The root module's injector: it sees the root's own providers, its imports' exports and globals. */
+  #rootInjector(): ModuleInjector {
+    // MODULES is in initialization order (imports before importers), so the root comes last.
+    const root = this.#modules.at(-1);
+    if (!root) throw new SchemaBuildError('GraphQLRuntime: no modules to resolve field guards in.');
+    return root.injector;
+  }
+
+  /** `@UseFieldGuards` of `cls` (ROUTE_META[FIELD_GUARDS]), checked and resolved once per class. */
+  #fieldGuardsOf(cls: Class): FieldGuardSet | undefined {
+    if (this.#fieldGuards.has(cls)) return this.#fieldGuards.get(cls);
+    const meta = Object.freeze({ ...(getMetadata(cls, ROUTE_META) ?? {}) });
+    const refs = meta[FIELD_GUARDS];
+    let set: FieldGuardSet | undefined;
+    if (refs !== undefined) {
+      const where = `the field guards of ${cls.name}`;
+      if (!Array.isArray(refs)) {
+        throw new SchemaBuildError(`Invalid ${where}: ROUTE_META[FIELD_GUARDS] is not an array.`);
+      }
+      for (const ref of refs) assertGuardRef(ref, where);
+      if (refs.length > 0) {
+        const injector = this.#rootInjector();
+        set = { guards: refs.map((ref) => resolveGuard(ref, injector)), meta };
+      }
+    }
+    this.#fieldGuards.set(cls, set);
+    return set;
   }
 
   #spec(resolver: DiscoveredResolver, def: ResolverMethodDefinition): FieldSpec {

@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { SchedulerRegistry } from '@knead-js/schedule';
 import { Test, type TestApp, type TestingModule } from '@knead-js/testing';
 import { AppModule } from '../src/app.module.js';
+import { UsersStats } from '../src/users/users.stats.js';
 
 let mod: TestingModule;
 let app: TestApp;
@@ -16,6 +18,16 @@ afterAll(async () => {
 });
 
 describe('example REST API', () => {
+  test('the hourly users report is scheduled and can be triggered', async () => {
+    const registry = mod.get(SchedulerRegistry);
+    const job = registry.get('users.hourly-stats');
+    expect(job?.state).toBe('scheduled');
+    expect(job?.nextRunAt?.getMinutes()).toBe(0);
+    await registry.trigger('users.hourly-stats');
+    expect(mod.get(UsersStats).lastCount).toBe(1);
+    expect(mod.logs.some((e) => e.level === 'info' && e.message === '1 users')).toBe(true);
+  });
+
   test('lists users with security, CORS and rate-limit headers', async () => {
     const res = await app.request('GET', '/users', { headers: origin });
     expect(res.status).toBe(200);
@@ -26,7 +38,7 @@ describe('example REST API', () => {
     expect(res.headers.get('ratelimit-limit')).toBe('100');
   });
 
-  test('creating requires a token and the admin role', async () => {
+  test('creating requires a token whose grant allows it', async () => {
     const missing = await app.request('POST', '/users', {
       json: { name: 'Grace' },
       headers: origin,
@@ -39,6 +51,10 @@ describe('example REST API', () => {
       headers: { authorization: 'Bearer user-token' },
     });
     expect(forbidden.status).toBe(403);
+    const readOnly = await app.request('DELETE', '/users/1', {
+      headers: { authorization: 'Bearer reader-token' },
+    });
+    expect(readOnly.status).toBe(403);
   });
 
   test('admins create users; names are trimmed and bios sanitized', async () => {

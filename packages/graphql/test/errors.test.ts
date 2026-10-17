@@ -87,9 +87,13 @@ describe('internal error logging', () => {
     expect(entry?.message).toBe(
       `GraphQL resolver error at post (correlation id ${json.extensions?.correlationId})`,
     );
-    // The full error, redacted (it held a credential URL, so it is printed as its stack text).
-    expect(entry?.meta[0]).toContain('DatabaseError: db at postgres://***@db.internal failed');
-    expect(entry?.meta[0]).not.toContain('admin:pw');
+    // The full error, redacted: it held a credential URL, so it is a copy whose stack is the
+    // redacted text, still an Error.
+    const logged = entry?.meta[0] as Error;
+    expect(logged).toBeInstanceOf(Error);
+    expect(logged.name).toBe('DatabaseError');
+    expect(logged.stack).toContain('DatabaseError: db at postgres://***@db.internal failed');
+    expect(`${logged.message}\n${logged.stack}`).not.toContain('admin:pw');
     const plain = new MemoryLogger();
     const raw = new Error('plain');
     createErrorFormatter({ maskErrors: false, logger: plain, development: true })(

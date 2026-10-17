@@ -1,0 +1,49 @@
+{
+  "name": "@knead-js/schedule",
+  "version": "0.2.0",
+  "description": "Cron, interval and timeout jobs with optional distributed locking for the Knead framework",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/quinnjr/knead.git",
+    "directory": "packages/schedule"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "bun": ">=1.4.3"
+  },
+  "scripts": {
+    "test": "bun test",
+    "prepack": "bun ../../scripts/copy-licenses.ts"
+  },
+  "peerDependencies": {
+    "@knead-js/core": "workspace:^"
+  },
+  "devDependencies": {
+    "@knead-js/core": "workspace:^",
+    "@knead-js/http": "workspace:^",
+    "@knead-js/testing": "workspace:^"
+  },
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
+  },
+  "dependencies": {
+    "croner": "10.0.1"
+  }
+}

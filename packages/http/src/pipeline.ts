@@ -65,7 +65,7 @@ function handles(filter: ExceptionFilter, error: unknown): boolean {
 
 export function defaultErrorResponse(
   error: unknown,
-  ctx: RequestContext,
+  ctx: Pick<RequestContext, 'req'>,
   logger: Logger,
   development: boolean,
 ): Response {
@@ -102,7 +102,10 @@ function redactProblem(problem: ProblemDetails): ProblemDetails {
   return redactValue(problem) as ProblemDetails;
 }
 
-/** Filters are tried in order (route → controller → global); the first match wins. */
+/**
+ * Filters are tried in order (route → controller → global); the first match wins. A filter that
+ * returns `undefined` declines, and the error moves on to the next filter.
+ */
 export function createErrorHandler(
   filters: readonly ExceptionFilter[],
   logger: Logger,
@@ -113,6 +116,7 @@ export function createErrorHandler(
       if (!handles(filter, error)) continue;
       try {
         const res = await filter.catch(error, ctx);
+        if (res === undefined) continue;
         if (res instanceof Response) return res;
         logger.error(`Exception filter ${nameOf(filter)} did not return a Response`);
       } catch (filterError) {
