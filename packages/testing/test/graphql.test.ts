@@ -34,6 +34,11 @@ class FakeSubscriptions implements OnModuleInit {
         if (msg.type === 'connection_init') {
           if (msg.payload?.deny) ws.close(4403, 'Forbidden');
           else ws.send(JSON.stringify({ type: 'connection_ack' }));
+        } else if (msg.type === 'subscribe' && msg.payload.query.includes('revoke')) {
+          ws.send(JSON.stringify({ id: msg.id, type: 'next', payload: { data: { n: 1 } } }));
+          ws.close(1008, 'Connection revoked');
+        } else if (msg.type === 'subscribe' && msg.payload.query.includes('garbage')) {
+          ws.send('not json');
         } else if (msg.type === 'subscribe') {
           const id = msg.id;
           ws.send(JSON.stringify({ type: 'ping' }));
@@ -90,6 +95,26 @@ describe('TestApp.graphqlSubscribe', () => {
     await expect(
       app.graphqlSubscribe('subscription { n }', { connectionParams: { deny: true } }),
     ).rejects.toThrow('4403');
+  });
+
+  test('an abnormal close after ack rejects next() with the code and reason', async () => {
+    mod = await Test.createModule({ imports: [FakeModule] }).compile();
+    const app = await mod.createApp();
+    const sub = await app.graphqlSubscribe('subscription { revoke }');
+    expect(await sub.next()).toEqual({ value: { data: { n: 1 } }, done: false });
+    // Caught with .catch(): `expect(pending).rejects` spins Bun's event loop in a way that drops
+    // the close frame (the client then sees 1006).
+    const failed = (await sub.next().catch((error: unknown) => error)) as Error;
+    expect(failed.message).toBe('WebSocket closed: 1008 Connection revoked');
+    // It stays failed: a later next() rejects too instead of looking complete.
+    await expect(sub.next()).rejects.toThrow('1008');
+  });
+
+  test('a non-JSON frame fails the iterator instead of hanging it', async () => {
+    mod = await Test.createModule({ imports: [FakeModule] }).compile();
+    const app = await mod.createApp();
+    const sub = await app.graphqlSubscribe('subscription { garbage }');
+    await expect(sub.next()).rejects.toThrow('not JSON');
   });
 });
 

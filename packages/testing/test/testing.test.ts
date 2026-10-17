@@ -5,6 +5,7 @@ import {
   type Ctx,
   Get,
   type Guard,
+  type HttpApplication,
   MemoryLogger,
   type Middleware,
   Post,
@@ -12,7 +13,7 @@ import {
   UseGuards,
   UseMiddleware,
 } from '@knead-js/http';
-import { Test, type TestingModule } from '../src/index.js';
+import { Test, TestApp, type TestingModule } from '../src/index.js';
 
 class Greeter {
   greet(name: string) {
@@ -105,6 +106,32 @@ describe('Test.createModule', () => {
     });
     expect(app.url.hostname).toBe('127.0.0.1');
     expect(await mod.createApp()).toBe(app);
+  });
+
+  test('request() and graphqlSubscribe() always target the test server, even for //host paths', async () => {
+    const seen: string[] = [];
+    const server = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      fetch(req) {
+        seen.push(`${req.headers.get('host')} ${new URL(req.url).pathname}`);
+        return new Response('ok');
+      },
+    });
+    try {
+      const app = new TestApp({ url: new URL(server.url.href) } as HttpApplication);
+      const host = `127.0.0.1:${server.port}`;
+      expect((await app.request('GET', '//evil.example/x')).status).toBe(200);
+      expect((await app.request('GET', '//admin', { query: { a: '1' } })).status).toBe(200);
+      // Both reach the test server (Bun's fetch collapses the leading `//` on the wire).
+      expect(seen).toEqual([`${host} /evil.example/x`, `${host} /admin`]);
+      for (const path of ['http://evil.example/x', 'x', '']) {
+        await expect(app.request('GET', path)).rejects.toThrow(TypeError);
+        await expect(app.graphqlSubscribe('{ x }', { path })).rejects.toThrow(TypeError);
+      }
+    } finally {
+      server.stop(true);
+    }
   });
 
   test('concurrent createApp() calls listen once and return the same TestApp', async () => {
