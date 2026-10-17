@@ -27,7 +27,7 @@ import { UsersModule } from './users/users.module.js';
           maxComplexity: 1000,
           maxAliases: 30,
           maxQueryLength: 100 * 1024,
-          parseOptions: { maxTokens: 10_000 },
+          parseOptions: { maxTokens: 3000 },
           // Every resolver needs @Can() or @SkipAbility(); a missing one fails closed.
           guards: [AbilityGuard],
           // A CASL ForbiddenError thrown by resolver code is a FORBIDDEN error, not a masked 500.
