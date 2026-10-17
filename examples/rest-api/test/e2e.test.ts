@@ -38,7 +38,7 @@ describe('example REST API', () => {
     expect(res.headers.get('ratelimit-limit')).toBe('100');
   });
 
-  test('creating requires a token and the admin role', async () => {
+  test('creating requires a token whose grant allows it', async () => {
     const missing = await app.request('POST', '/users', {
       json: { name: 'Grace' },
       headers: origin,
@@ -51,6 +51,10 @@ describe('example REST API', () => {
       headers: { authorization: 'Bearer user-token' },
     });
     expect(forbidden.status).toBe(403);
+    const readOnly = await app.request('DELETE', '/users/1', {
+      headers: { authorization: 'Bearer reader-token' },
+    });
+    expect(readOnly.status).toBe(403);
   });
 
   test('admins create users; names are trimmed and bios sanitized', async () => {

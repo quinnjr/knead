@@ -1,3 +1,4 @@
+import { SkipAbility } from '@knead-js/casl';
 import { inject } from '@knead-js/core';
 import { ID, Query, ResolveField, Resolver, type ResolverCtx } from '@knead-js/graphql';
 import { PostsByAuthor } from './blog.loaders.js';
@@ -9,11 +10,13 @@ export class AuthorResolver {
   readonly #blog = inject(BlogService);
 
   @Query(() => [Author])
+  @SkipAbility()
   authors(): Author[] {
     return this.#blog.authors();
   }
 
   @Query(() => Author, { nullable: true, args: { id: ID } })
+  @SkipAbility()
   author(ctx: ResolverCtx<{ id: string }>): Author | undefined {
     return this.#blog.author(ctx.args.id);
   }

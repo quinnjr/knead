@@ -7,7 +7,13 @@ export {
   MASKED_MESSAGE,
   SchemaBuildError,
 } from './errors.js';
-export { createGraphQLController, GRAPHQL_RESPONSE_JSON } from './http.js';
+export { FIELD_GUARDS, UseFieldGuards } from './field-guards.js';
+export {
+  createGraphQLController,
+  GRAPHQL_ENDPOINT,
+  GRAPHQL_RESPONSE_JSON,
+  type GraphQLEndpointGuards,
+} from './http.js';
 export type { ArgMap, ArgSpec, FieldOptions } from './metadata.js';
 export { GraphQLModule, type GraphQLModuleAsyncOptions } from './module.js';
 export {

@@ -1,5 +1,11 @@
 import { InjectionToken } from '@knead-js/core';
-import { type Ctx, type GuardRef, HttpConfigError, type WsMessageRate } from '@knead-js/http';
+import {
+  type Ctx,
+  type GuardRef,
+  HttpConfigError,
+  type HttpException,
+  type WsMessageRate,
+} from '@knead-js/http';
 import type {
   CompilerOptions,
   ExecutionHooks,
@@ -137,6 +143,11 @@ export interface GraphQLModuleOptions {
   csrf?: { requiredHeaders?: readonly string[] } | false;
   /** Default: true outside development (HTTP_DEVELOPMENT, else NODE_ENV). */
   maskErrors?: boolean;
+  /**
+   * Maps an error thrown by resolver code, `hooks`, subscription filters or the `context` factory
+   * over WebSocket to an HttpException before masking; return undefined to leave it as is.
+   */
+  mapError?: (error: unknown) => HttpException | undefined;
   /** Writes sorted SDL at bootstrap. Default: 'schema.graphql' in development, else false. */
   emitSchemaFile?: string | false;
   /** Types not reachable from any resolver (e.g. interface implementations). */
@@ -166,6 +177,7 @@ export interface ResolvedGraphQLOptions {
   readonly playgroundSubscriptionEndpoint: string | undefined;
   readonly introspection: boolean;
   readonly maskErrors: boolean;
+  readonly mapError: ((error: unknown) => HttpException | undefined) | undefined;
   readonly emitSchemaFile: string | false;
   readonly csrf: { readonly requiredHeaders: readonly string[] } | false;
   readonly cacheControl: string | false;
@@ -249,6 +261,9 @@ export function validateGraphQLOptions(options: GraphQLModuleOptions): void {
       `playground.subscriptionEndpoint must be a ws:// or wss:// URL or an absolute path; got ${JSON.stringify(endpoint)}`,
     );
   }
+  if (options.mapError !== undefined && typeof options.mapError !== 'function') {
+    throw new HttpConfigError('GraphQL mapError must be a function.');
+  }
   const csrf = options.csrf;
   if (csrf && csrf.requiredHeaders !== undefined && csrf.requiredHeaders.length === 0) {
     throw new HttpConfigError(
@@ -277,6 +292,7 @@ export function resolveOptions(
       options.introspection ??
       (dev || (options.playground !== undefined && options.playground !== false)),
     maskErrors: options.maskErrors ?? !dev,
+    mapError: options.mapError,
     emitSchemaFile: options.emitSchemaFile ?? (dev ? 'schema.graphql' : false),
     cacheControl: options.cacheControl ?? 'no-store',
     csrf:

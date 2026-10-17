@@ -1,5 +1,6 @@
 import { getMetadata, getOwnMetadata } from '@knead-js/core';
 import {
+  defaultFieldResolver,
   type GraphQLArgumentConfig,
   type GraphQLFieldConfig,
   type GraphQLFieldConfigArgumentMap,
@@ -21,6 +22,7 @@ import {
   validateSchema,
 } from 'graphql';
 import { SchemaBuildError } from './errors.js';
+import type { FieldGuardSet } from './field-guards.js';
 import {
   type ArgMap,
   type ArgSpec,
@@ -61,6 +63,13 @@ export interface SchemaInput {
   typeFields: ReadonlyMap<Class, readonly FieldSpec[]>;
   /** Built even when unreachable (orphanedTypes and resolver target types). */
   types: readonly Class[];
+  /** The field guards of an @ObjectType class (`@UseFieldGuards`), or undefined when it has none. */
+  fieldGuards?: (cls: Class) => FieldGuardSet | undefined;
+  /** Wraps a field resolver of `cls` in its field guards; called only when fieldGuards(cls) is set. */
+  wrapField?: (
+    cls: Class,
+    resolve: GraphQLFieldResolver<any, any>,
+  ) => GraphQLFieldResolver<any, any>;
 }
 
 /** Fields of a decorated class, including inherited ones; a subclass redeclaration wins. */
@@ -360,6 +369,14 @@ export class SchemaBuilder {
     }
     for (const spec of this.input.typeFields.get(cls) ?? []) {
       out[spec.name] = this.#field(spec, `${def.name}.${spec.name}`);
+    }
+    // Interfaces are never wrapped: graphql-js resolves fields on the concrete object type.
+    // Unguarded types keep graphql-js's default resolver, so they pay nothing per field.
+    const { fieldGuards, wrapField } = this.input;
+    if (def.kind === 'object' && wrapField && fieldGuards?.(cls)) {
+      for (const config of Object.values(out)) {
+        config.resolve = wrapField(cls, config.resolve ?? defaultFieldResolver);
+      }
     }
     return out;
   }

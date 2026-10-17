@@ -20,6 +20,7 @@ injection, and is secure by default.
 | `packages/sanitize` | `@knead-js/sanitize` | Allowlist HTML sanitization |
 | `packages/schedule` | `@knead-js/schedule` | Cron/interval/timeout jobs, `SchedulerRegistry`, memory and Redis lock stores |
 | `packages/graphql` | `@knead-js/graphql` | Code-first GraphQL on [Leaven](https://github.com/quinnjr/leaven) |
+| `packages/casl` | `@knead-js/casl` | [CASL](https://casl.js.org) authorization: permission catalog, token grants, REST and GraphQL guards |
 | `packages/testing` | `@knead-js/testing` | Test modules, overrides, real ephemeral servers |
 | `examples/rest-api`, `examples/graphql-server` | private | Reference apps; `graphql-server` has an end-to-end `smoke` script |
 | `scripts/` | | Release gate/pack (`release.ts`), `check-pack.ts`, `trust-npm-publishers.sh` |
@@ -91,9 +92,9 @@ pnpm check:pack`, plus the smoke script, plus the Redis runs above when relevant
 - **Logging.** Log through the injected `LOGGER` and the shared error-log helper, never
   `console.*` directly. Never log a raw error object outside development; redact before logging.
 - **Dependencies.** Keep the runtime dependency tree minimal. Security-relevant or provenance-less
-  dependencies are pinned exactly (Leaven, `sanitize-html`, `dataloader`). Adding a dependency to a
-  published package also means updating `ALLOWED_DEPENDENCIES` in `.github/workflows/release.yml`
-  (a test enforces this).
+  dependencies are pinned exactly (Leaven, `sanitize-html`, `dataloader`, `@casl/ability`).
+  Adding a dependency to a published package also means updating `ALLOWED_DEPENDENCIES` in
+  `.github/workflows/release.yml` (a test enforces this).
 
 ## Security invariants
 

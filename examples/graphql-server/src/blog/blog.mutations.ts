@@ -1,9 +1,8 @@
+import { AbilityService, asSubject, Can } from '@knead-js/casl';
 import { inject } from '@knead-js/core';
 import { ID, Mutation, PUBSUB, Resolver, type ResolverCtx } from '@knead-js/graphql';
-import { ForbiddenException, UseGuards } from '@knead-js/http';
 import { sanitize } from '@knead-js/sanitize';
 import * as v from 'valibot';
-import { Authenticated, Roles, RolesGuard } from '../auth/auth.js';
 import { toCommentEvent, toPostEvent } from './blog.events.js';
 import { BlogService } from './blog.service.js';
 import { Comment, CreatePostInput, Post } from './blog.types.js';
@@ -27,14 +26,18 @@ const CreatePost = v.object({
   publish: v.nullish(v.boolean(), false),
 });
 
-/** Every mutation needs a signed-in user (class guard, runs first). */
+/**
+ * Every mutation needs a token (AbilityGuard: UNAUTHENTICATED otherwise) whose grant and user
+ * allow the @Can() action (FORBIDDEN otherwise).
+ */
 @Resolver()
-@UseGuards(Authenticated)
 export class BlogMutations {
+  readonly #abilities = inject(AbilityService);
   readonly #blog = inject(BlogService);
   readonly #pubsub = inject(PUBSUB);
 
   @Mutation(() => Post, { args: { input: CreatePostInput }, validate: { input: CreatePost } })
+  @Can('create', 'Post')
   createPost(ctx: ResolverCtx<{ input: CreatePostInput }>): Post {
     // `validate` has replaced the coerced input with the schema's output.
     const input = ctx.args.input as v.InferOutput<typeof CreatePost>;
@@ -44,12 +47,12 @@ export class BlogMutations {
   }
 
   @Mutation(() => Post, { args: { id: ID } })
-  publishPost(ctx: ResolverCtx<{ id: string }>): Post {
-    const user = ctx.currentUser!;
-    const existing = this.#blog.requireVisible(ctx.args.id, user);
-    if (existing.authorId !== user.id && !user.roles.includes('admin')) {
-      throw new ForbiddenException('Only the author or an admin can publish this post.');
-    }
+  @Can('update', 'Post')
+  async publishPost(ctx: ResolverCtx<{ id: string }>): Promise<Post> {
+    const existing = this.#blog.requireVisible(ctx.args.id, ctx.currentUser);
+    // @Can checked `update` on posts in general; the record decides the rest: users may update
+    // their own posts (`{ authorId: user.id }`), admins any post.
+    await this.#abilities.authorize(ctx, 'update', asSubject('Post', existing));
     const wasPublished = existing.publishedAt != null;
     const post = this.#blog.publish(ctx.args.id);
     if (!wasPublished) void this.#pubsub.publish(POST_PUBLISHED, toPostEvent(post));
@@ -60,6 +63,7 @@ export class BlogMutations {
     args: { postId: ID, body: String },
     validate: { body: Html(2000) },
   })
+  @Can('create', 'Comment')
   addComment(ctx: ResolverCtx<{ postId: string; body: string }>): Comment {
     const user = ctx.currentUser!;
     this.#blog.requireVisible(ctx.args.postId, user);
@@ -68,10 +72,9 @@ export class BlogMutations {
     return comment;
   }
 
-  /** Admin only: RolesGuard reads @Roles() through ctx.meta and denies (FORBIDDEN) otherwise. */
+  /** Admins only, through a token granted `blog:admin`. */
   @Mutation(() => Boolean, { args: { id: ID } })
-  @UseGuards(RolesGuard)
-  @Roles('admin')
+  @Can('delete', 'Post')
   deletePost(ctx: ResolverCtx<{ id: string }>): boolean {
     return this.#blog.deletePost(ctx.args.id);
   }
