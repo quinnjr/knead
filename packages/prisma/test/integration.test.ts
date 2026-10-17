@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { inject } from '@knead-js/core';
+import { inject, KneadError } from '@knead-js/core';
 import { Controller, type Ctx, Post } from '@knead-js/http';
 import { Test, type TestingModule } from '@knead-js/testing';
 import { PrismaHttpModule } from '../src/http/index.js';
@@ -127,6 +127,25 @@ describe.skipIf(!DATABASE_URL)('postgres integration', () => {
     );
     expect(await client.user.count()).toBe(0);
     expect(await client.post.count()).toBe(0);
+  });
+
+  test('an inner joined failure rolls back the whole transaction', async () => {
+    const error = await host
+      .run(async () => {
+        await users.create('owner@example.test');
+        await host
+          .run(async () => {
+            await users.create('inner-fail@example.test');
+            throw new Error('inner fails');
+          })
+          .catch(() => {});
+      })
+      .then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+    expect(error).toBeInstanceOf(KneadError);
+    expect(await client.user.count()).toBe(0);
   });
 
   test('requiresNew survives an outer rollback', async () => {

@@ -3,6 +3,7 @@ import {
   ApplicationContext,
   InjectionContextError,
   inject,
+  KneadError,
   MemoryLogger,
   Module,
 } from '@knead-js/core';
@@ -76,6 +77,81 @@ describe('TransactionHost', () => {
       });
     });
     expect(fake.calls.filter((c) => c === '$transaction')).toHaveLength(1);
+    await ctx.close();
+  });
+
+  test('an inner joined failure marks the transaction rollback-only', async () => {
+    const { fake, ctx, host } = await setup();
+    const inner = new Error('inner');
+    const error = await host
+      .run(async () => {
+        await host.run(async () => {
+          throw inner;
+        }).catch(() => {});
+        return 'swallowed';
+      })
+      .then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+    expect(error).toBeInstanceOf(KneadError);
+    expect((error as KneadError).message).toContain(
+      'transaction marked rollback-only by an inner failure',
+    );
+    expect((error as KneadError).cause).toBe(inner);
+    expect(fake.transactions.map((t) => t.outcome)).toEqual(['rollback']);
+    await ctx.close();
+  });
+
+  test('an inner joined failure rethrows the inner error unchanged', async () => {
+    const { ctx, host } = await setup();
+    const inner = new Error('inner');
+    let seen: unknown;
+    await host
+      .run(async () => {
+        seen = await host
+          .run(async () => {
+            throw inner;
+          })
+          .catch((e: unknown) => e);
+      })
+      .catch(() => {});
+    expect(seen).toBe(inner);
+    await ctx.close();
+  });
+
+  test("the owner's own rejection wins over rollback-only", async () => {
+    const { fake, ctx, host } = await setup();
+    const outer = new Error('outer');
+    await expect(
+      host.run(async () => {
+        await host
+          .run(async () => {
+            throw new Error('inner');
+          })
+          .catch(() => {});
+        throw outer;
+      }),
+    ).rejects.toBe(outer);
+    expect(fake.transactions[0]?.outcome).toBe('rollback');
+    await ctx.close();
+  });
+
+  test('a failing requiresNew run does not mark the outer transaction', async () => {
+    const { fake, ctx, host } = await setup();
+    const value = await host.run(async () => {
+      await host
+        .run(
+          async () => {
+            throw new Error('inner');
+          },
+          { propagation: 'requiresNew' },
+        )
+        .catch(() => {});
+      return 'ok';
+    });
+    expect(value).toBe('ok');
+    expect(fake.transactions.map((t) => t.outcome)).toEqual(['commit', 'rollback']);
     await ctx.close();
   });
 
