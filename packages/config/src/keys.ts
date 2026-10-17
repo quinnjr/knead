@@ -17,6 +17,7 @@ export function toScreamingSnake(camel: string): string {
   return camel.replace(/[A-Z]/g, (c) => `_${c}`).toUpperCase();
 }
 
+/** Converts one source's keys to declared camelCase keys; throws on a collision between two names. */
 export function convertSource(
   source: Readonly<Record<string, unknown>>,
   declared: ReadonlySet<string>,

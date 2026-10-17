@@ -21,7 +21,13 @@ export class ConfigLoaderError extends ConfigError {
     options: { cause: unknown },
   ) {
     super(`Config loader #${index} (${loaderName || 'anonymous'}) failed.`);
-    this.cause = options.cause;
+    // Non-enumerable, like a native `cause`, so serializers that walk own keys skip it.
+    Object.defineProperty(this, 'cause', {
+      value: options.cause,
+      enumerable: false,
+      writable: true,
+      configurable: true,
+    });
   }
 }
 
@@ -32,10 +38,16 @@ export interface ConfigIssue {
   message: string;
 }
 
+function describe(issue: ConfigIssue): string {
+  const where = issue.path.length > 1 ? issue.path.join('.') : issue.key;
+  return `  ${issue.name} (${where}): ${issue.message}`;
+}
+
 export class ConfigValidationError extends ConfigError {
-  constructor(readonly issues: readonly ConfigIssue[]) {
-    super(
-      `Config validation failed:\n${issues.map((i) => `  ${i.name} (${i.key}): ${i.message}`).join('\n')}`,
-    );
+  constructor(
+    readonly issues: readonly ConfigIssue[],
+    summary = 'Config validation failed:',
+  ) {
+    super(issues.length > 0 ? `${summary}\n${issues.map(describe).join('\n')}` : summary);
   }
 }

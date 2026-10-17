@@ -19,9 +19,26 @@ function segment(s: PropertyKey | StandardSchemaV1.PathSegment): string {
   return String(typeof s === 'object' ? s.key : s);
 }
 
+function describeIssue(
+  path: string[],
+  merged: Record<string, unknown>,
+  winners: ReadonlyMap<string, string>,
+): ConfigIssue {
+  const key = path[0];
+  if (key === undefined) return { key: '(root)', name: '(schema)', path, message: 'Invalid value' };
+  return {
+    key,
+    name: winners.get(key) ?? toScreamingSnake(key),
+    path,
+    message: Object.hasOwn(merged, key) ? 'Invalid value' : 'Missing value',
+  };
+}
+
 async function runLoader(loader: ConfigLoader, index: number): Promise<StringRecord> {
   let result: unknown;
   try {
+    // The deferral starts every loader outside the injection context (so inject() in a loader
+    // throws InjectionContextError) and turns a synchronous throw into a rejection.
     result = await Promise.resolve().then(loader);
   } catch (cause) {
     throw new ConfigLoaderError(index, loader.name, { cause });
@@ -62,21 +79,22 @@ export async function loadConfig<S extends ConfigSchema>(
     }
   }
 
-  const result = await handle.schema['~standard'].validate(merged);
+  let result: StandardSchemaV1.Result<StandardSchemaV1.InferOutput<S>>;
+  try {
+    result = await handle.schema['~standard'].validate(merged);
+  } catch {
+    // The thrown error may quote an input value (JSON.parse does), so it is dropped, not attached.
+    throw new ConfigValidationError([], 'Config schema threw while validating.');
+  }
   if (result.issues) {
-    throw new ConfigValidationError(
-      result.issues.map((issue): ConfigIssue => {
-        const path = (issue.path ?? []).map(segment);
-        const key = path[0] ?? '';
-        const present = Object.hasOwn(merged, key);
-        return {
-          key,
-          name: winners.get(key) ?? toScreamingSnake(key),
-          path,
-          message: present ? 'Invalid value' : 'Missing value',
-        };
-      }),
-    );
+    const issues = new Map<string, ConfigIssue>();
+    for (const issue of result.issues) {
+      const path = (issue.path ?? []).map(segment);
+      const described = describeIssue(path, merged, winners);
+      const id = `${described.name}|${path.join('.')}`;
+      if (!issues.has(id)) issues.set(id, described);
+    }
+    throw new ConfigValidationError([...issues.values()]);
   }
   return new Config(result.value);
 }

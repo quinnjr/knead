@@ -1,5 +1,7 @@
 import { expect, test } from 'bun:test';
+import { toStandardJsonSchema } from '@valibot/to-json-schema';
 import { type } from 'arktype';
+import * as v from 'valibot';
 import { z } from 'zod';
 import { defineConfig } from '../src/define.js';
 import {
@@ -39,6 +41,11 @@ test('undeclared env never reaches the schema', async () => {
   const looseZod = defineConfig(z.looseObject({ databaseUrl: z.string() }));
   const cfg2 = await loadConfig(looseZod, {}, { DATABASE_URL: 'pg://x', PATH: '/bin' });
   expect('path' in cfg2.all()).toBe(false);
+  const looseValibot = defineConfig(
+    toStandardJsonSchema(v.looseObject({ databaseUrl: v.string() })),
+  );
+  const cfg3 = await loadConfig(looseValibot, {}, { DATABASE_URL: 'pg://x', PATH: '/bin' });
+  expect(cfg3.all()).toEqual({ databaseUrl: 'pg://x' });
 });
 
 test('precedence', async () => {
@@ -62,13 +69,15 @@ test('loader order is list order, not finish order', async () => {
 });
 
 test('loaders run concurrently', async () => {
-  const slow = async () => {
-    await sleep(50);
+  const events: string[] = [];
+  const loader = (id: string) => async () => {
+    events.push(`start ${id}`);
+    await sleep(10);
+    events.push(`finish ${id}`);
     return {};
   };
-  const start = performance.now();
-  await loadConfig(Cfg, { loaders: [slow, slow] }, base);
-  expect(performance.now() - start).toBeLessThan(90);
+  await loadConfig(Cfg, { loaders: [loader('a'), loader('b')] }, base);
+  expect(events.indexOf('start b')).toBeLessThan(events.indexOf('finish a'));
 });
 
 test('loader failure', async () => {
@@ -82,6 +91,17 @@ test('loader failure', async () => {
   expect((error as Error).cause).toBe(boom);
   const bad = await failure(loadConfig(Cfg, { loaders: [(() => null) as never] }, base));
   expect(bad).toBeInstanceOf(ConfigLoaderError);
+  expect((bad as Error).message).toContain('#0');
+  expect((bad as Error).cause).toBeInstanceOf(TypeError);
+  expect(((bad as Error).cause as Error).message).toBe('Config loader must return an object.');
+});
+
+test('loader error cause is not enumerable, so it never shows in JSON', async () => {
+  const error = await failure(
+    loadConfig(Cfg, { loaders: [() => Promise.reject(new Error('boom'))] }, base),
+  );
+  expect(Object.getOwnPropertyDescriptor(error, 'cause')?.enumerable).toBe(false);
+  expect(JSON.stringify(error)).not.toContain('boom');
 });
 
 test('validation error names env keys and hides values', async () => {
@@ -117,4 +137,80 @@ test('collision in env on a declared key throws ConfigKeyCollisionError', async 
   const s = defineConfig(z.object({ port1: z.string() }));
   const error = await failure(loadConfig(s, {}, { PORT1: 'a', PORT_1: 'b' }));
   expect(error).toBeInstanceOf(ConfigKeyCollisionError);
+});
+
+test('collision inside a loader names the loader', async () => {
+  const s = defineConfig(z.object({ port1: z.string() }));
+  const error = await failure(
+    loadConfig(s, { loaders: [() => ({ PORT1: 'a', PORT_1: 'b' })] }, {}),
+  );
+  expect(error).toBeInstanceOf(ConfigKeyCollisionError);
+  expect((error as Error).message).toContain('loader #0');
+  expect((error as Error).message).not.toContain("'a'");
+});
+
+test('values: undefined is skipped, undeclared keys are ignored', async () => {
+  const cfg = await loadConfig(
+    Cfg,
+    { values: { port: undefined, extra: 'x' } as never },
+    { ...base, PORT: '5' },
+  );
+  expect(cfg.get('port')).toBe(5);
+  expect('extra' in cfg.all()).toBe(false);
+});
+
+test('an issue on a value-sourced key is named by the camel key', async () => {
+  const error = await failure(loadConfig(Cfg, { values: { jwtSecret: 'short' } }, base));
+  expect((error as ConfigValidationError).issues[0]?.name).toBe('jwtSecret');
+  expect((error as Error).message).toContain('jwtSecret (jwtSecret): Invalid value');
+  expect((error as Error).message).not.toContain('short');
+});
+
+test('a schema that throws while validating does not leak the value', async () => {
+  const s = defineConfig(z.object({ token: z.string().transform((t) => JSON.parse(t)) }));
+  const error = await failure(loadConfig(s, {}, { TOKEN: 'supersecretvalue' }));
+  expect(error).toBeInstanceOf(ConfigValidationError);
+  expect((error as Error).message).toContain('Config schema threw while validating');
+  expect((error as Error).message).not.toContain('supersecretvalue');
+  expect(Bun.inspect(error)).not.toContain('supersecretvalue');
+  expect((error as Error).cause).toBeUndefined();
+});
+
+test('a root-level issue is reported as (schema) (root)', async () => {
+  const s = defineConfig(z.object({ a: z.string() }).refine(() => false, { message: 'leak' }));
+  const error = await failure(loadConfig(s, {}, { A: 'x' }));
+  const e = error as ConfigValidationError;
+  expect(e.issues).toEqual([
+    { key: '(root)', name: '(schema)', path: [], message: 'Invalid value' },
+  ]);
+  expect(e.message).toBe('Config validation failed:\n  (schema) ((root)): Invalid value');
+});
+
+test('duplicate issues for one key are listed once', async () => {
+  const s = defineConfig(
+    z.object({
+      jwtSecret: z
+        .string()
+        .refine(() => false)
+        .refine(() => false),
+    }),
+  );
+  const error = await failure(loadConfig(s, {}, { JWT_SECRET: 'x' }));
+  expect((error as ConfigValidationError).issues).toHaveLength(1);
+  expect((error as Error).message).toBe(
+    'Config validation failed:\n  JWT_SECRET (jwtSecret): Invalid value',
+  );
+});
+
+test('a nested issue shows its camelCase path', async () => {
+  const s = defineConfig(z.object({ db: z.object({ host: z.string() }) }));
+  const error = await failure(loadConfig(s, { values: { db: { host: 1 } } as never }, {}));
+  const e = error as ConfigValidationError;
+  expect(e.issues[0]).toEqual({
+    key: 'db',
+    name: 'db',
+    path: ['db', 'host'],
+    message: 'Invalid value',
+  });
+  expect(e.message).toContain('db (db.host): Invalid value');
 });

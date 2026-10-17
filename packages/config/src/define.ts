@@ -2,6 +2,7 @@ import { InjectionToken } from '@knead-js/core';
 import type { StandardJSONSchemaV1, StandardSchemaV1 } from '@standard-schema/spec';
 import type { Config } from './config.js';
 import { ConfigDefinitionError } from './errors.js';
+import { toCamelCase, toScreamingSnake } from './keys.js';
 
 export type ConfigSchema = StandardSchemaV1 & StandardJSONSchemaV1;
 
@@ -34,12 +35,37 @@ function readKeys(schema: ConfigSchema): Set<string> {
     throw error;
   }
   const { type, properties } = (json ?? {}) as { type?: unknown; properties?: unknown };
-  if (type !== 'object' || properties === null || typeof properties !== 'object') {
+  if (
+    type !== 'object' ||
+    properties === null ||
+    typeof properties !== 'object' ||
+    Array.isArray(properties)
+  ) {
     throw new ConfigDefinitionError(
-      'The config schema must be an object schema with declared properties.',
+      'The config schema must be an object schema with declared properties: its top level must ' +
+        'be a plain object schema (not $ref/allOf/anyOf).',
     );
   }
-  return new Set(Object.keys(properties));
+  const keys = Object.keys(properties);
+  for (const key of keys) {
+    if (toCamelCase(toScreamingSnake(key)) !== key) {
+      const suggestion = suggestCamelCase(key);
+      throw new ConfigDefinitionError(
+        `Config key "${key}" can never be read from SCREAMING_SNAKE_CASE sources; declare it in ` +
+          `camelCase${suggestion ? ` ("${suggestion}")` : ''}.`,
+      );
+    }
+  }
+  return new Set(keys);
+}
+
+/** A camelCase form of `key` that environment names can produce, if there is one. */
+function suggestCamelCase(key: string): string | undefined {
+  const words = key.split(/[^A-Za-z0-9]+|(?<=[a-z0-9])(?=[A-Z])/).filter(Boolean);
+  const candidate = toCamelCase(words.join('_').toUpperCase());
+  return candidate !== undefined && toCamelCase(toScreamingSnake(candidate)) === candidate
+    ? candidate
+    : undefined;
 }
 
 export function defineConfig<S extends ConfigSchema>(
