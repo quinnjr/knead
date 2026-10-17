@@ -1,6 +1,6 @@
 {
   "name": "@knead-js/graphql",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Code-first GraphQL server with subscriptions over WebSocket for Knead, the NestJS-style web framework for Bun",
   "keywords": [
     "bun",

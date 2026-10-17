@@ -1,6 +1,6 @@
 {
   "name": "@knead-js/casl",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "CASL authorization guards (REST and GraphQL) for Knead, the NestJS-style web framework for Bun",
   "keywords": [
     "bun",
