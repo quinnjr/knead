@@ -41,8 +41,9 @@ bootstrapped providers run here.
 
 ### HttpCoreModule
 
-The global module `KneadFactory` registers. It provides and exports `HTTP_DEVELOPMENT`,
-`WsRegistry` and `ErrorLog` to every module. You never import it yourself.
+The global module `KneadFactory` registers. It provides and exports `WsRegistry` and `ErrorLog` to
+every module. `HTTP_DEVELOPMENT` (the same token as core's `DEVELOPMENT`) is provided to every
+module by the application context, from the `development` option. You never import it yourself.
 
 ### HttpApplication
 
@@ -85,11 +86,19 @@ failed because a lifecycle hook threw has closed the application. See [the serve
 | `allowedHosts` | `readonly string[] \| false` | development: `localhost`, `127.0.0.1`, `[::1]` and the bound hostname (unless it is `0.0.0.0` or `::`); production: no check | Host names the server answers to; other `Host` headers get `421`. `false` disables the check. |
 | `websocket` | `WsServerOptions` | see [`WsServerOptions`](#wsserveroptions) | Server-wide WebSocket limits. |
 | `maxParams` | `number` | `1000` | Most query parameters (more is `400`) or urlencoded or multipart fields (more is `413`) per request. An integer of at least 1. |
-| `maxRequestBodySize` | `number` | `1048576` (1 MiB) | Largest request body in bytes; Bun answers larger ones with `413`. |
+| `maxRequestBodySize` | `number` | `1048576` (1 MiB) | Largest request body in bytes; Bun answers larger ones with `413`. An integer of at least 1. |
 | `defaultCacheControl` | `string` | none | `Cache-Control` for every response that has none (including 404s, `421`s and rejected WebSocket upgrades), such as `'no-store'`. Must be a valid header value (no CR, LF or NUL, Latin-1 only). |
 | `validation` | `ValidationOptions` | `{}` | See [`ValidationOptions`](#validationoptions). |
-| `idleTimeout` | `number` | Bun's default (10 seconds) | Seconds a connection may be idle. |
-| `shutdownTimeout` | `number` | `10000` | Milliseconds `close()` waits for in-flight requests, and for a `listen()` still initializing. |
+| `idleTimeout` | `number` | Bun's default (10 seconds) | Seconds a connection may be idle. An integer from 0 to 255. |
+| `shutdownTimeout` | `number` | `10000` | Milliseconds `close()` waits for in-flight requests, and for a `listen()` still initializing. An integer of at least 0. |
+
+The numeric options must be numbers within those ranges: a string (such as an unparsed environment
+variable), `NaN` or `Infinity` is an `HttpConfigError` at `listen()`, before anything binds.
+
+Both listeners run with Bun's development mode set to the application's development flag (Bun's
+own default turns it on whenever `NODE_ENV` is not `'production'`, which renders an HTML page
+with the error's message, stack and source). An error that escapes every Knead handler is logged
+and answered with a masked `500` problem, never Bun's error page.
 
 ### redirectToHttps
 
@@ -155,7 +164,7 @@ every route of the controller; a method-level value wins over the class-level on
 | `params` | `I['params']`, default `Record<string, string>` |
 | `query` | `I['query']`, default `Record<string, string \| string[]>` |
 | `body` | `I['body']`, default `unknown` |
-| `headers` | `I['headers']`, default `Record<string, string>` |
+| `headers` | `I['headers']`, default `Record<string, string>` (`null`-prototype, without `__proto__`, `constructor` or `prototype` keys) |
 | `ip` | `string \| undefined` |
 | `secure` | `boolean` |
 | `route` | `RouteInfo \| null` |
@@ -217,7 +226,13 @@ every route of the controller; a method-level value wins over the class-level on
 | `ErrorType` | `AbstractType<unknown>`: an error class, as passed to `@Catch()`. |
 
 Middleware must return a `Response`; a layer that returns anything else is answered as a 500
-error. See [middleware](/guide/middleware/), [guards](/guide/guards/) and
+error. `listen()` checks every middleware, guard and filter reference (global, module, controller
+and route) and rejects with an `HttpConfigError` naming where it is listed for one that is
+`undefined` (often a circular import), lacks its method, or is a class whose `use`, `canActivate`
+or `catch` is an arrow-function field. A filter is never a plain function. If the error handling
+itself fails (a filter's `@Catch()` metadata cannot be read, or an exception's extensions do not
+serialize), the request still gets a problem response: extensions that do not serialize, such as a
+`BigInt`, are dropped, and anything else is a masked `500` with the `instance`. See [middleware](/guide/middleware/), [guards](/guide/guards/) and
 [exception filters](/guide/exception-filters/) for ordering and examples.
 
 ### assertGuardRef
@@ -227,6 +242,13 @@ function, a function, or a class with `canActivate` on its prototype. Anything e
 `undefined` from a circular import, or a class whose `canActivate` is an arrow-function field)
 throws `HttpConfigError: Invalid guard in <where>: ...`. Knead runs this check on every guard at
 `listen()`; packages that accept guards in their own options use it to fail the same way.
+
+### resolveGuard
+
+`resolveGuard(ref, injector, where = 'a guard list')` returns `Guard<any>`: it resolves a
+`GuardRef` in a `ModuleInjector` (a class is constructed through the injector, a function is
+adapted, an object is returned as is), after `assertGuardRef(ref, where)`. Used by
+`@knead-js/graphql` for resolver guards.
 
 ## Tokens
 

@@ -128,9 +128,10 @@ export function parseQuery(
   }
 }
 
+/** Headers as a null-prototype object; `__proto__`, `constructor` and `prototype` are dropped. */
 export function headersToObject(headers: Headers): Record<string, string> {
   const out = Object.create(null) as Record<string, string>;
-  for (const [key, value] of headers) out[key] = value;
+  for (const [key, value] of headers) if (!UNSAFE_KEYS.has(key)) out[key] = value;
   return out;
 }
 

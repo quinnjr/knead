@@ -55,6 +55,14 @@ describe('parseQuery', () => {
   });
 });
 
+test('headersToObject drops __proto__, constructor and prototype', () => {
+  const headers = new Headers();
+  for (const name of ['__proto__', 'constructor', 'prototype', 'x-ok']) headers.set(name, 'v');
+  const out = headersToObject(headers);
+  expect(Object.keys(out)).toEqual(['x-ok']);
+  expect(Object.getPrototypeOf(out)).toBeNull();
+});
+
 test('headersToObject lower-cases names', () => {
   expect({ ...headersToObject(new Headers({ 'X-Api-Key': 'k', Accept: 'a' })) }).toEqual({
     'x-api-key': 'k',

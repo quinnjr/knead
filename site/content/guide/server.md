@@ -23,8 +23,8 @@ are:
 | `logger` | `Logger` | The `LOGGER` of a global module (such as `LoggingModule`), else a `ConsoleLogger` | The `LOGGER` of every module, replacing any module's own `LOGGER` provider. |
 | `overrides` | `Iterable<readonly [Token, Provider]>` | none | Replaces non-multi providers by token, in every module. A `LOGGER` entry here wins over `logger`. Used by [testing](/guide/testing/). |
 
-The factory also registers `HttpCoreModule`, a global module that provides `HTTP_DEVELOPMENT`,
-`WsRegistry` and `ErrorLog` to every module. See [logging](/guide/logging/) for loggers.
+The factory also registers `HttpCoreModule`, a global module that provides `WsRegistry` and
+`ErrorLog` to every module; `HTTP_DEVELOPMENT` comes from the application context. See [logging](/guide/logging/) for loggers.
 
 ## Listening
 
@@ -41,13 +41,13 @@ are an `HttpConfigError` here), constructs middleware, guards and filters, and r
 | `redirectHttp` | `{ port: number; hostname?: string; host?: string }` | none | A second, plain-HTTP listener that redirects to HTTPS. Requires `tls`. |
 | `allowedHosts` | `readonly string[] \| false` | Development: loopback names. Production: no check. | Host names the server answers to. See [allowed hosts](#allowed-hosts). |
 | `trustProxy` | `false \| number \| readonly string[]` | `false` | Which proxies' `X-Forwarded-*` headers to believe. See [proxies](#running-behind-a-proxy). |
-| `maxRequestBodySize` | `number` | `1048576` (1 MiB) | Largest request body in bytes; a larger one gets `413`. |
+| `maxRequestBodySize` | `number` | `1048576` (1 MiB) | Largest request body in bytes; a larger one gets `413`. An integer of at least 1. |
 | `maxParams` | `number` | `1000` | Most query parameters (more is a `400`) or urlencoded or multipart body fields (more is a `413`) parsed per request. An integer of at least 1. |
-| `idleTimeout` | `number` | Bun's default (10 seconds) | Seconds a connection may be idle before Bun closes it. |
+| `idleTimeout` | `number` | Bun's default (10 seconds) | Seconds a connection may be idle before Bun closes it. An integer from 0 to 255. |
 | `defaultCacheControl` | `string` | none | `Cache-Control` value added to responses that have none, for example `'no-store'`. |
 | `validation` | `ValidationOptions` | `{}` | `{ redactIssueMessages: true }` makes validation issue messages generic. See [validation](/guide/validation/). |
 | `websocket` | `WsServerOptions` | `WS_DEFAULTS` | Server-wide WebSocket limits. See [WebSockets](/guide/websockets/#limits). |
-| `shutdownTimeout` | `number` | `10000` | Milliseconds `close()` waits for in-flight requests. See [shutdown](#graceful-shutdown). |
+| `shutdownTimeout` | `number` | `10000` | Milliseconds `close()` waits for in-flight requests: an integer of at least 0. See [shutdown](#graceful-shutdown). |
 
 `listen()` can be called once. A second call, or a call after `close()` has started, rejects with
 an `HttpConfigError`. `useGlobalMiddleware()`, `useGlobalGuards()` and `useGlobalFilters()` must be
