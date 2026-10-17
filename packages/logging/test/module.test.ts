@@ -1,7 +1,15 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { ApplicationContext, inject, LOGGER, type LogLevel, Module } from '@knead-js/core';
+import {
+  ApplicationContext,
+  inject,
+  LOGGER,
+  type LogLevel,
+  Module,
+  NoProviderError,
+} from '@knead-js/core';
 import { Controller, Get, type HttpApplication, KneadFactory, MemoryLogger } from '@knead-js/http';
-import { JsonLogger, LoggingConfigError, LoggingModule } from '../src/index.js';
+import { Test } from '@knead-js/testing';
+import { childLogger, JsonLogger, LoggingConfigError, LoggingModule } from '../src/index.js';
 
 function sink() {
   const lines: string[] = [];
@@ -11,23 +19,51 @@ function sink() {
 }
 
 describe('LoggingModule with ApplicationContext', () => {
-  test('provides a JsonLogger as LOGGER and as JsonLogger, injectable from any module', async () => {
+  test('provides a JsonLogger as LOGGER, injectable from any module', async () => {
     const { write, records } = sink();
     class Service {
-      readonly log = inject(LOGGER);
-      readonly json = inject(JsonLogger);
+      readonly log = childLogger(inject(LOGGER), { job: 'report' });
     }
     @Module({ providers: [Service], exports: [Service] })
     class Feature {}
     @Module({ imports: [LoggingModule.forRoot({ write }), Feature] })
     class App {}
     const ctx = await ApplicationContext.create(App);
-    const service = ctx.get(Service);
-    expect(service.log).toBeInstanceOf(JsonLogger);
-    expect(service.log).toBe(service.json);
-    expect(ctx.get(LOGGER)).toBe(service.json);
-    service.json.child({ job: 'report' }).info('done');
+    expect(ctx.get(LOGGER)).toBeInstanceOf(JsonLogger);
+    ctx.get(Service).log.info('done');
     expect(records()).toEqual([expect.objectContaining({ msg: 'done', job: 'report' })]);
+  });
+
+  test('JsonLogger is not an injection token, so nothing bypasses a replaced LOGGER', async () => {
+    @Module({ imports: [LoggingModule.forRoot({ write: () => {} })] })
+    class App {}
+    const ctx = await ApplicationContext.create(App);
+    expect(() => ctx.get(JsonLogger)).toThrow(NoProviderError);
+  });
+
+  test('importing LoggingModule without forRoot() fails at startup', async () => {
+    @Module({ imports: [LoggingModule] })
+    class App {}
+    await expect(ApplicationContext.create(App)).rejects.toThrow(LoggingConfigError);
+    await expect(ApplicationContext.create(App)).rejects.toThrow('forRoot()');
+  });
+
+  test('importing forRoot() twice fails at startup', async () => {
+    @Module({ imports: [LoggingModule.forRoot({ write: () => {} })] })
+    class Feature {}
+    @Module({ imports: [LoggingModule.forRoot({ write: () => {} }), Feature] })
+    class App {}
+    await expect(ApplicationContext.create(App)).rejects.toThrow('imported 2 times');
+  });
+
+  test('the same forRoot() module imported from two places is one module', async () => {
+    const logging = LoggingModule.forRoot({ write: () => {} });
+    @Module({ imports: [logging] })
+    class Feature {}
+    @Module({ imports: [logging, Feature] })
+    class App {}
+    const ctx = await ApplicationContext.create(App);
+    expect(ctx.get(LOGGER)).toBeInstanceOf(JsonLogger);
   });
 
   test("development comes from the application's DEVELOPMENT flag", async () => {
@@ -85,6 +121,33 @@ describe('LoggingModule with KneadFactory', () => {
     expect(error?.msg).toContain('correlation id');
     expect(JSON.stringify(error)).toContain('redis://***@cache');
     expect(lines.join('\n')).not.toContain('s3cret');
+  });
+
+  test('@knead-js/testing captures entries, child fields included', async () => {
+    const { lines, write } = sink();
+    @Controller('/')
+    class Hello {
+      readonly log = childLogger(inject(LOGGER), { feature: 'hello' });
+      @Get('/hello') hello() {
+        this.log.info('said hello');
+        return 'hi';
+      }
+    }
+    @Module({ imports: [LoggingModule.forRoot({ write })], controllers: [Hello] })
+    class App {}
+    const mod = await Test.createModule({ imports: [App] }).compile();
+    const server = await mod.createApp();
+    try {
+      expect((await server.request('GET', '/hello')).status).toBe(200);
+    } finally {
+      await server.close();
+    }
+    expect(mod.logs).toContainEqual({
+      level: 'info',
+      message: 'said hello',
+      meta: [{ feature: 'hello' }],
+    });
+    expect(lines).toEqual([]);
   });
 
   test('an explicit logger option still wins', async () => {

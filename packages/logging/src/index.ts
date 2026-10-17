@@ -1,4 +1,5 @@
 export {
+  childLogger,
   JsonLogger,
   type JsonLoggerOptions,
   LoggingConfigError,

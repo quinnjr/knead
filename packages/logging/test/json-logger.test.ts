@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import type { LogLevel } from '@knead-js/core';
-import { JsonLogger, type JsonLoggerOptions, LoggingConfigError } from '../src/index.js';
+import { type LogLevel, MemoryLogger } from '@knead-js/core';
+import {
+  childLogger,
+  JsonLogger,
+  type JsonLoggerOptions,
+  LoggingConfigError,
+} from '../src/index.js';
 
 const TIME = new Date('2026-10-16T12:00:00.000Z');
 
@@ -60,12 +65,30 @@ describe('record shape', () => {
     });
   });
 
-  test('a __proto__ key is an ordinary field, not a prototype change', () => {
+  test('__proto__, constructor and prototype keys are dropped', () => {
     const { logger, records } = capture();
-    logger.info('x', JSON.parse('{"__proto__": {"polluted": true}}'));
+    logger.info('x', JSON.parse('{"__proto__": {"polluted": true}, "constructor": 1, "ok": 2}'), {
+      nested: JSON.parse('{"__proto__": 1, "prototype": 2, "kept": 3}'),
+    });
     const record = records()[0]!;
-    expect(Object.hasOwn(record, '__proto__')).toBe(true);
+    expect(Object.hasOwn(record, '__proto__')).toBe(false);
+    expect(Object.hasOwn(record, 'constructor')).toBe(false);
+    expect(record).toMatchObject({ ok: 2, nested: { kept: 3 } });
+    expect(Object.keys(record.nested as object)).toEqual(['kept']);
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  test('fields and meta cannot set err or meta', () => {
+    const { logger, records } = capture({ development: false, fields: { err: 'f', meta: 'f' } });
+    logger.error('x', new Error('real'), { err: 'forged', meta: 'mine' }, 'extra');
+    expect(records()[0]).toMatchObject({ err: 'Error: real', meta: ['extra'] });
+  });
+
+  test('a field named err does not push the real Error into meta', () => {
+    const { logger, records } = capture({ development: false });
+    logger.child({ err: 'x' }).error('y', new Error('boom'));
+    expect(records()[0]!.err).toBe('Error: boom');
+    expect(records()[0]!.meta).toBeUndefined();
   });
 
   test('the name option sets `logger`', () => {
@@ -321,10 +344,29 @@ describe('options', () => {
     [{ fields: [] }, 'fields'],
     [{ fields: new Map() }, 'fields'],
     [{ write: 'stdout' }, 'write'],
+    [{ fields: { toJSON: () => ({}), a: 1 } }, 'toJSON'],
   ])('rejects %p', (options, word) => {
     expect(() => new JsonLogger(options as JsonLoggerOptions)).toThrow(LoggingConfigError);
     expect(() => new JsonLogger(options as JsonLoggerOptions)).toThrow(word);
   });
+
+  test('the default sink survives a closed stdout pipe (EPIPE)', async () => {
+    const script = [
+      `import { JsonLogger } from ${JSON.stringify(new URL('../src/index.ts', import.meta.url).pathname)};`,
+      'const log = new JsonLogger();',
+      'let n = 0;',
+      'const t = setInterval(() => {',
+      "  log.info('line ' + n++);",
+      "  if (n > 3000) { clearInterval(t); process.stderr.write('survived'); }",
+      '}, 0);',
+    ].join('\n');
+    const proc = Bun.spawn(['bun', '-e', script], { stdout: 'pipe', stderr: 'pipe' });
+    const reader = proc.stdout.getReader();
+    await reader.read();
+    await reader.cancel();
+    expect(await proc.exited).toBe(0);
+    expect(await new Response(proc.stderr).text()).toContain('survived');
+  }, 20_000);
 
   test('defaults to stdout for debug/info and stderr for warn/error', () => {
     const out: string[] = [];
@@ -346,5 +388,143 @@ describe('options', () => {
     expect(out[0]!.endsWith('\n')).toBe(true);
     expect(JSON.parse(out[0]!).msg).toBe('i');
     expect(JSON.parse(err[0]!).msg).toBe('e');
+  });
+});
+
+describe('review hardening', () => {
+  test('a write returning a rejected promise is ignored', async () => {
+    const rejections: unknown[] = [];
+    const onRejection = (reason: unknown) => rejections.push(reason);
+    process.on('unhandledRejection', onRejection);
+    try {
+      const logger = new JsonLogger({ write: async () => Promise.reject(new Error('sink down')) });
+      logger.error('x');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    } finally {
+      process.off('unhandledRejection', onRejection);
+    }
+    expect(rejections).toEqual([]);
+  });
+
+  test('shared references cannot make copying exponential', () => {
+    const { logger, lines } = capture();
+    let node: Record<string, unknown> = { leaf: true };
+    for (let level = 0; level < 10; level++) {
+      const parent: Record<string, unknown> = {};
+      for (let key = 0; key < 10; key++) parent[`k${key}`] = node;
+      node = parent;
+    }
+    const started = performance.now();
+    logger.info('x', { graph: node }, [node]);
+    expect(performance.now() - started).toBeLessThan(2_000);
+    expect(lines).toHaveLength(1);
+  });
+
+  test('a per-record budget caps wide graphs of shared references', () => {
+    const { logger, lines } = capture();
+    const level = (child: unknown) =>
+      Object.fromEntries(Array.from({ length: 100 }, (_, i) => [`k${i}`, child]));
+    const graph = level(level(level({ leaf: 1 })));
+    const started = performance.now();
+    logger.info('x', { graph });
+    expect(performance.now() - started).toBeLessThan(2_000);
+    expect(lines[0]!.line).toContain('[Truncated]');
+  });
+
+  test('a huge sparse array is capped', () => {
+    const { logger, lines, records } = capture();
+    const sparse: unknown[] = [];
+    sparse.length = 50_000_000;
+    const started = performance.now();
+    logger.info('x', sparse);
+    expect(performance.now() - started).toBeLessThan(2_000);
+    expect(lines[0]!.line.length).toBeLessThan(100_000);
+    const meta = records()[0]!.meta as unknown[][];
+    expect(meta[0]!.at(-1)).toBe('[49999000 more items]');
+  });
+
+  test('a wide object and a large Set are capped', () => {
+    const { logger, records } = capture();
+    const wide = Object.fromEntries(Array.from({ length: 5000 }, (_, i) => [`k${i}`, i]));
+    logger.info('x', { wide, set: new Set(Array.from({ length: 5000 }, (_, i) => i)) });
+    const record = records()[0]! as { wide: Record<string, unknown>; set: unknown[] };
+    expect(Object.keys(record.wide)).toHaveLength(1001);
+    expect(record.wide['…']).toBe('4000 more keys omitted');
+    expect(record.set).toHaveLength(1001);
+  });
+
+  test('credentials in object keys and Map keys are redacted', () => {
+    const { logger, lines } = capture();
+    logger.info(
+      'x',
+      { pools: { 'redis://admin:hunter2@db:6379': 3 } },
+      new Map([['postgres://u:s3cret@h/db', 1]]),
+    );
+    expect(lines[0]!.line).not.toContain('hunter2');
+    expect(lines[0]!.line).not.toContain('s3cret');
+    expect(lines[0]!.line).toContain('redis://***@db:6379');
+  });
+
+  test('development errors redact own properties, including their keys, and every cause', () => {
+    const { logger, lines, records } = capture({ development: true });
+    let error = new Error('top');
+    for (let i = 0; i < 20; i++) {
+      error = new Error(i === 10 ? 'connect redis://admin:deepsecret@db' : `level ${i}`, {
+        cause: error,
+      });
+    }
+    Object.assign(error, { pools: { 'redis://u:keysecret@h': 1 }, password: 'pw-secret' });
+    logger.error('x', error);
+    const line = lines[0]!.line;
+    for (const secret of ['deepsecret', 'keysecret', 'pw-secret'])
+      expect(line).not.toContain(secret);
+    const err = records()[0]!.err as string;
+    expect(err).toContain('Caused by: … (more causes omitted)');
+    expect(err).toContain('level 18');
+    // No source code frames: the text is the error's own stack, not Bun.inspect output.
+    expect(err).not.toMatch(/^\s*\d+ \| /m);
+  });
+
+  test('one unreadable meta item does not lose the others', () => {
+    const { logger, records } = capture();
+    const { proxy, revoke } = Proxy.revocable({}, {});
+    revoke();
+    logger.info('x', 'first', proxy, 'last');
+    expect(records()[0]!.meta).toEqual(['first', '[unreadable]', 'last']);
+  });
+
+  test('an Error from another realm is recognized', async () => {
+    const { runInNewContext } = await import('node:vm');
+    const { logger, records } = capture({ development: false });
+    logger.error('x', runInNewContext('new TypeError("other realm")'));
+    expect(records()[0]!.err).toBe('TypeError: other realm');
+  });
+
+  test('child() rejects fields with toJSON', () => {
+    const { logger } = capture();
+    expect(() => logger.child({ toJSON: () => ({}) })).toThrow(LoggingConfigError);
+  });
+});
+
+describe('childLogger()', () => {
+  test('uses child() for a JsonLogger', () => {
+    const { logger, records } = capture();
+    const child = childLogger(logger, { job: 'report' });
+    expect(child).toBeInstanceOf(JsonLogger);
+    child.info('x');
+    expect(records()[0]).toMatchObject({ job: 'report' });
+  });
+
+  test('passes the fields as the first meta of any other Logger, merging nested children', () => {
+    const memory = new MemoryLogger();
+    const child = childLogger(childLogger(memory, { a: 1, b: 1 }), { b: 2 });
+    child.warn('x', 'extra');
+    expect(memory.entries).toEqual([
+      { level: 'warn', message: 'x', meta: [{ a: 1, b: 2 }, 'extra'] },
+    ]);
+  });
+
+  test('rejects fields that are not a plain object', () => {
+    expect(() => childLogger(new MemoryLogger(), new Map() as never)).toThrow(LoggingConfigError);
   });
 });
