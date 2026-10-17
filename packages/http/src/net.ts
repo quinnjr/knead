@@ -50,7 +50,16 @@ export function normalizeIp(ip: string): string {
 
 export function cidrMatcher(list: readonly string[]): (ip: string) => boolean {
   const ranges = list.map((entry) => {
-    const [address, bits] = entry.split('/');
+    if (typeof entry !== 'string') {
+      throw new HttpConfigError(`Invalid trustProxy entry: ${String(entry)}`);
+    }
+    const parts = entry.split('/');
+    const [address, bits] = parts;
+    // A prefix is 1-3 plain digits: `Number()` would read '' as 0 (trust everything) and accept
+    // '0x8', ' 8' or '1e1'.
+    if (parts.length > 2 || (bits !== undefined && !/^\d{1,3}$/.test(bits))) {
+      throw new HttpConfigError(`Invalid trustProxy entry: ${entry}`);
+    }
     const bytes = parseIp(address ?? '');
     if (!bytes) throw new HttpConfigError(`Invalid trustProxy entry: ${entry}`);
     // An IPv4-mapped entry (`::ffff:10.0.0.0/104`) parses to IPv4 bytes; its prefix counts the
