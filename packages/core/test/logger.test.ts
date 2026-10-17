@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from 'bun:test';
-import { ConsoleLogger, logError, MemoryLogger } from '../src/index.js';
+import { ConsoleLogger, DeferredLogger, logError, MemoryLogger } from '../src/index.js';
 
 describe('logging in core', () => {
   test('logError logs a summary and returns a correlation id', () => {
@@ -85,5 +85,62 @@ describe('ConsoleLogger fallback when formatting fails', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe('DeferredLogger', () => {
+  const recorder = () => {
+    const messages: string[] = [];
+    return { messages, logger: { warn: (m: string) => messages.push(m) } };
+  };
+
+  test('holds warnings until attach(), then forwards them and later ones', () => {
+    const app = recorder();
+    const log = new DeferredLogger(undefined, () => {
+      throw new Error('no fallback expected');
+    });
+    log.warn('a');
+    log.warn('b');
+    log.attach(app.logger);
+    log.warn('c');
+    expect(app.messages).toEqual(['a', 'b', 'c']);
+  });
+
+  test('an explicit target wins: attach() never replaces it', () => {
+    const own = recorder();
+    const app = recorder();
+    const log = new DeferredLogger(own.logger, () => app.logger);
+    log.warn('a');
+    log.attach(app.logger);
+    log.use();
+    log.warn('b');
+    expect([own.messages, app.messages]).toEqual([['a', 'b'], []]);
+  });
+
+  test('use() without attach() sends held warnings to the fallback; a later attach() is ignored', () => {
+    const fallback = recorder();
+    const app = recorder();
+    const log = new DeferredLogger(undefined, () => fallback.logger);
+    log.warn('a');
+    log.use();
+    log.attach(app.logger);
+    log.warn('b');
+    expect([fallback.messages, app.messages]).toEqual([['a', 'b'], []]);
+  });
+
+  test('a target that throws during attach() still receives the remaining warnings', () => {
+    const received: string[] = [];
+    const log = new DeferredLogger(undefined, () => ({ warn: () => {} }));
+    log.warn('a');
+    log.warn('b');
+    log.warn('c');
+    const target = {
+      warn(m: string) {
+        received.push(m);
+        if (m === 'a') throw new Error('sink failed');
+      },
+    };
+    expect(() => log.attach(target)).toThrow('sink failed');
+    expect(received).toEqual(['a', 'b', 'c']);
   });
 });

@@ -1,10 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  ApplicationContext,
   CircularDependencyError,
   Injectable,
   InjectionContextError,
   InjectionToken,
   inject,
+  Module,
   NoProviderError,
   normalizeProvider,
   type Provider,
@@ -145,5 +147,102 @@ describe('ModuleInjector', () => {
     expect(() => injector.get(Flaky)).toThrow('boom');
     fail = false;
     expect(injector.get(Flaky)).toBeInstanceOf(Flaky);
+  });
+});
+
+describe('transients of a construction retried after an async dependency', () => {
+  test('the transient built by the failed attempt is not tracked', async () => {
+    const CFG = new InjectionToken<number>('CFG');
+    const X = new InjectionToken<unknown>('X');
+    let inits = 0;
+    let destroys = 0;
+    class T {
+      onModuleInit() {
+        inits++;
+      }
+      onModuleDestroy() {
+        destroys++;
+      }
+    }
+    class S {
+      readonly t = inject(T);
+      readonly c = inject(CFG);
+    }
+    @Module({
+      providers: [
+        { provide: T, useClass: T, scope: 'transient' },
+        S,
+        { provide: X, useFactory: () => inject(S) },
+        { provide: CFG, useFactory: async () => 1 },
+      ],
+    })
+    class M {}
+    const ctx = await ApplicationContext.create(M);
+    expect(ctx.get(S).c).toBe(1);
+    await ctx.close();
+    expect([inits, destroys]).toEqual([1, 1]);
+  });
+
+  test('a transient held by a singleton that completed is kept when an outer one fails', async () => {
+    const CFG = new InjectionToken<number>('CFG');
+    const X = new InjectionToken<unknown>('X');
+    let inits = 0;
+    class T {
+      onModuleInit() {
+        inits++;
+      }
+    }
+    class Inner {
+      readonly t = inject(T);
+    }
+    class Outer {
+      readonly inner = inject(Inner);
+      readonly c = inject(CFG);
+    }
+    @Module({
+      providers: [
+        { provide: T, useClass: T, scope: 'transient' },
+        Inner,
+        Outer,
+        { provide: X, useFactory: () => inject(Outer) },
+        { provide: CFG, useFactory: async () => 1 },
+      ],
+    })
+    class M {}
+    const ctx = await ApplicationContext.create(M);
+    expect(ctx.get(Outer).inner).toBe(ctx.get(Inner));
+    expect(inits).toBe(1);
+    await ctx.close();
+  });
+});
+
+describe('provider scopes are validated', () => {
+  test('a scope other than singleton or transient is refused', () => {
+    class Svc {}
+    expect(() =>
+      normalizeProvider({ provide: Svc, useClass: Svc, scope: 'request' as 'singleton' }),
+    ).toThrow(ProviderConfigError);
+    expect(() =>
+      normalizeProvider({ provide: Svc, useFactory: () => 1, scope: 'request' as 'singleton' }),
+    ).toThrow(/Invalid scope "request" for Svc/);
+    expect(() => Injectable({ scope: 'request' as 'singleton' })).toThrow(ProviderConfigError);
+    expect(normalizeProvider({ provide: Svc, useClass: Svc, scope: 'transient' }).scope).toBe(
+      'transient',
+    );
+  });
+});
+
+describe('resolveOrConstruct with an async factory override', () => {
+  test('throws ProviderConfigError, not the internal pending error', async () => {
+    class Guard {}
+    @Module({})
+    class M {}
+    const ctx = await ApplicationContext.create(M, {
+      overrides: [[Guard, { provide: Guard, useFactory: async () => new Guard() }]],
+    });
+    expect(() => ctx.root.injector.resolveOrConstruct(Guard)).toThrow(
+      new ProviderConfigError('The override of Guard cannot use an async factory.'),
+    );
+    await ctx.close();
   });
 });

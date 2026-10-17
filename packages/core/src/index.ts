@@ -52,8 +52,10 @@ export { MODULES, type ModuleRef } from './modules.js';
 export {
   defaultRedisUrl,
   isLoopbackHostname,
+  ownedRedisClientOptions,
   parseIp,
   plaintextRedisHost,
+  type RedisDeadline,
   sendRedisCommand,
 } from './net.js';
 export * from './providers.js';

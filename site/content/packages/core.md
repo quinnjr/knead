@@ -28,15 +28,15 @@ build one internally; use it directly for applications without HTTP. See
 
 | Member | Signature | Description |
 | --- | --- | --- |
-| `create` | `static create(root: ModuleImport, options?: CreateContextOptions): Promise<ApplicationContext>` | Builds the module graph, runs every singleton factory (awaiting async ones), creates every remaining singleton, then runs `onModuleInit` and `onApplicationBootstrap`. Rejects on any error; if a startup hook fails, the instances already initialized are shut down first. |
+| `create` | `static create(root: ModuleImport, options?: CreateContextOptions): Promise<ApplicationContext>` | Builds the module graph, runs every singleton factory (awaiting async ones), creates every remaining singleton, then runs `onModuleInit` and `onApplicationBootstrap`. Rejects on any error; if a startup hook fails, the instances already initialized are shut down first and the original error is rethrown, with the cleanup's own error (if any) as its `shutdownError` property. Async factory overrides of `LOGGER` and `DEVELOPMENT` are awaited like any other. |
 | `get` | `get<T>(token: Token<T>): T` | Resolves a token visible from the root module, otherwise from any module that provides it, exported or not. Throws `NoProviderError`. |
 | `collect` | `collect<T>(token: Token<T[]>): T[]` | Every module's contributions to a multi token, in `modules` order, exported or not. |
 | `collectEntries` | `collectEntries<T>(token: Token<T[]>): { value: T; injector: ModuleInjector }[]` | Like `collect()`, with the injector of the providing module. |
 | `modules` | `readonly ModuleRef[]` | Every module in initialization order. |
 | `root` | `ModuleRef` | The root module. |
-| `close` | `close(signal?: string): Promise<void>` | Runs `beforeApplicationShutdown(signal)` then `onModuleDestroy` on every initialized instance, in reverse creation order. Idempotent: later calls return the same promise. Rejects with the only hook error, or an `AggregateError` (`Application shutdown failed`) for several. |
+| `close` | `close(signal?: string): Promise<void>` | Runs `beforeApplicationShutdown(signal)` then `onModuleDestroy` on every initialized instance, in reverse creation order. Idempotent: later calls return the same promise. During `initializeLate()`, no further startup hook starts once `close()` has begun; `close()` does not wait for the hook in progress (it may await `close()` itself), and an instance whose `onModuleInit` completes afterwards receives its shutdown hooks as soon as it does. Rejects with the only hook error, or an `AggregateError` (`Application shutdown failed`) for several. |
 | `closed` | `boolean` | `true` once `close()` has started. |
-| `initializeLate` | `initializeLate(): Promise<void>` | Internal to `@knead-js/http`: runs the startup hooks on instances created after `create()` (lazily built guards, middleware and filters) so they also receive shutdown hooks. |
+| `initializeLate` | `initializeLate(): Promise<void>` | Internal to `@knead-js/http`: runs the startup hooks on instances created after `create()` (lazily built guards, middleware and filters) so they also receive shutdown hooks. Does nothing once `close()` has started. |
 | `trackConstructed` | `trackConstructed<T>(fn: () => T): T` | Internal to `@knead-js/http`: tracks every instance `fn` constructs (transients included), so the following `initializeLate()` gives them lifecycle hooks. Outside it, transients resolved after `create()` are not tracked. |
 
 ### `CreateContextOptions`
@@ -76,7 +76,9 @@ separate module instance. See [dynamic modules](/guide/modules/#dynamic-modules)
 
 `type ModuleImport = Type | DynamicModule`: an entry of `imports`.
 `type ModuleExport = Token | ModuleImport`: an entry of `exports`, either a token or an imported
-module to re-export.
+module to re-export. When a module exports a token it provides itself and also re-exports a
+module exporting the same token, importers see the module's own provider, whatever the order of
+`exports`.
 
 ### The `MODULES` token
 
@@ -147,7 +149,8 @@ result. The context covers only the synchronous part of `fn`.
 ### `Injectable()`
 
 `@Injectable(options?: InjectableOptions)`. Optional class decorator: classes are injectable without
-it. It records the class's scope.
+it. It records the class's scope, and throws `ProviderConfigError` for a scope other than
+`'singleton'` or `'transient'`.
 
 ### `InjectableOptions`
 
@@ -212,7 +215,8 @@ is a `Token<T[]>` and each provider contributes one element.
 ### `Scope`
 
 `type Scope = 'singleton' | 'transient'`. A singleton is created once per registering module and
-cached; a transient provider creates a new value for every injection.
+cached; a transient provider creates a new value for every injection. Any other `scope` value,
+in a provider or in `@Injectable()`, throws `ProviderConfigError`.
 
 ### `normalizeProvider()` and `NormalizedProvider`
 
@@ -348,7 +352,7 @@ until a logger is known:
 | Member | Description |
 | --- | --- |
 | `warn(message)` | Sends `message` to the current logger, or holds it while there is none. |
-| `attach(logger)` | Sends the held warnings, and every later one, to `logger`. Ignored once a logger is set, so an explicit `target` always wins. |
+| `attach(logger)` | Sends the held warnings, and every later one, to `logger`. Ignored once a logger is set, so an explicit `target` always wins. Every held warning is delivered even if `logger.warn` throws; the first error is then rethrown. |
 | `use()` | Called when the object is first used: with no logger attached by then, `fallback()` becomes the logger. |
 
 `RedisStore` (`@knead-js/rate-limit`) and `RedisLockStore` (`@knead-js/schedule`) use it so their
@@ -384,13 +388,24 @@ escape control characters in `message`; wrap client-controlled parts in `logValu
 
 - **URL userinfo**, for any scheme: `redis://user:pass@host` becomes `redis://***@host`. The
   userinfo runs to the last `@` within the first 1024 characters after `://` (passwords often
-  contain unencoded `@` or `/`), and a URL ends at whitespace, a quote or an angle bracket. An
+  contain unencoded `@` or `/`). The scheme starts at the first letter of the run of scheme
+  characters before `://` and keeps its last 32 characters (`-redis://` and `1redis://` are
+  redacted too). A URL ends at whitespace, a quote or an angle bracket. An
   `http(s)` URL that starts with `host[:port]/` is exempt, since an `@` there is part of the path,
   but credential URLs nested in its path or query are still redacted.
-- **Secret `key=value` pairs** whose key contains `password`, `passwd`, `pwd`, `secret`, `token`,
-  `apikey`, `api_key` or `accountkey`, in any case and with any prefix or suffix (`access_token=`,
-  `DB_PASSWORD=`, `PGPASSWORD=`). The value runs to the next `&`, `;` or whitespace. Keys longer
-  than 64 characters are read only up to 64.
+- **Secret `key=value` and `key: value` pairs** whose key is sensitive as for `redactValue()`:
+  once lowercased and stripped of `-` and `_`, it contains `password`, `passwd`, `pwd`, `secret`,
+  `token`, `apikey`, `accountkey`, `privatekey`, `connectionstring`, `authorization`, `cookie`,
+  `credential` or `sessionid` (`access_token=`, `DB_PASSWORD=`, `x-api-key=`), or is exactly one
+  of the `redactValue()` keys (`pass`, `passphrase`, `jwt`, `sig`, `AccessKey`,
+  `SharedAccessKey`, ...). An unquoted value runs to the next `&`, `;` or whitespace (and, after
+  a `:`, also `,`, `}` or `]`); a quoted value (`password="hunter 2"`, `{"password":"x"}`) runs to
+  its closing quote, backslash escapes included. A `key:` with an unquoted key counts only at the
+  start of a line or after `{` or `,` (JSON, YAML, header lines, inspected objects), so prose such
+  as `Invalid token: expired` stays readable. The value of an `Authorization:` or `Cookie:`
+  (also `Proxy-Authorization:`, `Set-Cookie:`) line runs to the end of the line whatever its
+  shape; an Authorization scheme (`Token ***`) is kept. Keys longer than 64 characters are read
+  only up to 64.
 - **`Bearer` and `Basic` credentials**, in any case, when the credential has at least 8 token
   characters or is a `user:pass`-style pair. Shorter values, such as `Bearer abc123`, are not
   redacted, so ordinary prose stays readable.
@@ -409,23 +424,34 @@ object).
   `[Array]`, and cycles become `[Circular]`. String keys are redacted too.
 - A key equal to `authorization`, `cookie`, `set-cookie`, `password`, `passwd`, `pwd`, `secret`,
   `token`, `apikey`, `api_key`, `accesstoken`, `refreshtoken`, `accountkey`, `privatekey` or
-  `connectionstring` (any case) has its value replaced by `***`, whatever the value (`null` and
-  `undefined` stay).
+  `connectionstring` (any case), or to `pass`, `passphrase`, `jwt`, `sig`, `accesskey` or
+  `sharedaccesskey` once lowercased and stripped of `-` and `_`, has its value replaced by `***`,
+  whatever the value (`null` and `undefined` stay).
 - A key that contains `password`, `passwd`, `pwd`, `secret`, `token`, `apikey`, `accountkey`,
   `privatekey`, `connectionstring`, `authorization`, `cookie`, `credential` or `sessionid` once
   lowercased and stripped of `-` and `_` (`db_password`, `x-api-key`, `clientSecret`) has its value
   replaced by `***` too, except numbers, booleans, bigints, `null` and `undefined`
   (`maxTokens: 100` stays). Keys longer than 128 characters are not checked for these words.
+- A `URL` is walked as its `href`, and becomes the redacted string when it held credentials (at
+  any depth). A `Request` is walked as `{ method, url, headers }` and a `Response` as
+  `{ status, url, headers }`.
 - `Headers`, `Map` and other objects with an `entries()` or `toJSON()` method are walked as their
-  entries, and replaced by a plain object only when something in them was redacted. Like plain
-  objects, one past the depth limit becomes `[Object]` and one in a cycle becomes `[Circular]`.
+  entries (or as the string `toJSON()` returns), and replaced by a plain object (or that string)
+  only when something in them was redacted.
+- Other class instances are walked as their own enumerable properties, like plain objects, into
+  a copy with the same prototype, returned only when something in them was redacted. Dates and
+  binary data (`ArrayBuffer`, typed arrays, `Buffer`) are kept as they are.
+- Like plain objects, a class instance past the depth limit becomes `[Object]` (one without own
+  properties, such as a `Date`, is kept) and one in a cycle becomes `[Circular]`.
+- At most 20000 strings and objects are walked per call; the rest become `[Truncated]`, so wide
+  graphs of shared references stay cheap.
 - An `Error` whose message, stack, cause chain or own properties (including
   `AggregateError.errors`) need redacting becomes a string: its redacted stack, each cause as a
   `Caused by:` line (followed by the cause's own redacted properties, or, for a cause that is not
   an Error, the redacted cause itself), and its redacted own properties. An error with a cause chain longer than 16
   is always turned into this string, ending with `Caused by: … (more causes omitted)`. Other
   errors are returned unchanged.
-- Other class instances are returned as is. A property whose getter throws becomes
+- A property whose getter throws becomes
   `[unreadable]`, and a value that defeats the walk (an exotic `Proxy`) becomes
   `[unloggable value: <summary>]`.
 
@@ -497,12 +523,24 @@ localhost). Empty values count as unset.
 
 ### `sendRedisCommand()`
 
-`sendRedisCommand<T>(client: RedisClient, send: () => Promise<T>, timeoutMs: number, connect = true): Promise<T>`.
+`sendRedisCommand<T>(client: RedisClient, send: (deadline: RedisDeadline) => Promise<T>, timeoutMs: number, connect = true): Promise<T>`.
 Runs `send`, a command on `client`, connecting the client first when `connect` is true and it is
 disconnected (a client without the offline queue rejects sends while disconnected). Rejects with
-`Redis did not answer within <timeoutMs>ms` when no answer arrives in time, and never runs `send`
-after that, so a late command cannot act on an operation already reported as failed. The Redis
+`Redis did not answer within <timeoutMs>ms` when no answer arrives in time, and never starts
+`send` after that, so a late command cannot act on an operation already reported as failed.
+`timeoutMs` must be an integer of at least 1 (otherwise the promise rejects with a `RangeError`).
+`RedisDeadline` (`interface RedisDeadline { readonly expired: boolean }`): `deadline.expired` turns `true` when the
+timeout fires, so a `send` that issues a further command (`RedisStore`'s `EVAL` after a
+`NOSCRIPT` reply) checks it first. A `send` that ignores the argument works as before. The Redis
 stores of `@knead-js/rate-limit` and `@knead-js/schedule` send their commands through it.
+
+### `ownedRedisClientOptions()`
+
+`ownedRedisClientOptions(commandTimeout: number): RedisOptions`. The options of a Redis client a
+store builds itself: `{ enableOfflineQueue: false, connectionTimeout: max(commandTimeout, 1000) }`,
+so nothing queues while Redis is unreachable. `RedisStore` and `RedisLockStore` build their own
+clients with it, and connect only those clients before sending (`connect` of
+`sendRedisCommand()`); a supplied client connects as its own options say.
 
 ## Durations
 

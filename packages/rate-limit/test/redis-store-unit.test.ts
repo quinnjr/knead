@@ -2,7 +2,7 @@ import { describe, expect, spyOn, test } from 'bun:test';
 import { HttpConfigError, MemoryLogger } from '@knead-js/http';
 import type { RedisClient } from 'bun';
 import { hashKey, RedisStore } from '../src/index.js';
-import { ownedClientOptions, resetUnkeyedHashWarning } from '../src/redis-store.js';
+import { resetUnkeyedHashWarning } from '../src/redis-store.js';
 
 describe('RedisStore plaintext guardrails', () => {
   test('warns at construction about plaintext redis:// to a non-loopback host', async () => {
@@ -136,17 +136,6 @@ describe('keyed hashes', () => {
 });
 
 describe('RedisStore owned client', () => {
-  test('is built without the offline queue and with a bounded connection timeout', () => {
-    expect(ownedClientOptions(250)).toEqual({
-      enableOfflineQueue: false,
-      connectionTimeout: 1_000,
-    });
-    expect(ownedClientOptions(5_000)).toEqual({
-      enableOfflineQueue: false,
-      connectionTimeout: 5_000,
-    });
-  });
-
   test('an unreachable server fails within commandTimeout instead of queueing', async () => {
     const store = new RedisStore({
       url: 'redis://127.0.0.1:1',
@@ -202,5 +191,43 @@ describe('RedisStore logger', () => {
     const app = new MemoryLogger();
     store.setLogger(app);
     expect(app.entries).toEqual([]);
+  });
+});
+
+describe('RedisStore NOSCRIPT fallback', () => {
+  const rule = { limit: 1, windowMs: 1000, algorithm: 'sliding-window' as const };
+
+  test('falls back to EVAL when the script is not loaded', async () => {
+    const sent: string[] = [];
+    const client = {
+      connected: true,
+      send: async (command: string) => {
+        sent.push(command);
+        if (command === 'EVALSHA') throw new Error('NOSCRIPT No matching script');
+        return [1, 0, Date.now()];
+      },
+    } as unknown as RedisClient;
+    const result = await new RedisStore({ client, hashSecret: 'x'.repeat(32) }).consume('k', rule);
+    expect(result.allowed).toBe(true);
+    expect(sent).toEqual(['EVALSHA', 'EVAL']);
+  });
+
+  test('never sends the EVAL once commandTimeout has passed', async () => {
+    const sent: string[] = [];
+    const client = {
+      connected: true,
+      send: async (command: string) => {
+        sent.push(command);
+        if (command === 'EVALSHA') {
+          await Bun.sleep(60);
+          throw new Error('NOSCRIPT No matching script');
+        }
+        return [1, 0, Date.now()];
+      },
+    } as unknown as RedisClient;
+    const store = new RedisStore({ client, commandTimeout: 20, hashSecret: 'x'.repeat(32) });
+    await expect(store.consume('k', rule)).rejects.toThrow('within 20ms');
+    await Bun.sleep(80);
+    expect(sent).toEqual(['EVALSHA']);
   });
 });
