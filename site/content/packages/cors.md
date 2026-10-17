@@ -51,6 +51,13 @@ that throws, still produces a response with the CORS headers, so the browser can
 | `'*'` | Any origin. The response says `Access-Control-Allow-Origin: *`, never the request's origin, and no `Vary: Origin` is added. |
 | A string | The `Origin` header equals it exactly (scheme, host and port, case-sensitive). |
 | A string array | The `Origin` header equals one of the entries exactly. |
+
+A string origin (alone or in an array) must be written exactly as browsers send it: the
+serialized origin `scheme://host[:port]`, lowercase, without a path, a trailing slash or a default
+port, and with an internationalized host in its `xn--` form. `'https://app.example/'` or
+`'https://App.example'` would never match, so it is a `CorsConfigError` that names the canonical
+form (`"https://app.example"`). `'null'`, the origin of sandboxed and `file:` pages, is accepted
+as is.
 | A `RegExp` | The pattern matches the whole `Origin` header. `lastIndex` is reset before each test, so `g` and `y` flags are safe. |
 | A function | It returns (or resolves to) exactly `true`. Any other value, even a truthy one such as `1` or `{}`, disallows the origin. It receives the origin and the request `Ctx`. |
 
@@ -150,6 +157,10 @@ list your cross-origin front ends in the endpoint's `allowedOrigins` as well. Se
   `CORS origin "*" cannot be combined with credentials: true`.
 - A RegExp with a top-level `|`: the message names the pattern and suggests `/^(?:a|b)$/`.
 - An unanchored RegExp: the message names the pattern and says it `must be anchored with ^ and $`.
+- A string origin that is not a serialized origin: `CORS origin "https://app.example/" never
+  matches a browser's Origin header; write it as "https://app.example".`, or, for a string that
+  is not a URL with a host, `CORS origin "app.example" is not an origin; …`.
+- A `credentials` that is not a boolean: `CORS credentials must be a boolean, got string.`
 - A `maxAge` that is not a non-negative integer: `CORS maxAge must be a non-negative integer, got …`.
 
 `CorsModule.forRoot()` calls it for you.
