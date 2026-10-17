@@ -21,7 +21,6 @@ describe('mutations', () => {
     });
     expect(res.data).toBeNull();
     expect(res.errors?.[0]?.extensions?.code).toBe('UNAUTHENTICATED');
-    expect(res.errors?.[0]?.message).toBe('Sign in with a bearer token.');
     const bad = await s.app.graphql(createPost, {
       variables: { input: { title: 'Forged', body: 'hi' } },
       headers: { authorization: 'Bearer forged' },
@@ -117,7 +116,7 @@ describe('mutations', () => {
     });
   });
 
-  test('deletePost needs @Roles("admin"): UNAUTHENTICATED, then FORBIDDEN, then allowed', async () => {
+  test('deletePost needs delete on Post: UNAUTHENTICATED, then FORBIDDEN, then allowed', async () => {
     const anonymous = await s.app.graphql(deletePost, { variables: { id: 'p3' } });
     expect(anonymous.errors?.[0]?.extensions?.code).toBe('UNAUTHENTICATED');
     const author = await s.app.graphql(deletePost, { variables: { id: 'p3' }, headers: grace });

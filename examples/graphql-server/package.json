@@ -9,6 +9,7 @@
     "smoke": "bun scripts/smoke.ts"
   },
   "dependencies": {
+    "@knead-js/casl": "workspace:^",
     "@knead-js/core": "workspace:^",
     "@knead-js/cors": "workspace:^",
     "@knead-js/graphql": "workspace:^",

@@ -181,6 +181,9 @@ importers:
 
   examples/graphql-server:
     dependencies:
+      '@knead-js/casl':
+        specifier: workspace:^
+        version: link:../../packages/casl
       '@knead-js/core':
         specifier: workspace:^
         version: link:../../packages/core
@@ -215,6 +218,9 @@ importers:
 
   examples/rest-api:
     dependencies:
+      '@knead-js/casl':
+        specifier: workspace:^
+        version: link:../../packages/casl
       '@knead-js/core':
         specifier: workspace:^
         version: link:../../packages/core

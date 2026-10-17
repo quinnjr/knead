@@ -1,5 +1,7 @@
+import { fullGrant } from '@knead-js/casl';
 import { inject, Module } from '@knead-js/core';
-import { type Ctx, createRouteDecorator, type Guard, UnauthorizedException } from '@knead-js/http';
+import { type Ctx, type Guard, UnauthorizedException } from '@knead-js/http';
+import { permissions, type Session } from './permissions.js';
 
 export interface User {
   id: string;
@@ -9,7 +11,7 @@ export interface User {
 
 declare module '@knead-js/http' {
   interface CtxState {
-    user?: User;
+    session?: Session;
   }
 }
 
@@ -19,6 +21,9 @@ declare module '@knead-js/http' {
  * production; use real authentication instead (for example signed and expiring
  * JWTs or opaque session tokens issued by an identity provider, with tokens
  * stored hashed and revocable).
+ *
+ * Each token carries a grant, as a personal access token would. A real token issuer checks the
+ * requested grant with `AbilityService.validateGrant()` before issuing it.
  */
 export class AuthService {
   constructor() {
@@ -30,43 +35,34 @@ export class AuthService {
     }
   }
 
-  readonly #tokens = new Map<string, User>([
-    ['admin-token', { id: 'u1', name: 'Admin', roles: ['admin'] }],
-    ['user-token', { id: 'u2', name: 'Regular', roles: [] }],
+  readonly #tokens = new Map<string, Session>([
+    // A first-party session: everything the admin can do.
+    [
+      'admin-token',
+      { user: { id: 'u1', name: 'Admin', roles: ['admin'] }, grant: fullGrant(permissions) },
+    ],
+    ['user-token', { user: { id: 'u2', name: 'Regular', roles: [] }, grant: 'users:read' }],
+    // An admin's read-only token: the grant narrows what the admin could otherwise do.
+    ['reader-token', { user: { id: 'u1', name: 'Admin', roles: ['admin'] }, grant: 'users:read' }],
   ]);
 
-  verify(token: string): User | undefined {
+  verify(token: string): Session | undefined {
     // The token is looked up via Map rather than compared with ===.
     return this.#tokens.get(token);
   }
 }
 
+/** Authenticates the bearer token (401 otherwise) and stores its session for AbilityGuard. */
 export class AuthGuard implements Guard {
   readonly #auth = inject(AuthService);
 
   canActivate(ctx: Ctx): boolean {
     const header = ctx.req.headers.get('authorization');
     const token = header?.startsWith('Bearer ') ? header.slice(7) : undefined;
-    const user = token ? this.#auth.verify(token) : undefined;
-    if (!user) throw new UnauthorizedException('Missing or invalid bearer token');
-    ctx.state.user = user;
+    const session = token ? this.#auth.verify(token) : undefined;
+    if (!session) throw new UnauthorizedException('Missing or invalid bearer token');
+    ctx.state.session = session;
     return true;
-  }
-}
-
-export const Roles = createRouteDecorator<string[]>('roles');
-
-/**
- * Reads @Roles() through `ctx.meta` and passes only an authenticated user holding one of them.
- * Everything else is a 403, including a route that uses the guard without @Roles(): a missing
- * annotation fails closed.
- */
-export class RolesGuard implements Guard {
-  canActivate(ctx: Ctx): boolean {
-    const required = ctx.meta.roles;
-    const user = ctx.state.user;
-    if (!Array.isArray(required) || required.length === 0 || !user) return false;
-    return required.some((role) => user.roles.includes(role));
   }
 }
 

@@ -32,9 +32,9 @@ describe('example GraphQL API', () => {
     expect(res.errors?.[0]?.extensions?.code).toBe('NOT_FOUND');
   });
 
-  test('createUser requires the admin role', async () => {
+  test('createUser requires a token whose grant allows it', async () => {
     const anonymous = await app.graphql(create, { variables: { name: 'Eve' } });
-    expect(anonymous.errors?.[0]?.extensions?.code).toBe('FORBIDDEN');
+    expect(anonymous.errors?.[0]?.extensions?.code).toBe('UNAUTHENTICATED');
     const reader = await app.graphql(create, {
       variables: { name: 'Eve' },
       headers: { authorization: 'Bearer user-token' },

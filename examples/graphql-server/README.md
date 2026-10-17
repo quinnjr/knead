@@ -1,6 +1,6 @@
 # Knead GraphQL server example
 
-A small blog (authors, posts and comments, kept in memory and seeded at startup) served over GraphQL with every Knead package working together: code-first types, DataLoader-batched field resolvers, valibot argument validation, bearer-token auth with resolver guards and role metadata, subscriptions over `graphql-transport-ws` (in memory or on Redis), CORS, rate limiting, security headers and HTML sanitization, plus a plain REST `GET /health` route next to `/graphql` that returns only `{ "status": "ok" }`. Private; not published.
+A small blog (authors, posts and comments, kept in memory and seeded at startup) served over GraphQL with every Knead package working together: code-first types, DataLoader-batched field resolvers, valibot argument validation, bearer-token auth with `@knead-js/casl` permissions (token grants, `@Can`, field-level `@AbilitySubject`), subscriptions over `graphql-transport-ws` (in memory or on Redis), CORS, rate limiting, security headers and HTML sanitization, plus a plain REST `GET /health` route next to `/graphql` that returns only `{ "status": "ok" }`. Private; not published.
 
 ## Run
 
@@ -26,10 +26,13 @@ In development, open <http://localhost:3000/graphql> in a browser for the playgr
 
 Demo bearer tokens (hard-coded and public, demo only; the demo `AuthService` throws at startup when `NODE_ENV=production`):
 
-| Token | User | Roles |
-| --- | --- | --- |
-| `ada-token` | Ada Lovelace (`a1`) | `admin` |
-| `grace-token` | Grace Hopper (`a2`) | none |
+| Token | User | Roles | Grant |
+| --- | --- | --- | --- |
+| `ada-token` | Ada Lovelace (`a1`) | `admin` | everything (`fullGrant(permissions)`) |
+| `grace-token` | Grace Hopper (`a2`) | none | `blog:write account:profile` |
+| `grace-reader-token` | Grace Hopper (`a2`) | none | `blog:read account:profile` |
+
+Authorization uses `@knead-js/casl` (`src/auth/permissions.ts`). The permission catalog has two areas, `blog` (`none`, `read`, `write`, `admin`) and `account` (`none`, `profile`, `full`), and each token carries a grant naming a level per area, like a personal access token. A request may do only what both the user (`defineUserAbility`: anyone can read and create posts and comments and update their own posts, admins can do anything) and the token's grant allow. `GraphQLModule` runs `AbilityGuard` on every root field, so each one declares `@Can(action, subject)` or `@SkipAbility()` (the public queries); a field with neither is denied.
 
 ## Queries
 
@@ -51,7 +54,7 @@ curl -G localhost:3000/graphql -H 'x-graphql-request: 1' --data-urlencode 'query
 
 ## Mutations
 
-Drafts are visible only to their author and to admins: everyone else sees published posts only, and someone else's draft is reported as not found (`post`, `node`, `Author.posts`, `addComment`, `publishPost` and the `commentAdded` subscription alike). Every mutation needs a token (`UNAUTHENTICATED` otherwise). `deletePost` is admin-only (`FORBIDDEN` for `grace-token`): `RolesGuard` reads `@Roles()` through `ctx.meta` and passes only a signed-in user holding one of the roles, and it also denies a resolver that uses it without `@Roles()`.
+Drafts are visible only to their author and to admins: everyone else sees published posts only, and someone else's draft is reported as not found (`post`, `node`, `Author.posts`, `addComment`, `publishPost` and the `commentAdded` subscription alike). Every mutation needs a token (`UNAUTHENTICATED` otherwise) whose grant allows it (`FORBIDDEN` for `grace-reader-token`). `publishPost` checks the post itself with `AbilityService.authorize()`: Grace may publish only her own posts. `deletePost` needs `delete` on `Post`, which only an admin with a `blog:admin` grant has (`FORBIDDEN` for `grace-token`).
 
 ```bash
 curl localhost:3000/graphql -H 'content-type: application/json' -H 'authorization: Bearer grace-token' \
@@ -63,6 +66,13 @@ curl localhost:3000/graphql -H 'content-type: application/json' -H 'authorizatio
 
 curl localhost:3000/graphql -H 'content-type: application/json' -H 'authorization: Bearer ada-token' \
   -d '{"query":"mutation { deletePost(id: \"p4\") }"}'
+```
+
+`me` returns the signed-in `Account`. The type is marked `@AbilitySubject('Account')`, so each of its fields needs `read` on that field: `grace-token`'s `account:profile` grant covers `id` and `name` but not `roles`, which comes back `null` with a `FORBIDDEN` error.
+
+```bash
+curl localhost:3000/graphql -H 'content-type: application/json' -H 'authorization: Bearer grace-token' \
+  -d '{"query":"{ me { id name roles } }"}'
 ```
 
 `createPost` input is validated with valibot (a 3-character title fails with `BAD_USER_INPUT` and `extensions.issues`), and post and comment bodies are sanitized with `@knead-js/sanitize`.
