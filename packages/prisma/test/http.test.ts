@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { Module } from '@knead-js/core';
+import { KneadError, Module } from '@knead-js/core';
 import {
   APP_FILTER,
   BadRequestException,
@@ -202,7 +202,7 @@ describe('PrismaHttpModule', () => {
     expect(ext.res.status).toBe(503);
   });
 
-  test('a mapper that throws is treated as unmapped', async () => {
+  test('a mapper that throws becomes a masked 500', async () => {
     const { res, body } = await hit(known('P2002'), {
       map: {
         P2002: () => {
@@ -215,7 +215,7 @@ describe('PrismaHttpModule', () => {
     expect(typeof body.correlationId).toBe('string');
   });
 
-  test('a mapper that returns a non-HttpException is treated as unmapped', async () => {
+  test('a mapper that returns a non-HttpException becomes a masked 500', async () => {
     const { res, body } = await hit(known('P2002'), {
       map: { P2002: (() => undefined) as unknown as PrismaErrorMapper },
     });
@@ -235,7 +235,52 @@ describe('PrismaHttpModule', () => {
   });
 });
 
+describe('PrismaHttpModule.forRoot options', () => {
+  test('accepts no map, an empty map and a map of functions', () => {
+    expect(() => PrismaHttpModule.forRoot()).not.toThrow();
+    expect(() => PrismaHttpModule.forRoot({})).not.toThrow();
+    expect(() => PrismaHttpModule.forRoot({ map: {} })).not.toThrow();
+    expect(() =>
+      PrismaHttpModule.forRoot({ map: Object.assign(Object.create(null), { P2002: () => 1 }) }),
+    ).not.toThrow();
+    expect(() =>
+      PrismaHttpModule.forRoot({ map: { P2002: () => new BadRequestException() } }),
+    ).not.toThrow();
+  });
+
+  test('rejects a map that is not a plain object of functions', () => {
+    class Mappers {
+      P2002 = () => new BadRequestException();
+    }
+    const bad: unknown[] = [
+      null,
+      42,
+      'P2002',
+      [() => new BadRequestException()],
+      new Map(),
+      new Mappers(),
+      { P2002: 'BadRequestException' },
+      { P2002: undefined },
+    ];
+    for (const map of bad) {
+      expect(() => PrismaHttpModule.forRoot({ map } as never)).toThrow(KneadError);
+    }
+    expect(() => PrismaHttpModule.forRoot(null as never)).toThrow(KneadError);
+  });
+});
+
 describe('toHttpException', () => {
+  test('ignores inherited map keys', () => {
+    // `constructor` is inherited from Object.prototype; it must not be called as a mapper.
+    const error = { name: 'PrismaClientValidationError', code: 'constructor' };
+    expect(toHttpException(error, { map: {} })?.status).toBe(400);
+    const proto = { P2002: () => new BadRequestException('inherited') };
+    const map = Object.create(proto) as Record<string, PrismaErrorMapper>;
+    expect(
+      toHttpException({ name: 'PrismaClientKnownRequestError', code: 'P2002' }, { map })?.status,
+    ).toBe(409);
+  });
+
   test('returns undefined for non-Prisma errors', () => {
     expect(toHttpException(new Error('x'))).toBeUndefined();
     expect(toHttpException('x')).toBeUndefined();

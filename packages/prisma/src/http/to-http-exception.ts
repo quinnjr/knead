@@ -78,13 +78,17 @@ export function toHttpException(
 ): HttpException | undefined {
   if (!isPrismaError(error)) return undefined;
   const { code, name } = error;
-  const mapper = (code === undefined ? undefined : options.map?.[code]) ?? options.map?.[name];
+  const { map } = options;
+  // Own keys only, so an inherited `constructor` or `toString` is never called as a mapper.
+  const own = (key: string | undefined) =>
+    map !== undefined && key !== undefined && Object.hasOwn(map, key) ? map[key] : undefined;
+  const mapper = own(code) ?? own(name);
   if (mapper) {
     try {
       const mapped: unknown = mapper(error);
       if (mapped instanceof HttpException) return mapped;
     } catch {
-      // A broken mapper is treated as unmapped.
+      // A broken mapper becomes a masked 500.
     }
     return new InternalServerErrorException(undefined, { cause: error });
   }
