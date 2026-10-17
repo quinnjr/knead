@@ -289,6 +289,8 @@ What the response contains:
 - In development, the built-in mappings add `prismaCode` (the error code) and, when the error's metadata names
   the constraint's fields, `fields` (field names only, never values). Prisma 7 driver adapters put
   them at `meta.driverAdapterError.cause.constraint.fields`; `meta.target` is used otherwise.
+  `@prisma/adapter-pg` 7.10 and later name a violated unique index (`constraint.index`) rather
+  than its fields, so a Postgres unique violation carries no `fields`.
 
 See [exception filters](/guide/exception-filters/) for how filters are ordered.
 

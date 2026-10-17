@@ -11,20 +11,17 @@ minimumReleaseAge: 1440
 # remove each once it is older than minimumReleaseAge. Publish times from the
 # npm registry; each line says when it may be removed (UTC).
 minimumReleaseAgeExclude:
-  - '@leaven-graphql/context@0.2.1' # published 2026-10-16T01:18Z, remove after 2026-10-17T01:19Z
   - '@leaven-graphql/core@0.2.3' # published 2026-10-16T19:41Z, remove after 2026-10-17T19:42Z
-  - '@leaven-graphql/errors@0.2.1' # published 2026-10-16T01:18Z, remove after 2026-10-17T01:19Z
   - '@leaven-graphql/playground@0.2.2' # published 2026-10-16T17:36Z, remove after 2026-10-17T17:37Z
   - '@leaven-graphql/ws@0.2.3' # published 2026-10-16T19:39Z, remove after 2026-10-17T19:40Z
-# Security fixes for Prisma 7.9.1's pinned transitive dependencies. prisma@7.10.x ships these
-# versions but was published without provenance (refused by trustPolicy below), so keep 7.9.1
-# and lift only these two. Remove both once a provenance-attested prisma release includes them.
-overrides:
-  'prisma>mysql2': 3.24.4 # GHSA-3f6p-5ww8-9rcr (high) and the zlib inflate DoS (moderate)
-  '@prisma/config>deepmerge-ts': 8.0.2 # stack exhaustion on recursive objects (high)
 # Refuse a version whose publish trust evidence (provenance / trusted
 # publisher) is weaker than an earlier version of the same package.
 trustPolicy: no-downgrade
+# Accepted trust downgrades, by exact version. prisma 7.10.x was published from an npm token
+# without provenance (7.9.1 had it); 7.10.1 was accepted deliberately on 2026-10-17 for its
+# mysql2 and deepmerge-ts security fixes. Remove when an attested prisma 7 release ships.
+trustPolicyExclude:
+  - 'prisma@7.10.1'
 # Fail the install when a dependency has build scripts nobody has reviewed.
 strictDepBuilds: true
 # Transitive dependencies may only come from the registry (no git/tarball URLs).

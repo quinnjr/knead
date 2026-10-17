@@ -244,7 +244,8 @@ The original error is the exception's `cause`; its message is never used. With
 `development: true` the built-in mappings add the extensions `prismaCode` (the error's `code`) and,
 when the metadata names the constraint's fields as an array of strings, `fields`. Those are read
 from `meta.driverAdapterError.cause.constraint.fields` (Prisma 7 driver adapters) or else
-`meta.target`.
+`meta.target`. `@prisma/adapter-pg` 7.10 and later name a violated unique index
+(`constraint.index`) instead of its fields, so a Postgres unique violation has no `fields`.
 
 ### `isPrismaError()`
 
