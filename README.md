@@ -86,7 +86,7 @@ To check a release locally without publishing: `bun scripts/release.ts gate v<ve
 > [!WARNING]
 > Never push a `v*` tag on a commit that predates the two-job release workflow. Older commits carry the old single-job `release.yml`, which runs every repo script while holding the npm publish credential and has none of these checks.
 
-CI authenticates to npm with [trusted publishing](https://docs.npmjs.com/trusted-publishers) (OIDC) rather than a stored token. Each `@knead-js/*` package on npmjs.com must trust this repository's `release.yml` workflow. A new package needs one manual publish first (`pnpm publish --access public --otp <code>` from its directory). After that, register the workflow for every public package while logged in to npm with 2FA: `pnpm trust:npm` (add `--dry-run` to preview). The script logs in if needed and always logs out of npm when it exits, even on failure, so no long-lived npm session token stays in `~/.npmrc`; that also ends any session you had before running it. npm attaches provenance only while the repository is public.
+CI authenticates to npm with [trusted publishing](https://docs.npmjs.com/trusted-publishers) (OIDC) rather than a stored token. Each `@knead-js/*` package on npmjs.com must trust this repository's `release.yml` workflow. A new package needs one manual publish first (`pnpm publish --access public --otp <code>` from its directory). After that, register the workflow for every public package while logged in to npm with 2FA: `pnpm trust:npm` (add `--dry-run` to preview). Packages that already have a trusted publisher (any one) are skipped, so re-running it after adding a package is safe; to change an existing trust, revoke it first. The script logs in if needed and always logs out of npm when it exits, even on failure, so no long-lived npm session token stays in `~/.npmrc`; that also ends any session you had before running it. npm attaches provenance only while the repository is public.
 
 ### Toolchain and image pins
 
@@ -103,7 +103,7 @@ Some protections need features that private repositories on the free plan do not
   1. Create a GitHub environment `npm-publish` with required reviewers and a deployment rule allowing only `v*` tags.
   2. Add `environment: npm-publish` to the `publish` job in `release.yml`.
   3. Remove the existing environment-less trusted publisher from every package, so it cannot still be used. List it with `pnpm dlx npm@11.21.0 trust list @knead-js/<pkg>` and remove it with `pnpm dlx npm@11.21.0 trust revoke @knead-js/<pkg> --id=<trust-id>`, or delete it under each package's **Settings → Trusted publishing** on npmjs.com.
-  4. Re-register with the environment: `pnpm trust:npm --env npm-publish`.
+  4. Re-register with the environment: `pnpm trust:npm --env npm-publish`. The script skips any package that still has a trusted publisher, so step 3 must be complete first.
 - **CodeQL.** `codeql.yml` skips its analysis until the repository variable `CODEQL_ENABLED` is `true`, because code scanning is unavailable on a private free-plan repository. When the repository goes public (or gets GitHub Advanced Security), enable code scanning under **Settings → Code security** and set the variable under **Settings → Secrets and variables → Actions → Variables** (`gh variable set CODEQL_ENABLED --body true`).
 - **Private vulnerability reporting** (see [SECURITY.md](SECURITY.md)) and **CODEOWNERS enforcement** through branch protection.
 
