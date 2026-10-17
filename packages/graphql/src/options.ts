@@ -84,7 +84,11 @@ export interface PlaygroundOptions {
 export interface GraphQLModuleOptions {
   /** Default '/graphql'. Also the WebSocket path for subscriptions. */
   path?: string;
-  /** Builds the user part of each operation's context; merged onto ResolverCtx. */
+  /**
+   * Builds the user part of each operation's context, spread into each ResolverCtx. The built-in
+   * members (`args`, `parent`, `info`, `http`, `state`, `meta`, `loader`) win over context keys
+   * with the same name, so do not use those names.
+   */
   context?: (http: Ctx) => object | Promise<object>;
   /**
    * Serves GraphQL Playground to browsers. Default: the application is in development (the
