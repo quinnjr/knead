@@ -199,7 +199,10 @@ describe.skipIf(TEST_DATABASE_URL === '')('postgres integration', () => {
       expect(second.status).toBe(409);
       const body = (await second.json()) as { fields?: unknown; prismaCode?: unknown };
       expect(body.prismaCode).toBe('P2002');
-      expect(body.fields).toEqual(['email']);
+      // @prisma/adapter-pg 7.10 names the violated index (constraint.index), not its fields, when
+      // Postgres reports a constraint name, so there are no field names to add. The fields path
+      // is covered with adapter-shaped errors in http.test.ts.
+      expect(body.fields).toBeUndefined();
     } finally {
       await dev.close();
     }
