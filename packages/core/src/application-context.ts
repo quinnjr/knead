@@ -81,7 +81,7 @@ export class ApplicationContext {
     }
     const context = new ApplicationContext(graph.modules, graph.root, state);
     await context.#initializePending();
-    state.bootstrapping = false;
+    state.endBootstrap();
     return context;
   }
 
@@ -100,13 +100,7 @@ export class ApplicationContext {
    * builds its middleware, guards and filters inside it.
    */
   trackConstructed<T>(fn: () => T): T {
-    const previous = this.state.bootstrapping;
-    this.state.bootstrapping = true;
-    try {
-      return fn();
-    } finally {
-      this.state.bootstrapping = previous;
-    }
+    return this.state.trackAll(fn);
   }
 
   async #initializePending(): Promise<void> {

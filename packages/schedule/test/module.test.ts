@@ -319,6 +319,19 @@ describe('ScheduleModule', () => {
     ]);
   });
 
+  test("a lock store built outside DI receives the application's LOGGER", async () => {
+    const logger = new MemoryLogger();
+    const received: unknown[] = [];
+    const lockStore = {
+      acquire: async () => true,
+      setLogger: (l: unknown) => received.push(l),
+    };
+    @Module({ imports: [ScheduleModule.forRoot({ lockStore })] })
+    class AppModule {}
+    ctx = await ApplicationContext.create(AppModule, { logger });
+    expect(received).toEqual([logger]);
+  });
+
   test('the default failure report is a redacted summary, never the raw error', async () => {
     const errors: unknown[][] = [];
     class Jobs {

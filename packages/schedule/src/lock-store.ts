@@ -1,3 +1,4 @@
+import type { WarnLogger } from '@knead-js/core';
 import { ScheduleConfigError } from './errors.js';
 
 /**
@@ -10,6 +11,11 @@ export interface ScheduleLockStore {
   /** True for exactly one caller per key until `ttlMs` has passed. */
   acquire(key: string, ttlMs: number): Promise<boolean>;
   close?(): void | Promise<void>;
+  /**
+   * Receives the scheduler's logger (the `logger` option, or the application's LOGGER) when
+   * ScheduleModule starts, for a store built outside dependency injection. Optional.
+   */
+  setLogger?(logger: WarnLogger): void;
 }
 
 export function assertLockTtl(ttlMs: number): void {

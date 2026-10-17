@@ -19,16 +19,41 @@ describe('RedisLockStore plaintext guardrails', () => {
     }
   });
 
-  test('without a logger, the warning goes to a ConsoleLogger', async () => {
+  test('without a logger, the warning waits for setLogger()', async () => {
+    const messages: string[] = [];
+    const store = new RedisLockStore({ url: 'redis://cache.internal:6379' });
+    store.setLogger({ warn: (m) => messages.push(m) });
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toStartWith('[knead:schedule] RedisLockStore connects to');
+    store.setLogger({ warn: () => messages.push('again') });
+    expect(messages).toHaveLength(1);
+    await store.close();
+  });
+
+  test('without setLogger(), the warning goes to a ConsoleLogger at the first acquire()', async () => {
     const warn = spyOn(console, 'warn').mockImplementation(() => {});
     try {
-      const store = new RedisLockStore({ url: 'redis://cache.internal:6379' });
-      await store.close();
+      const store = new RedisLockStore({ url: 'redis://cache.invalid:6379', commandTimeout: 50 });
+      expect(warn).not.toHaveBeenCalled();
+      await store.acquire('job:1', 1000).catch(() => {});
       expect(warn).toHaveBeenCalledTimes(1);
       expect(String(warn.mock.calls[0]?.[0])).toStartWith('[knead] [knead:schedule] ');
+      await store.close();
     } finally {
       warn.mockRestore();
     }
+  });
+
+  test('an explicit logger option wins over setLogger()', async () => {
+    const own: string[] = [];
+    const app: string[] = [];
+    const store = new RedisLockStore({
+      url: 'redis://cache.internal:6379',
+      logger: { warn: (m) => own.push(m) },
+    });
+    store.setLogger({ warn: (m) => app.push(m) });
+    expect([own.length, app.length]).toEqual([1, 0]);
+    await store.close();
   });
 
   test('requireTls throws for plaintext remote URLs', () => {

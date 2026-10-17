@@ -174,6 +174,7 @@ The interface a lock store implements:
 | --- | --- | --- |
 | `acquire` | `(key: string, ttlMs: number) => Promise<boolean>` | Claims `key` for `ttlMs` milliseconds. |
 | `close` | `() => void \| Promise<void>` (optional) | Releases the store's connections. |
+| `setLogger` | `(logger: WarnLogger) => void` (optional) | Called once when `ScheduleModule` starts, with the scheduler's logger (the `logger` option, or the application's `LOGGER`), for a store built outside dependency injection. |
 
 `acquire()` must resolve `true` for exactly one caller per key until `ttlMs` has passed. The
 scheduler calls it with `<job name>:<scheduled time in epoch ms>` and never releases a lock. If
@@ -200,7 +201,7 @@ when Redis answers `OK`. Keys expire on their own and are never deleted. It conn
 | `client` | `RedisClient` (from `bun`) | none | An existing client. It is not closed by `close()` and skips the plaintext check. Pass `client` or `url`, not both. |
 | `prefix` | `string` | `'knead:schedule:'` | Key prefix. |
 | `requireTls` | `boolean` | `false` | Throw `ScheduleConfigError` at construction instead of warning when the URL is plaintext to a non-loopback host. |
-| `logger` | `{ warn(message: string): void }` | a `ConsoleLogger` from `@knead-js/core` | Where the plaintext warning goes. The store is built outside dependency injection, so pass your application's logger here to route it there. |
+| `logger` | `WarnLogger` | the scheduler's logger | Where the plaintext warning goes. Without it, the warning is held until `ScheduleModule` starts and passes its logger (`setLogger()`); a store used without the module sends it to a `ConsoleLogger` from `@knead-js/core` at its first `acquire()`. |
 | `commandTimeout` | `number` | `250` | Milliseconds an `acquire()` waits for Redis before rejecting; must be an integer of at least 1. |
 
 URL safety: when `url` (or `REDIS_URL`, then `VALKEY_URL`, if neither `url` nor `client` is given)

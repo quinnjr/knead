@@ -1,4 +1,4 @@
-import { sendRedisCommand } from '@knead-js/core';
+import { DeferredLogger, sendRedisCommand } from '@knead-js/core';
 import {
   ConsoleLogger,
   defaultRedisUrl,
@@ -151,10 +151,7 @@ export class RedisStore implements RateLimitStore {
   readonly #hashKeys: boolean;
   readonly #hashSecret: Uint8Array | undefined;
 
-  /** The `logger` option, or undefined until setLogger() (or the first consume()). */
-  #logger: Logger | undefined;
-  /** Warnings raised before a logger was known. */
-  #pending: string[] = [];
+  readonly #log: DeferredLogger;
   readonly #commandTimeout: number;
 
   constructor(options: RedisStoreOptions = {}) {
@@ -163,7 +160,7 @@ export class RedisStore implements RateLimitStore {
       throw new RangeError(`commandTimeout must be an integer >= 1 (ms), got ${String(timeout)}.`);
     }
     this.#commandTimeout = timeout;
-    this.#logger = options.logger;
+    this.#log = new DeferredLogger(options.logger, () => new ConsoleLogger('knead:rate-limit'));
     const remote = plaintextRedisHost(
       options.client === undefined ? (options.url ?? defaultRedisUrl()) : undefined,
     );
@@ -172,14 +169,14 @@ export class RedisStore implements RateLimitStore {
         `RedisStore connects to ${remote} over plaintext redis://, so rate-limit keys and ` +
         'credentials cross the network unencrypted. Use rediss:// (TLS) with an ACL user.';
       if (options.requireTls) throw new HttpConfigError(problem);
-      this.#warn(problem);
+      this.#log.warn(problem);
     }
     this.#hashKeys = options.hashKeys ?? true;
     this.#hashSecret =
       options.hashSecret === undefined ? undefined : hashSecretBytes(options.hashSecret);
     if (this.#hashKeys && this.#hashSecret === undefined && !warnedUnkeyed) {
       warnedUnkeyed = true;
-      this.#warn(
+      this.#log.warn(
         'RedisStore has no hashSecret, so rate-limit keys are stored as plain SHA-256 hashes ' +
           'and client IPs are recoverable from the Redis keys. Set hashSecret (32+ bytes, the ' +
           'same on every instance).',
@@ -197,17 +194,7 @@ export class RedisStore implements RateLimitStore {
    * since construction. RateLimitModule calls it with the application's LOGGER.
    */
   setLogger(logger: Logger): void {
-    if (this.#logger === undefined) this.#adopt(logger);
-  }
-
-  #warn(message: string): void {
-    if (this.#logger === undefined) this.#pending.push(message);
-    else this.#logger.warn(message);
-  }
-
-  #adopt(logger: Logger): void {
-    this.#logger = logger;
-    for (const message of this.#pending.splice(0)) logger.warn(message);
+    this.#log.attach(logger);
   }
 
   async consume(key: string, rule: RateLimitRule): Promise<ConsumeResult> {
@@ -220,7 +207,7 @@ export class RedisStore implements RateLimitStore {
       );
     }
     // Used without RateLimitModule: nobody will call setLogger().
-    if (this.#logger === undefined) this.#adopt(new ConsoleLogger('knead:rate-limit'));
+    this.#log.use();
     const algorithm: Algorithm =
       rule.algorithm === 'token-bucket' ? 'token-bucket' : 'sliding-window';
     const args = [

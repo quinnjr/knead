@@ -31,11 +31,13 @@ export {
 } from './log-redaction.js';
 export {
   ConsoleLogger,
+  DeferredLogger,
   LOGGER,
   type LogEntry,
   type Logger,
   type LogLevel,
   MemoryLogger,
+  type WarnLogger,
 } from './logger.js';
 export * from './metadata.js';
 export { MODULES, type ModuleRef } from './modules.js';

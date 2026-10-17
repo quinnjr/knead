@@ -339,6 +339,21 @@ ignored.
 Records every call in `entries: LogEntry[]`, exactly as logged; `clear()` empties it.
 `@knead-js/testing` uses it by default. It does not redact anything, so use it only in tests.
 
+### `DeferredLogger` and `WarnLogger`
+
+`type WarnLogger = Pick<Logger, 'warn'>`. `new DeferredLogger(target, fallback)` holds the warnings
+of an object built outside dependency injection, such as a Redis store passed in module options,
+until a logger is known:
+
+| Member | Description |
+| --- | --- |
+| `warn(message)` | Sends `message` to the current logger, or holds it while there is none. |
+| `attach(logger)` | Sends the held warnings, and every later one, to `logger`. Ignored once a logger is set, so an explicit `target` always wins. |
+| `use()` | Called when the object is first used: with no logger attached by then, `fallback()` becomes the logger. |
+
+`RedisStore` (`@knead-js/rate-limit`) and `RedisLockStore` (`@knead-js/schedule`) use it so their
+construction warnings reach the application's `LOGGER`.
+
 ### `LogEntry` and `LogLevel`
 
 `type LogLevel = 'debug' | 'info' | 'warn' | 'error'` and
