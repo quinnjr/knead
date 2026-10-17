@@ -26,6 +26,7 @@
   },
   "scripts": {
     "test": "bun test",
+    "test:db": "prisma generate --config test/fixtures/prisma.config.ts && prisma db push --config test/fixtures/prisma.config.ts --force-reset && bun test",
     "prepack": "bun ../../scripts/copy-licenses.ts"
   },
   "peerDependencies": {
@@ -44,7 +45,10 @@
   "devDependencies": {
     "@knead-js/core": "workspace:^",
     "@knead-js/http": "workspace:^",
-    "@knead-js/testing": "workspace:^"
+    "@knead-js/testing": "workspace:^",
+    "@prisma/adapter-pg": "7.9.1",
+    "@prisma/client": "7.9.1",
+    "prisma": "7.9.1"
   },
   "publishConfig": {
     "access": "public",
