@@ -78,7 +78,8 @@ export function toHttpException(
 ): HttpException | undefined {
   if (!isPrismaError(error)) return undefined;
   const { code, name } = error;
-  const { map } = options;
+  // `toHttpException` is public API: anything that is not an object is treated as no map.
+  const map = typeof options.map === 'object' && options.map !== null ? options.map : undefined;
   // Own keys only, so an inherited `constructor` or `toString` is never called as a mapper.
   const own = (key: string | undefined) =>
     map !== undefined && key !== undefined && Object.hasOwn(map, key) ? map[key] : undefined;

@@ -104,6 +104,22 @@ describe('PrismaModule', () => {
     expect(text).not.toContain('secret');
   });
 
+  test('in development a throwing logger does not hide the connect KneadError', async () => {
+    class ThrowingLogger extends MemoryLogger {
+      override error(): void {
+        throw new Error('logger down');
+      }
+    }
+    const original = new Error('connect failed');
+    const error = await ApplicationContext.create(
+      PrismaModule.forRoot({ client: () => createFakeClient({ connectError: original }) }),
+      { logger: new ThrowingLogger(), development: true },
+    ).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(KneadError);
+    expect((error as KneadError).message).toBe('Prisma failed to connect to the database');
+    expect((error as KneadError).cause).toBe(original);
+  });
+
   test('an unusual error name or code is left out of the production log', async () => {
     const original = Object.assign(new Error('x'), {
       name: 'Bad name postgres://u:secret@db',

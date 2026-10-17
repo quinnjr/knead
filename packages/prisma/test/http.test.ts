@@ -275,6 +275,31 @@ describe('PrismaHttpModule.forRoot options', () => {
   });
 });
 
+describe('PrismaHttpModule.forRoot map hardening', () => {
+  test('rejects non-function mappers under non-enumerable and symbol keys', () => {
+    const hidden = {};
+    Object.defineProperty(hidden, 'P2002', { value: 'nope', enumerable: false });
+    expect(() => PrismaHttpModule.forRoot({ map: hidden } as never)).toThrow(KneadError);
+    const sym = { [Symbol('P2002')]: 'nope' };
+    expect(() => PrismaHttpModule.forRoot({ map: sym } as never)).toThrow(KneadError);
+  });
+
+  test('stores a frozen copy, so later mutation of the original has no effect', () => {
+    const original: Record<string, unknown> = { P2002: () => new BadRequestException() };
+    const mod = PrismaHttpModule.forRoot({ map: original as never });
+    const provider = mod.providers?.find(
+      (p) => typeof p === 'object' && 'useValue' in p && 'provide' in p && p.multi !== true,
+    ) as { useValue: { map: Record<string, unknown> } };
+    const stored = provider.useValue.map;
+    expect(stored).not.toBe(original);
+    expect(Object.isFrozen(stored)).toBe(true);
+    original.P2002 = 'broken';
+    original.P2003 = 'added';
+    expect(typeof stored.P2002).toBe('function');
+    expect('P2003' in stored).toBe(false);
+  });
+});
+
 describe('toHttpException', () => {
   test('ignores inherited map keys', () => {
     // `constructor` is inherited from Object.prototype; it must not be called as a mapper.
@@ -285,6 +310,13 @@ describe('toHttpException', () => {
     expect(
       toHttpException({ name: 'PrismaClientKnownRequestError', code: 'P2002' }, { map })?.status,
     ).toBe(409);
+  });
+
+  test('treats a map that is not an object as no map', () => {
+    const error = { name: 'PrismaClientKnownRequestError', code: 'P2002' };
+    for (const map of [null, 42, 'P2002']) {
+      expect(toHttpException(error, { map } as never)?.status).toBe(409);
+    }
   });
 
   test('returns undefined for non-Prisma errors', () => {

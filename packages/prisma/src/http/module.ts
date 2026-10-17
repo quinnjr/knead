@@ -19,9 +19,9 @@ function assertHttpOptions(options: unknown): asserts options is PrismaHttpOptio
   if (!isPlainObject(map)) {
     throw new KneadError('PrismaHttpModule `map` must be a plain object of mapper functions.');
   }
-  for (const [key, mapper] of Object.entries(map)) {
-    if (typeof mapper !== 'function') {
-      throw new KneadError(`PrismaHttpModule \`map.${key}\` must be a function.`);
+  for (const key of Reflect.ownKeys(map)) {
+    if (typeof map[key as string] !== 'function') {
+      throw new KneadError(`PrismaHttpModule \`map.${String(key)}\` must be a function.`);
     }
   }
 }
@@ -30,10 +30,15 @@ function assertHttpOptions(options: unknown): asserts options is PrismaHttpOptio
 export class PrismaHttpModule {
   static forRoot(options: PrismaHttpOptions = {}): DynamicModule {
     assertHttpOptions(options);
+    // A frozen null-prototype copy, so later mutation of the caller's map skips no validation.
+    const stored: PrismaHttpOptions =
+      options.map === undefined
+        ? options
+        : { ...options, map: Object.freeze(Object.assign(Object.create(null), options.map)) };
     return {
       module: PrismaHttpModule,
       providers: [
-        { provide: PRISMA_HTTP_OPTIONS, useValue: options },
+        { provide: PRISMA_HTTP_OPTIONS, useValue: stored },
         { provide: APP_FILTER, multi: true, useClass: PrismaExceptionFilter },
       ],
     };

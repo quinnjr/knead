@@ -73,12 +73,12 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
    * messages can carry connection strings and hosts.
    */
   #logConnectError(error: unknown): void {
-    if (this.#development) {
-      logError({ logger: this.#logger, development: true }, 'Prisma failed to connect', error);
-      return;
-    }
     try {
-      this.#logger.error(`Prisma failed to connect: ${describeConnectError(error)}`);
+      if (this.#development) {
+        logError({ logger: this.#logger, development: true }, 'Prisma failed to connect', error);
+      } else {
+        this.#logger.error(`Prisma failed to connect: ${describeConnectError(error)}`);
+      }
     } catch {
       // A failing logger must not mask the connect error.
     }
