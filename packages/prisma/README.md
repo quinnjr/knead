@@ -1,43 +1,112 @@
 # @knead-js/prisma
 
-Prisma 7 integration for Knead: `PrismaModule.forRoot()` / `forRootAsync()`, an injectable `PrismaService` whose `db` joins the ambient transaction, `TransactionHost` and `@Transactional()` for request-spanning transactions without passing a client around, `@knead-js/prisma/http` to answer Prisma errors with problem responses, and `@knead-js/prisma/testing` for `withRollback`. The package has no runtime dependencies and never imports `@prisma/client`, not even its types: the generated client lives in your project, so you register its type once and the library stays structural.
+[![npm](https://img.shields.io/npm/v/@knead-js/prisma?color=c2410c&label=npm)](https://www.npmjs.com/package/@knead-js/prisma)
+[![CI](https://github.com/quinnjr/knead/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/quinnjr/knead/actions/workflows/ci.yml)
+[![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](https://github.com/quinnjr/knead#license)
 
-Requires Bun >= 1.4.3. Older Bun skips `@Transactional`'s initializer when another decorated class follows in the same scope; calling the decorated method then rejects with a `KneadError` that names this requirement, rather than running without a transaction. `@prisma/client` ^7 is an optional peer dependency (you need it to have a client at all); `@knead-js/http` is an optional peer, needed only for `@knead-js/prisma/http`.
+[Prisma ORM](https://www.prisma.io/docs) 7 for Knead applications: a managed client, ambient
+transactions that every repository joins, Prisma errors answered as problem responses, and tests
+that always roll back.
 
-## Setup
+**[Documentation](https://quinnjr.github.io/knead/packages/prisma/)** · [Guide](https://quinnjr.github.io/knead/guide/database/) · [Knead](https://github.com/quinnjr/knead)
 
-Prisma 7 needs a driver adapter; for Postgres use `pg`:
+## Install
 
-```
-bun add @knead-js/core @knead-js/prisma @prisma/client @prisma/adapter-pg pg
+Prisma 7 talks to the database through a driver adapter. For Postgres, use `@prisma/adapter-pg`:
+
+```bash
+bun add @knead-js/core @knead-js/http @knead-js/prisma @prisma/client @prisma/adapter-pg pg
 bun add -d prisma
 ```
 
-`@knead-js/core` is a peer dependency, so every package shares one copy; add `@knead-js/http` too if you use `@knead-js/prisma/http`.
+Requires Bun 1.4.3 or newer. Peer dependencies: `@knead-js/core`, `@prisma/client` `^7` (optional
+to the package manager, but you need it to have a client) and `@knead-js/http` (optional, needed
+only for `@knead-js/prisma/http`). Use your database's adapter if it is not Postgres.
+
+The package has no runtime dependencies and never imports `@prisma/client`, not even its types.
+Your generated client lives in your project, and you [register its type](#typing-the-client) once.
+
+| Import | Contents |
+| --- | --- |
+| `@knead-js/prisma` | `PrismaModule`, `PrismaService`, `TransactionHost`, `@Transactional()`, tokens and types |
+| `@knead-js/prisma/http` | `PrismaHttpModule` and helpers that answer Prisma errors with problem responses |
+| `@knead-js/prisma/testing` | `withRollback()` |
+
+## Quick start
+
+Prisma 7's `prisma-client` generator writes the client into your source tree (here
+`src/generated/prisma`; run `bunx prisma generate` after every schema change). Give
+`PrismaModule.forRoot()` a factory that builds it with the driver adapter:
 
 ```ts
 import { Module } from '@knead-js/core';
 import { PrismaModule } from '@knead-js/prisma';
+import { PrismaHttpModule } from '@knead-js/prisma/http';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from './generated/prisma/client.js';
+import { UsersModule } from './users.module.js';
 
 @Module({
   imports: [
     PrismaModule.forRoot({
-      client: () => new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }) }),
+      client: () =>
+        new PrismaClient({
+          adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }),
+        }),
     }),
+    PrismaHttpModule.forRoot(),
+    UsersModule,
   ],
 })
-class AppModule {}
+export class AppModule {}
 ```
 
-`client` is a factory, so the module owns the instance it builds: it connects at bootstrap and disconnects on shutdown. `forRoot({ instance })` takes a client you built and manage yourself; it is connected at bootstrap but only disconnected with `disconnectOnShutdown: true`. `forRootAsync({ imports, useFactory })` resolves the options from other providers. The module is global and exports `PrismaService`, `TransactionHost` and the `PRISMA_CLIENT` token. Options are checked when `forRoot()` is called (or when the async factory resolves): giving both or neither of `client` and `instance`, or a client without `$connect`, `$disconnect` and `$transaction`, is a `KneadError` at bootstrap, never at request time.
+Then query through `PrismaService.db` in your repositories:
 
-A failed `$connect` aborts bootstrap with a `KneadError` whose message is fixed (`Prisma failed to connect to the database`) and whose `cause` is the original error. Connection strings and hosts can appear in driver error messages, so outside development the failure is logged through the injected `LOGGER` with only the error's name and its `code` or `errorCode`, never its message; in development the full error is logged after credential redaction (`redactValue`). A failed connect disconnects a client the module built from `client`, but never an `instance`: its caller owns it.
+```ts
+export class UsersRepository {
+  readonly #prisma = inject(PrismaService);
+
+  findById(id: number) {
+    // db is the ambient transaction's client inside a transaction, the base client otherwise.
+    return this.#prisma.db.user.findUnique({ where: { id } });
+  }
+
+  create(email: string, name: string | null) {
+    return this.#prisma.db.user.create({ data: { email, name } });
+  }
+
+  count() {
+    return this.#prisma.db.user.count();
+  }
+}
+```
+
+The module connects the client at bootstrap and disconnects it at shutdown. `PrismaHttpModule`
+turns a unique violation into `409 Conflict`, a missing record into `404`, and so on.
+
+## Features
+
+- **Managed client.** `forRoot({ client })` builds, connects and disconnects it; `forRoot({ instance })`
+  takes one you own; `forRootAsync()` builds the options from other providers.
+- **Typed.** Register your generated `PrismaClient` once and `PrismaService` is fully typed.
+- **Ambient transactions.** `@Transactional()` and `TransactionHost.run()` open a transaction that
+  every query through `PrismaService.db` joins, with no transaction client to pass around.
+- **Safe composition.** An inner failure marks the shared transaction rollback-only, so catching it
+  cannot commit half of the work.
+- **Errors as HTTP responses.** Prisma errors become `409`, `404`, `400` or `503` problem responses
+  with fixed, generic details; Prisma's message never reaches a response or a production log.
+- **Fails at startup.** Invalid options, a missing client method or a misused `PrismaHttpModule`
+  throw `KneadError` before the first request.
+- **Rollback tests.** `withRollback()` runs a test against a real database and confirms the
+  rollback, failing closed if it cannot.
+
+## Registering the client
 
 ### Typing the client
 
-Merge your generated client into the registry once, in any `.d.ts` or module of your project:
+Tell the package which client you use, once, in any module of your project (for example
+`src/prisma.d.ts`):
 
 ```ts
 import type { PrismaClient } from './generated/prisma/client.js';
@@ -49,114 +118,207 @@ declare module '@knead-js/prisma' {
 }
 ```
 
-`PrismaService.client` is then your `PrismaClient`, and `PrismaService.db` is `TxClient`: that client minus `$connect`, `$disconnect`, `$on`, `$transaction` and `$extends`, matching what Prisma gives an interactive transaction. An extended client (`$extends`) works if you register the extended type. Without the declaration both fall back to a structural `PrismaLike`.
+- `PrismaService.client` and the `PRISMA_CLIENT` token are then your `PrismaClient`.
+- `PrismaService.db` is a `TxClient`: your client without `$connect`, `$disconnect`, `$on`,
+  `$transaction` and `$extends`, which matches what Prisma hands an interactive transaction.
+- For a client extended with `$extends()`, register the extended type. Register in one place only:
+  two different declarations are a compile error.
+- Without the declaration, both fall back to the structural `PrismaLike`, which has no models.
+
+### Module options
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `client` | | A factory (may be async). The module owns the client: it connects it at bootstrap and disconnects it at shutdown. |
+| `instance` | | A client you built and own. It is connected at bootstrap and left connected at shutdown. |
+| `disconnectOnShutdown` | `false` | With `instance` only: also disconnect it at shutdown. |
+
+- Give exactly one of `client` and `instance`. The client must have `$connect()`, `$disconnect()`
+  and `$transaction()`. Mistakes throw `KneadError` when `forRoot()` is called.
+- `PrismaModule.forRootAsync({ imports, useFactory })` runs `useFactory` in an injection context at
+  bootstrap, so it can `inject()` providers exported by `imports`. Its result is validated then.
+- The module is global and exports `PrismaService`, `TransactionHost` and `PRISMA_CLIENT`.
+
+### Connection failures
+
+A failed `$connect()` aborts bootstrap with a `KneadError` whose message is always
+`Prisma failed to connect to the database` and whose `cause` is the original error. A client built
+from `client` is disconnected first; an `instance` is left to its owner.
+
+Driver messages can contain connection strings and host names, so the failure is logged through
+`LOGGER` by mode:
+
+- Outside development: only the error's name and code, for example
+  `Prisma failed to connect: PrismaClientInitializationError (P1001)`. Never the message.
+- In development (`NODE_ENV=development`): the full error, with credentials redacted.
+
+Use `PrismaService.client` only for work that must not join the ambient transaction, and for
+`$on()` and `$extends()`. Inside a transaction it runs on another connection and cannot see
+uncommitted rows.
+
+## Transactions
+
+`@Transactional()` runs an async method in a transaction that every repository call through
+`PrismaService.db` joins:
 
 ```ts
-class UserRepository {
-  readonly prisma = inject(PrismaService);
+export class SignupService {
+  readonly #users = inject(UsersRepository);
+  readonly #orders = inject(OrdersRepository);
+  readonly #audit = inject(AuditLog);
 
-  find(id: string) {
-    return this.prisma.db.user.findUnique({ where: { id } });
+  // Both writes commit together, or neither does.
+  @Transactional()
+  async signUp(input: SignUp) {
+    const user = await this.#users.create(input.email, input.name);
+    await this.#orders.create(user.id, input.firstOrderTotal);
+    await this.#audit.record(`user.created:${user.id}`);
+    return user;
   }
 }
 ```
 
-Use `prisma.db` in repositories: it is the active transaction's client inside `run()` and the base client otherwise. Use `prisma.client` for work that must escape the ambient transaction, `$on`, or `$extends`.
+The transaction commits when the method resolves and rolls back when it rejects; the rejection
+reaches the caller unchanged. Checked for you:
 
-## Transactions
+- The method must return a `Promise`; a synchronous method is a type error.
+- The class must be built by the DI container: `new SignupService()` throws
+  `InjectionContextError` instead of running without a transaction.
+- A static method, or an unknown `propagation` or `isolationLevel`, throws `KneadError` when the
+  class is defined.
+- On Bun older than 1.4.3, which can skip the decorator's initializer, calling the method rejects
+  with a `KneadError` rather than running without a transaction.
+
+`TransactionHost.run(fn, options?)` does the same for a block, for example
+`host.run(() => audit.record(action), { propagation: 'requiresNew' })`. Both take these options:
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `isolationLevel` | the database default | `'ReadUncommitted'`, `'ReadCommitted'`, `'RepeatableRead'`, `'Serializable'` or `'Snapshot'`. |
+| `timeout` | Prisma's (5000 ms) | Milliseconds the transaction may run before Prisma rolls it back. |
+| `maxWait` | Prisma's | Milliseconds to wait for a connection. |
+| `propagation` | `'required'` | `'required'` joins the active transaction; `'requiresNew'` opens a separate one. |
+
+### Propagation
+
+- `'required'` joins the active transaction and ignores the inner call's options (in development a
+  mismatch logs a warning).
+- A joined call that rejects marks the transaction rollback-only. If the owner catches that and
+  resolves anyway, the transaction rolls back and the owner's `run()` rejects with a `KneadError`
+  whose `cause` is the inner rejection.
+- `'requiresNew'` runs on a second connection, so the pool needs at least 2 connections, and it can
+  deadlock against the outer transaction when both touch the same rows. Keep it for work that must
+  commit independently, such as audit records.
+
+### Limits of the ambient transaction
+
+The transaction is carried by an `AsyncLocalStorage` owned by the application's
+`TransactionHost`, so two applications in one process never share one.
+
+- It lasts as long as the callback. `await` everything you start: a fire-and-forget query finds the
+  transaction closed and fails.
+- Do not start long-lived background work (intervals, batch loops, lazily started singletons)
+  inside a transaction. It keeps seeing the closed transaction forever.
+- Work that outlives a `requiresNew` run sees the closed inner transaction and fails, rather than
+  silently joining the outer one.
+- Concurrent queries on one transaction (`Promise.all` inside `run()`) are serialized or rejected,
+  depending on the driver adapter. Await them one at a time.
+
+## Errors as HTTP responses
+
+Import `PrismaHttpModule.forRoot()` from `@knead-js/prisma/http`, as the quick start does. It
+registers `PrismaExceptionFilter`, which answers Prisma errors and declines every other error:
+
+| Prisma error | Status | `detail` |
+| --- | --- | --- |
+| `P2002` (unique constraint) | 409 | `A record with these values already exists.` |
+| `P2003` (foreign key constraint) | 409 | `The operation conflicts with a related record.` |
+| `P2025` (record not found) | 404 | `The requested record was not found.` |
+| `P2000` (value too long) | 400 | `A value is too long for its field.` |
+| `PrismaClientValidationError` | 400 | `The request could not be processed.` |
+| `P1001`, `P1002`, `P2024`, `PrismaClientInitializationError` | 503 | `The database is temporarily unavailable.` |
+| any other Prisma error | 500 | none |
+
+Security trade-offs:
+
+- Prisma's `message` is never copied into a response or a production log: it can contain query
+  fragments, column values and connection details. The original error travels only as `cause`.
+- Each `detail` is fixed and generic. Outside development, 5xx responses follow the default error
+  handling and carry only `type`, `title`, `status`, `instance` and a `correlationId` that matches
+  the logged error, so the 503 `detail` is dropped too.
+- In development, the built-in mappings add `prismaCode` and, when the error's metadata names the
+  constraint's fields, `fields` (field names only, never values).
+- Errors are recognized by exact `name`, not `instanceof`, so a client generated into another copy
+  or realm still matches, and no runtime import of `@prisma/client` is needed.
+
+Import `PrismaHttpModule.forRoot()` once, in the root module. Importing `forRoot()` more than once
+(the second `map` would never be consulted), or `PrismaHttpModule` without `forRoot()` (no filter
+would be registered), fails at startup with a `KneadError`.
+
+`map` overrides or adds mappings, keyed by error code or error name:
 
 ```ts
-const host = inject(TransactionHost);
-await host.run(async () => {
-  await users.create(data); // both use prisma.db, so both join the transaction
-  await audit.record('user.created');
-}, { isolationLevel: 'Serializable', timeout: 10_000, maxWait: 2_000 });
+@Module({
+  imports: [
+    PrismaHttpModule.forRoot({
+      map: {
+        // P2034: a write conflict or deadlock; ask the client to retry.
+        P2034: () =>
+          new ServiceUnavailableException('Retry the request.', {
+            headers: { 'retry-after': '1' },
+          }),
+      },
+    }),
+  ],
+})
+export class PrismaErrorsModule {}
 ```
 
-`run` commits when the callback resolves, rolls back when it rejects and rethrows the rejection unchanged. Options are `isolationLevel` (`'ReadUncommitted' | 'ReadCommitted' | 'RepeatableRead' | 'Serializable' | 'Snapshot'`), `timeout`, `maxWait` and `propagation`. Prisma's own default `timeout` is 5 seconds; raise it for slow work. `host.isActive` reports whether the current async context is inside an open transaction.
+- Keys are looked up as own properties only, code first, then name.
+- A mapper that throws, or returns something other than an `HttpException`, produces a masked
+  `500`.
+- `map` must be a plain object whose values are all functions; anything else throws `KneadError`
+  from `forRoot()`. A frozen copy is stored.
 
-`@Transactional(options?)` wraps an async method in `host.run`:
-
-```ts
-class OrderService {
-  readonly orders = inject(OrderRepository);
-
-  @Transactional({ isolationLevel: 'RepeatableRead' })
-  async place(input: OrderInput) { /* ... */ }
-}
-```
-
-The class must be built by the container: the decorator takes `TransactionHost` from `inject()` while the instance is constructed, so `new OrderService()` throws `InjectionContextError` instead of quietly running without a transaction. It applies to instance methods that return a `Promise`; a synchronous method is a type error. Decorating a static method, or passing a `propagation` or `isolationLevel` that is not one of the values listed here, is a `KneadError` when the class is defined; `run()` likewise rejects with a `KneadError` for an unknown `propagation`.
-
-Propagation: `'required'` (the default) joins the active transaction, and the inner call's options are ignored (in development a mismatch logs a warning through `LOGGER`). A joined run that rejects marks the shared transaction rollback-only: the rejection reaches the inner caller unchanged, but if the owning `run()` then resolves anyway (because it caught that rejection), the transaction is rolled back rather than committed and the owning `run()` rejects with a `KneadError` (`transaction marked rollback-only by an inner failure`) whose `cause` is the first inner rejection. Catching an inner failure therefore cannot commit half of the work; use `'requiresNew'` for work whose failure the outer transaction should survive. `'requiresNew'` always opens a separate transaction on another connection. That needs a connection pool of at least 2, and it can deadlock against the outer transaction when both touch the same rows, because the outer one holds its locks while the inner one waits for them. Keep `requiresNew` for work that must commit independently, such as audit records.
-
-Limits, all from the way the transaction is carried (an `AsyncLocalStorage` per `TransactionHost`, so two apps in one process never share transactions):
-
-- The transaction lasts as long as the callback. Work started inside `run()` but awaited after it settles (a fire-and-forget promise) finds the transaction closed, and Prisma fails the query loudly instead of letting it escape. `await` everything you start.
-- Do not start long-lived background work inside `run()`: intervals, batch loops, or a lazily created singleton that starts its own loop on first use. `AsyncLocalStorage` captures the transaction context, so that work keeps seeing a closed transaction forever. Create such things at bootstrap or outside any transaction.
-- A closed transaction frame hides any enclosing one. Work that outlives a `requiresNew` run therefore sees the closed inner transaction, not the still-open outer one, and fails rather than silently joining the outer.
-- Concurrent queries on one interactive transaction (`Promise.all` inside `run()`) are serialized or rejected depending on the driver adapter. Await them one at a time.
-- Using `prisma.client` inside `run()` bypasses the transaction. That is sometimes intended, but it runs on a different connection and cannot see uncommitted rows.
+For GraphQL resolvers or your own filters, `toHttpException(error, { map, development })` returns
+the same `HttpException` (or `undefined` for non-Prisma errors), and `isPrismaError()` tells you
+whether an error is one.
 
 ## Shutdown
 
-Call `app.enableShutdownHooks()` so SIGTERM and SIGINT close the application: the HTTP server drains first, then modules are destroyed and the client disconnects. Without it a signal kills the process with transactions still open and connections unreleased. Transactions still in flight when `$disconnect()` runs are subject to Prisma's own behaviour; let requests finish (drain) before the module is destroyed, which the shutdown order already does.
-
-## HTTP error mapping
-
-```ts
-import { PrismaHttpModule } from '@knead-js/prisma/http';
-
-@Module({ imports: [PrismaModule.forRoot({ /* ... */ }), PrismaHttpModule.forRoot()] })
-class AppModule {}
-```
-
-`PrismaHttpModule.forRoot({ map })` registers `PrismaExceptionFilter` as an `APP_FILTER`. It answers Prisma errors with the same problem response the default mapping produces for that `HttpException`, including masking of 5xx details outside development and correlation-id logging, and declines (returns `undefined`) for every other error so later filters and the default mapping still apply. Errors are recognised by exact `name`, not `instanceof`, so a client generated into another copy or realm still matches and no runtime import of `@prisma/client` is needed.
-
-| Prisma error | Status | Exception |
-|---|---|---|
-| `P2002` unique constraint | 409 | `ConflictException` |
-| `P2003` foreign key | 409 | `ConflictException` |
-| `P2025` record not found | 404 | `NotFoundException` |
-| `P2000` value too long | 400 | `BadRequestException` |
-| `PrismaClientValidationError` | 400 | `BadRequestException` |
-| `P1001`, `P1002`, `P2024` (unreachable, timeout, pool timeout), `PrismaClientInitializationError` | 503 | `ServiceUnavailableException` |
-| any other Prisma error | 500 | `InternalServerErrorException` |
-
-Security trade-off: each 4xx and 503 row has a fixed, generic `detail` and the 500 row has none; outside development a 5xx response drops its `detail` (the 503 text included) and carries only a `correlationId`, as the default mapping does. Prisma's `message` is never copied into a response body or a production log, because it can contain query fragments, column values and connection details; the original error travels only as `cause`. In development, responses additionally carry `extensions.prismaCode` and, for unique violations, `extensions.fields` (the constraint's field names, read from the driver adapter's `meta.driverAdapterError.cause.constraint.fields` or else `meta.target`; never values).
-
-`map` overrides or adds mappers by code (`P2034`) or by error name, looked up as own keys only; a mapper that throws or returns something other than an `HttpException` becomes a masked 500. `map` must be a plain object whose values are all functions; anything else is a `KneadError` from `forRoot()`:
-
-```ts
-PrismaHttpModule.forRoot({ map: { P2034: () => new ServiceUnavailableException('Retry the request.') } });
-```
-
-`toHttpException(error, { map, development })` and `isPrismaError(error)` are exported for your own filters or for GraphQL resolvers; `toHttpException` returns `undefined` for errors that are not Prisma's.
+Call `app.enableShutdownHooks()` in your entry point so SIGTERM and SIGINT close the application:
+the HTTP server drains in-flight requests first, then modules are destroyed and the client
+disconnects. Without it a signal kills the process with transactions still open.
 
 ## Testing
 
-Replace the client with a fake: `overrideProvider(PRISMA_CLIENT).useValue(fake)`. `PrismaService` and `TransactionHost` both read the client from that token, so one override covers both, and the fake needs only `$connect`, `$disconnect`, `$transaction` and the models you use.
+For unit tests, replace the client with a fake: `overrideProvider(PRISMA_CLIENT).useValue(fake)`.
+`PrismaService` and `TransactionHost` both read that token, so one override covers both. The fake
+needs `$connect()`, `$disconnect()`, `$transaction(fn, options)` and the models your code uses.
 
-For tests against a real database, `withRollback` from `@knead-js/prisma/testing` runs a function inside a transaction that is always rolled back and resolves with the function's value:
+Against a real database, `withRollback(moduleRef, fn)` from `@knead-js/prisma/testing` runs `fn`
+in a transaction that is always rolled back, so nothing it writes through `PrismaService.db`
+persists. `moduleRef` is a `TestingModule`, an `ApplicationContext` or anything with `get(token)`.
+Point these tests at a disposable database through a variable of their own, never `DATABASE_URL`.
 
-```ts
-import { withRollback } from '@knead-js/prisma/testing';
+- It resolves with the function's value, and errors thrown by the function propagate unchanged.
+- The default `timeout` is 30 seconds. It uses `requiresNew`, so the pool needs at least 2
+  connections.
+- It fails closed: if the transaction does not end in the rollback it asked for, it throws a
+  `KneadError` (`withRollback: rollback not confirmed`).
+- Requests sent to a real server (`listen()` and `fetch`) run in their own async context, outside
+  the test's transaction, and commit for real. Clean up after them yourself.
 
-test('creates a user', async () => {
-  await withRollback(moduleRef, async () => {
-    await moduleRef.get(UserService).create({ email: 'a@example.com' });
-    expect(await moduleRef.get(UserService).count()).toBe(1);
-  });
-  // rolled back: nothing persists
-});
-```
+## Documentation
 
-`moduleRef` is anything with `get(token)`, such as a `TestingModule` or `ApplicationContext`. Errors thrown by the function propagate unchanged; the default `timeout` is 30 seconds, because Prisma's 5 seconds is too short for tests. It uses `requiresNew`, so the pool needs at least 2 connections. It fails closed: if the client never runs the function, or the transaction does not end in the rollback `withRollback` asked for, it throws a `KneadError` (`withRollback: rollback not confirmed`) instead of resolving.
-
-`withRollback` does not cover requests made through a real ephemeral server (`listen()` plus `fetch`). Those run in a separate async context, never see the test's transaction, and commit for real. Clean up after such tests yourself, or test controllers through service calls inside `withRollback`.
-
-The package's own Postgres suite runs with `pnpm --filter @knead-js/prisma test:db` and `KNEAD_PRISMA_TEST_DATABASE_URL` set (see AGENTS.md). It reads that dedicated variable, never `DATABASE_URL`, skips without it, and resets the target database, so point it at a disposable one.
+- [Database guide](https://quinnjr.github.io/knead/guide/database/): schema, setup, repositories,
+  transactions, error mapping and testing, with complete examples.
+- [`@knead-js/prisma` reference](https://quinnjr.github.io/knead/packages/prisma/): every export,
+  option and error message.
+- [Exception filters](https://quinnjr.github.io/knead/guide/exception-filters/) and
+  [lifecycle](https://quinnjr.github.io/knead/guide/lifecycle/).
 
 ## License
 
-Licensed MIT OR Apache-2.0.
+Licensed under either of [MIT](https://github.com/quinnjr/knead/blob/develop/LICENSE-MIT) or
+[Apache-2.0](https://github.com/quinnjr/knead/blob/develop/LICENSE-APACHE) at your option.

@@ -1,69 +1,332 @@
 # @knead-js/graphql
 
-Code-first GraphQL for Knead on the [Leaven](https://github.com/quinnjr/leaven) engine. Types are TC39-decorated classes, and a GraphQL field type that disagrees with its TypeScript field type is a compile error. Resolvers are ordinary providers that use `inject()`. The endpoint is an ordinary `@knead-js/http` route, so CORS, rate limiting, security headers and global guards apply to it unchanged.
+[![npm](https://img.shields.io/npm/v/@knead-js/graphql?color=c2410c&label=npm)](https://www.npmjs.com/package/@knead-js/graphql)
+[![CI](https://github.com/quinnjr/knead/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/quinnjr/knead/actions/workflows/ci.yml)
+[![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](https://github.com/quinnjr/knead#license)
+
+Code-first GraphQL for [Knead](https://github.com/quinnjr/knead) on the
+[Leaven](https://github.com/quinnjr/leaven) engine. Types are TC39-decorated classes, resolvers are
+ordinary providers that use `inject()`, and a GraphQL field type that disagrees with its TypeScript
+type is a compile error.
+
+**[Documentation](https://quinnjr.github.io/knead/packages/graphql/)** · [Guide](https://quinnjr.github.io/knead/guide/graphql/) · [Knead](https://github.com/quinnjr/knead)
+
+## Install
+
+```bash
+bun add @knead-js/graphql @knead-js/core @knead-js/http graphql
+```
+
+Requires Bun 1.4.3 or newer. `@knead-js/core`, `@knead-js/http` and `graphql` (`^16.14.2`) are
+peer dependencies. Leaven is pre-1.0, so its packages are pinned exactly (`@leaven-graphql/core`
+and `@leaven-graphql/ws` 0.2.3, `@leaven-graphql/playground` 0.2.2, `@leaven-graphql/errors` 0.2.1).
+
+## Quick start
 
 ```ts
+import { inject, Module } from '@knead-js/core';
+import {
+  type BatchLoader,
+  Field,
+  GraphQLModule,
+  ID,
+  ObjectType,
+  Query,
+  ResolveField,
+  Resolver,
+  type ResolverCtx,
+} from '@knead-js/graphql';
+
 @ObjectType()
-class User {
+export class Author {
   @Field(() => ID) id!: string;
-  @Field(() => String, { nullable: true }) bio?: string | null; // nullable needs null | undefined
-  @Field(() => [Post]) posts!: Post[];
+  @Field(() => String) name!: string;
 }
 
-@Resolver(() => User)
-class UserResolver {
-  readonly #users = inject(UsersService);
+@ObjectType()
+export class Book {
+  @Field(() => ID) id!: string;
+  @Field(() => String) title!: string;
+  // A nullable field must accept both null and undefined, or it does not compile.
+  @Field(() => String, { nullable: true }) subtitle?: string | null;
+  /** Not a GraphQL field: `author` is resolved below. */
+  authorId!: string;
+}
 
-  @Query(() => User, { args: { id: ID } })
-  user(ctx: ResolverCtx<{ id: string }>) {
-    return this.#users.get(ctx.args.id);
+export class Library {
+  readonly books: Book[] = [
+    { id: 'b1', title: 'Kindred', authorId: 'a1' },
+    { id: 'b2', title: 'Parable of the Sower', authorId: 'a1' },
+  ];
+  readonly authors = new Map([['a1', { id: 'a1', name: 'Octavia E. Butler' }]]);
+}
+
+/** Batches every `Book.author` of one operation into a single call. */
+export class AuthorsById implements BatchLoader<string, Author> {
+  readonly #library = inject(Library);
+
+  async batch(ids: readonly string[]): Promise<(Author | Error)[]> {
+    return ids.map((id) => this.#library.authors.get(id) ?? new Error(`No author ${id}`));
+  }
+}
+
+@Resolver(() => Book)
+export class BookResolver {
+  readonly #library = inject(Library);
+
+  @Query(() => [Book])
+  books(): Book[] {
+    return this.#library.books;
   }
 
-  @ResolveField(() => [Post])
-  posts(ctx: ResolverCtx<{}, User>) {
-    return ctx.loader(PostsByAuthor).load(ctx.parent.id); // one batch per operation tick
+  @Query(() => Book, { nullable: true, args: { id: ID } })
+  book(ctx: ResolverCtx<{ id: string }>): Book | undefined {
+    return this.#library.books.find((book) => book.id === ctx.args.id);
+  }
+
+  @ResolveField(() => Author)
+  author(ctx: ResolverCtx<{}, Book>): Promise<Author> {
+    return ctx.loader(AuthorsById).load(ctx.parent.authorId);
   }
 }
 
 @Module({
-  imports: [GraphQLModule.forRoot({ context: (http) => ({ user: http.state.user }) })],
-  providers: [UsersService, PostsByAuthor, UserResolver],
+  imports: [GraphQLModule.forRoot()],
+  providers: [Library, AuthorsById, BookResolver],
 })
-class AppModule {}
+export class AppModule {}
 ```
 
-- **Scalars:** `ID`, `Int` and `Float` are exported handles. For strings and booleans, use the global `String` and `Boolean`; `Number` maps to `Float`. Use `defineScalar<T>()`, `defineEnum()` and `defineUnion()` for other types. Lists are written `() => [T]` with `nullable: 'items' | 'list' | 'both'`.
-- **Arguments:** an inline or `@Field` `defaultValue` must be a value of the declared type (compile error otherwise). Pass an inline map (`{ first: Int, after: { type: () => ID, nullable: true } }`) or an `@ArgsType()` class (`args: PageArgs`), but not both at once. `validate: { arg: standardSchema }` runs after GraphQL coercion, and a failure is reported as `BAD_USER_INPUT` with `extensions.issues`.
-- **Guards and metadata:** `guards` options and `@UseGuards()` on the class or method receive the `ResolverCtx`, and class guards run first. A guard passes only when it returns (or resolves to) exactly `true`, as in the `@knead-js/http` pipeline; any other value, including a truthy object, string or number, produces `FORBIDDEN`. Values from `createRouteDecorator()` appear in `ctx.meta`. Global `APP_GUARD` guards run once per HTTP request and once per WebSocket upgrade (with `ctx.route` set to `null` and `ctx.upgrade` set), not per resolver.
-- **Module guards and default deny:** `GraphQLModule.forRoot({ guards })` runs guards on every root field (queries, mutations and subscriptions, at subscribe time) before the resolver's class and method guards; `@ResolveField` methods are not affected. `@Public()` on a resolver class or root field skips the module guards (its own guards still run) and sets `ctx.meta[IS_PUBLIC]`. It is GraphQL-only: HTTP global guards (`APP_GUARD`, `useGlobalGuards()`) still run on the `/graphql` request itself, and a global guard that should let public operations through has to allow the GraphQL route on its own terms. With `defaultDeny: true`, a root field that is neither `@Public()` nor protected by a guard of its own (class `@UseGuards`, the `guards` option or method `@UseGuards`) is `FORBIDDEN`; module guards do not count, so every field states its authorization explicitly. `defaultDeny` protects entry points only (root query, mutation and subscription fields): `@ResolveField` methods and plain `@Field` properties are reachable from any root field that returns their type, so sensitive data there needs its own guards (move a sensitive `@Field` into a guarded `@ResolveField`). Guards run before the `validate` schemas, so they see the coerced but unvalidated arguments; put authorization that depends on validated or transformed arguments in the resolver's `authorize` guards, which run after `validate` and see the schema output in `ctx.args` (anything but `true` is `FORBIDDEN`). Guard references are checked at bootstrap like HTTP guards: `undefined` (a circular import), an arrow-function `canActivate` field or an object without `canActivate()` is an `HttpConfigError` naming the resolver (or `GraphQLModule guards`), and never counts as a guard for `defaultDeny`.
-- **Field guards:** `@UseFieldGuards(...guards)` on an `@ObjectType()` class runs its guards before every field of that type, plain `@Field` properties and `@ResolveField` methods alike, wherever the type appears in a response. Each guard receives a `ResolverCtx` whose `parent` is the object being resolved, `info.fieldName` the field and `meta` the type's `createRouteDecorator()` values. As with other guards, only exactly `true` passes; anything else makes that field `FORBIDDEN` (and a `@ResolveField` method is not called), and graphql-js nulls the field, or its nearest nullable parent for a non-null field. Repeated decorators stack, and a subclass inherits its parent type's field guards without adding its own to the parent. Decorate the concrete object types: field guards on an `@InterfaceType()` are ignored, because graphql-js resolves fields on the object type. Guard references are checked at bootstrap (an invalid one is an `HttpConfigError` naming the type), and class guards are resolved from the root module, so they can inject the root's providers and global ones. Types without field guards keep graphql-js's default resolvers and pay nothing per field; a guarded field whose guards all return `true` synchronously stays synchronous. The guard list lives in the type's route meta under `FIELD_GUARDS` (`Symbol.for('knead:gql:field-guards')`), so other packages (such as `@knead-js/casl`) can add guards without importing `@knead-js/graphql`.
-- **Typed resolvers:** in `@Resolver(() => User)`, a `ResolverCtx<Args, Parent>` parent must accept a `User`. Subscription methods take `SubscriptionCtx<Args, Payload>`, whose parent is the event. The check runs on the class, which can't tell decorated methods from undecorated ones, so it applies to every public method whose first parameter is a `ResolverCtx`. A helper that takes a context for a different parent must be `#private`.
-- **Endpoint meta:** the endpoint's HTTP routes (POST and GET, so also subscription upgrades) carry `GRAPHQL_ENDPOINT` (`Symbol.for('knead:gql:endpoint')`) in their route meta: a function returning the module's resolver `guards`. An app-wide HTTP guard (`APP_GUARD`) can use it to recognise the endpoint and defer to the guards that run on every root field, as `@knead-js/casl`'s `AbilityGuard` does.
-- **Errors:** `BadRequestException` maps to `BAD_USER_INPUT`, `UnauthorizedException` to `UNAUTHENTICATED`, `ForbiddenException` to `FORBIDDEN`, `NotFoundException` to `NOT_FOUND` and `TooManyRequestsException` to `RATE_LIMITED`. A `LeavenError` keeps its own code, and a `GraphQLError` thrown by a resolver is sent as is. Variable and argument coercion errors are `BAD_USER_INPUT`; graphql-js quotes the offending value in their messages (`Variable "$p" got invalid value "…"`), so a client sees its own input echoed back, and so does any log or proxy that records responses. Any other error becomes `INTERNAL_SERVER_ERROR`, including graphql-js output errors (such as a resolver returning an object for a `String` field) and errors thrown by `hooks`, subscription `filter`s or the `context` factory over WebSocket. It is logged under a correlation id, which the client gets as `extensions.correlationId`, and its message is masked unless `maskErrors: false`. `mapError: (error) => HttpException | undefined` runs first on errors thrown by resolver code, hooks, subscription filters and the `context` factory over WebSocket (not on `GraphQLError`s or `LeavenError`s; a failing `context` factory over WebSocket reaches the client as its message only). Over HTTP the `context` factory runs before GraphQL execution, so `mapError` does not apply to it there: an `HttpException` it throws becomes that exception's HTTP problem response, with its own status (a `ForbiddenException` is a `403` problem), and any other error a `500` problem response, logged under a correlation id: return an `HttpException` to have it reported with its mapped code and message, or `undefined` to leave the error as is. A mapper that throws is logged and the original error is masked as usual. Logging goes through `@knead-js/http`'s `logError()`: in development (`HTTP_DEVELOPMENT`, else `NODE_ENV=development`) the log entry carries the full error, redacted with `redactValue()`; otherwise it holds only the error's name and its message, redacted first and then truncated to 500 characters, never the object (its stack, cause or properties). The redaction happens before `LOGGER` is called, so it holds for any logger (pino, winston, ...). Leaven's own diagnostics (`leavenLogger`), subscription and `RedisPubSub` errors are logged the same way.
-- **Limits:** every operation, over HTTP and WebSocket, is checked against `maxQueryLength` (default 100 KiB, checked before parsing, `400` over HTTP), `parseOptions.maxTokens` (default 3000), `maxFields` (default 1000 field selections, `FIELD_LIMIT`, counted both as written in all operations and fragments, including fragments that are never spread, and with fragments expanded where they are spread; checked right after parsing, before validation, whose overlapping-fields rule is quadratic in repeated fields, and before the document is cached), `maxDepth` (default 10, with fragments expanded, `DEPTH_LIMIT`; Knead checks it itself and does not count selections inside `__schema` and `__type`, so `getIntrospectionQuery()` works for the playground and codegen; those selections have their own cap, `maxIntrospectionDepth`, default 20, leaving headroom above `getIntrospectionQuery()`'s depth of 15, counting the `__schema`/`__type` field as level 1, so an introspection bomb is still `DEPTH_LIMIT`), `maxAliases` (default 30 per document, `BAD_USER_INPUT`) and `maxComplexity` (default 1000, `COMPLEXITY_LIMIT`; a field's cost is its `complexity` option, default 1). Leaven's document cache defaults to `cache: { maxSize: 100 }` (each entry keeps a whole AST); pass your own `cache`, or `false`, to change it. `getIntrospectionQuery()` (220 fields, 163 tokens, introspection depth 15) passes every default. Leaven's complexity calculator counts introspection fields like any other (cost 1 plus half the depth), so `maxComplexity` also bounds introspection; `getIntrospectionQuery()` with every option enabled costs about 1009 and needs a slightly higher `maxComplexity`. Relay clients and persisted-query sets often ship large generated documents (many fragments and fields): measure your largest legitimate operation and raise `maxFields`, `parseOptions.maxTokens` and `maxDepth` to fit it, for example `GraphQLModule.forRoot({ maxFields: 5000, parseOptions: { maxTokens: 20000 } })`. Validation still costs CPU per request, so also rate-limit the GraphQL route (for example with `@knead-js/rate-limit`). Raise a limit by setting a larger number, or disable it with `Infinity` or `false`; other values are a configuration error. The defaults are exported as `GRAPHQL_LIMITS`. Relay-style schemas spend three levels per connection (`users { edges { node { ... } } }`), so a query two connections deep already reaches depth 7: raise `maxDepth` (for example to 15) to fit your deepest legitimate query, and keep `maxComplexity` as the guard against wide queries.
-- **HTTP:** `POST` requires `Content-Type: application/json` (otherwise `415`) and runs queries and mutations; a subscription is `400`. `GET` runs queries only (otherwise `405`) and requires one of the `csrf.requiredHeaders` (default `x-graphql-request`). The operation type is checked on the document Leaven parses and executes, so the check honours `parseOptions` and the document cache. Requests that name `application/graphql-response+json` in `Accept` (with a q value at least that of `application/json`) get GraphQL-over-HTTP status codes: `400` for a rejected request (including a missing or unknown operation name), `500` only for `INTERNAL_SERVER_ERROR`. All other requests get `200`. GraphQL responses carry `cache-control: no-store` (they often hold per-user data; set `cacheControl` to another value, or `false` to send none) and `x-content-type-options: nosniff`. A `GET` request carries its query and `variables` in the URL, which proxies, access logs and browser history record: send tokens, passwords and other sensitive values in a `POST` body instead.
-- **Subscriptions:** a `graphql-transport-ws` connection on the same path that runs subscription operations only; a query or mutation sent over it gets a `BAD_USER_INPUT` error and never executes. `@Subscription(() => T, { topic, filter?, resolve? })` uses the `PUBSUB` engine. A `topic` function usually embeds client input, so a topic it returns that contains `*` or `#` (wildcards on engines with pattern subscriptions) is rejected with `BAD_USER_INPUT` before anything subscribes, and so is one longer than 256 characters; static topic strings may use wildcards. The engine defaults to an in-memory `PubSub`. Use `new RedisPubSub({ url })` (on `Bun.redis`, with a dedicated subscriber connection) when several instances run; a failed Redis connection is logged, ends the affected subscriptions, and is retried by the next subscriber. `publish()` never rejects: a failed publish is logged and the event is lost, so fire-and-forget calls are safe; use `publishOrThrow()` when the caller must know. A publish waits at most `publishTimeout` (default 2000 ms) for Redis: past it, `publish()` logs and resolves and `publishOrThrow()` rejects. Give a caller-supplied `client` `enableOfflineQueue: false` and a `connectionTimeout`, so commands fail fast while Redis is unreachable instead of queueing. In production, connect with `rediss://` (TLS) as an ACL user allowed only the `PUBLISH`/`SUBSCRIBE` commands on the prefix's channels (for example `ACL SETUSER gql on >secret resetchannels &knead:gql:* -@all +publish +subscribe +unsubscribe +ping`); a plaintext `redis://` or `valkey://` URL (from `url`, `REDIS_URL` or `VALKEY_URL`) to a non-loopback host logs a warning at construction, and `requireTls: true` makes it throw instead (a caller-supplied `client` bypasses the check: configure TLS on it yourself). Without `signingKey`, any client that can publish to the Redis server can inject subscription events, so a `RedisPubSub` without one whose server is not on loopback logs a warning at construction. Set `signingKey` (at least 32 bytes, the same on every instance) to sign each message with HMAC-SHA256 over the channel (prefix and topic), a timestamp and the payload: messages without a valid signature (such as ones published by another Redis client, or replayed under another prefix or topic), older than `maxSignatureAge` (default 60s, at most 10 minutes) or dated more than 60s ahead are dropped and logged. Pass an array to rotate keys: messages are signed with the first key and accepted under any of them. The safe order is `[old, new]` on every instance (all accept the new key), then `[new, old]` (all sign with it), then `[new]`. Generate a key with `openssl rand -base64 32` and load it from a secret store or the environment (`signingKey: process.env.REDIS_PUBSUB_SIGNING_KEY`); `Uint8Array` keys are copied at construction. Set `encryptionKey` (at least 32 bytes, the same on every instance; an array rotates like `signingKey`, in the same order) to encrypt payloads with AES-256-GCM, a random 12-byte IV per message and the channel (prefix and topic) plus a timestamp as additional authenticated data, so encrypted messages expire after `maxSignatureAge` even without `signingKey`, so the Redis server and anything subscribed to it see only ciphertext and a message cannot be replayed on another topic; messages that fail to decrypt are dropped. Dropped messages (bad signature, stale, failed decryption, not JSON, or larger than `maxMessageBytes`, default 1 MiB, which is checked before any HMAC, decryption or JSON work) are reported at most once per 10 seconds per instance, with the number dropped since the previous report; `publishOrThrow()` rejects messages over `maxMessageBytes`. With both keys, the payload is encrypted and the envelope then signed. A captured message (signed, encrypted or both) can still be replayed on the same channel within that window (`maxSignatureAge`, plus up to 60s for future-dated clocks), so keep it short and don't rely on signing or encryption for exactly-once delivery. Each event gets fresh `ctx.loader()` DataLoaders and a fresh, empty `ctx.state`, so `ctx.state` written at subscribe time (by guards or the `topic` function, for example) is not visible to the resolvers of an event. Each operation on a socket also gets its own view of the upgrade request's `ctx.http` with its own `ctx.http.state`, a shallow copy of the upgrade's (headers, IP and the rest of the request are shared): an operation sees what middleware and guards set on the upgrade request (so `context: (http) => ({ user: http.state.user })` works), and state one operation writes is never visible to another. `ctx.meta` and the connection context (the `context` factory result and the object `onConnect` returned) are visible to every event. A subscriber that falls more than 1000 events behind drops the oldest, and a warning is logged. Event payloads are immutable: one payload is shared by every subscriber, so its plain objects and arrays are deep-frozen (`deepFreeze`, exported) when it arrives, both from the in-memory `PubSub` (which freezes the plain objects you published, so publish a fresh DTO) and from `RedisPubSub` (whose payloads are parsed JSON, so fully plain). Class instances, Dates, Maps, Buffers and ORM entities are neither frozen nor walked into: they belong to the publisher, and are shared mutable state if you publish them. Build new objects in `resolve` instead of modifying the payload.
-- **WebSocket authentication:** the upgrade request passes global middleware (CORS, rate limiting) and global `APP_GUARD` guards; a guard returning `false` is `403`. Browsers cannot set headers such as `Authorization` on a WebSocket, so an `APP_GUARD` that authenticates by header should let upgrades through (`ctx.upgrade` is `{ path }` on upgrades, `null` otherwise) and leave authentication to `subscriptions.onConnect`, which receives the client's `connectionParams`:
+This serves `POST` and `GET /graphql`. `{ books { title author { name } } }` resolves both authors
+with one `batch()` call, because `ctx.loader()` gives each operation its own DataLoader. The schema
+is built and validated when the application is created: a mistake is a `SchemaBuildError` naming
+the class and field.
 
-  ```ts
-  const BearerGuard = (ctx: Ctx) => ctx.upgrade !== null || verify(ctx.req.headers.get('authorization'));
-  GraphQLModule.forRoot({
-    subscriptions: { onConnect: (_http, params) => verify(params.authorization) && { user: lookup(params) } },
-  });
-  ```
+## Features
 
-  Browser upgrades must come from the server's own origin, meaning the `Origin` host and port equal the request's `Host` header (default ports 80 and 443 are normalized, so `Host: app.example:443` matches `https://app.example`) and its scheme matches the connection (`https:` when `ctx.secure`, which honours a trusted proxy's `x-forwarded-proto`, otherwise `http:`), or from one of `subscriptions.allowedOrigins` (`'*'` allows any). `Origin: null` is rejected. The check is `@knead-js/http`'s `originAllowed`, run by `WsRegistry` before global guards. Upgrades without an `Origin` header (non-browser clients) are allowed. `@knead-js/http` has no forwarded-host setting, so behind a proxy that rewrites `Host` the same-origin check fails: list your public origins in `allowedOrigins` there. The scheme half needs care too. With hop-mode `trustProxy` (`trustProxy: 1`), `ctx.secure` comes from the `X-Forwarded-Proto` entry that many hops back, and a header with fewer entries than `hops` is ignored (then `ctx.secure` is the app's own TLS state, usually `false`). A proxy that overwrites the header instead of appending to it, such as nginx with `proxy_set_header X-Forwarded-Proto $scheme;` sitting behind a TLS-terminating load balancer, reports `http` for traffic that arrived over HTTPS. `ctx.secure` is then `false`, and the check rejects every `https://` page with `403`. Fix it in one of three ways:
-  - make the proxy that faces the app pass the original value through (`proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;` when nginx is behind the load balancer, or `$scheme` only when nginx terminates TLS itself);
-  - set `trustProxy` to the number of hops that each set the header;
-  - list your public origins in `subscriptions.allowedOrigins`, which the scheme check does not affect. `onConnect(http, params)` runs on `connection_init` and can reject the connection (close code `4403`) or add values to its context. `params` (`ConnectionParams`, read-only) is whatever the client sent. **Never return `params` or spread it into the result**: the client would then choose its own context, such as `user` or `roles`. Return only values you derived and verified (`{ user: await verify(params.token) }`). The return type is `boolean | Partial<GraphQLContext>`, and returning or spreading `params` is a compile error. Resolver guards run once, when an operation subscribes, not per event, so by default authorization is decided when the socket connects and when each subscription starts. To revoke access later:
-  - `@Subscription(() => T, { topic, recheckGuards: true })` re-runs the root guards (module, class and method) and then the `authorize` guards (against the validated arguments) before every event; an event they deny is delivered as `FORBIDDEN` (or the guard's own error) and the subscription completes. Rechecked guards see the identity from connect time (the `context(http)` and `onConnect` results), so on their own they only notice changes the guard looks up itself. Set `subscriptions.refreshContext({ http, context })` to do a live lookup before every recheck: its object result is merged over the operation's context (the guards and the event's resolvers see it) and `false` ends the subscription with `FORBIDDEN`. Real revocation therefore means one of: a live lookup (`refreshContext`, or inside the guard), `GraphQLSubscriptions.closeWhere`, or `maxConnectionLifetime`.
-  - `subscriptions.maxConnectionLifetime` (ms) closes every socket with `4408` after that long, so clients reconnect and pass `onConnect` again.
-  - `inject(GraphQLSubscriptions).closeWhere((connection) => connection.context.user?.id === id)` closes matching sockets (default code `1008`, reason `Connection revoked`) and returns how many it closed. A socket whose `onConnect` is still pending (or that has not sent `connection_init` yet) has no context to match, so the predicate is applied to it again once `onConnect` completes and the socket is closed then instead of being acknowledged (at most `listen({ websocket: { maxPendingRevocations } })` such predicates, default 10000, are kept per socket; beyond that the socket is closed with `1008`, failing closed). A predicate that throws for one socket is logged, and the others are still checked. `connection.http` is the upgrade `Ctx` and `connection.context` the connection's merged identity: the `context(http)` factory result, computed once when the connection initializes, with the object `onConnect` returned merged over it, so predicates can match on either. When nothing matches, a debug-level entry is logged.
-- **WebSocket limits:** the subscription endpoint gets `@knead-js/http`'s WebSocket limits: `listen({ websocket })` sets the largest message (`maxPayloadLength`, default 256 KiB, above the 100 KiB `maxQueryLength` plus the message envelope, so an over-long query gets an `error` message and only a larger `subscribe` message drops the connection), backpressure, the idle timeout and the open sockets per client IP (default 100, `429` above it). `subscriptions.messageRate` overrides the per-socket message rate (default 100 messages per 10s; exceeding it closes the socket with `1008`). A `subscribe` whose query is longer than `maxQueryLength` gets an `error` message and never reaches Leaven. A second `connection_init` closes the socket with `4429` before `onConnect` runs again, and a `subscribe` or `complete` whose id does not match `^[A-Za-z0-9_.:-]{1,64}$` closes it with `4400` before the message reaches Leaven. When a socket closes, or a client sends `complete` for an id, every iterator for it is returned, including one whose `subscribe` was still resolving; a reused id returns the earlier iterator.
-- **Shutdown:** the application calls `close()` on the pubsub engine, including one you passed in as `pubsub`.
-- **Production defaults:** introspection and the playground are off, errors are masked and no schema file is written unless the application is in development: `KneadFactory.create(root, { development })` (the `HTTP_DEVELOPMENT` token), which itself defaults to `NODE_ENV=development`. An application created with `development: false` keeps these production defaults even when `NODE_ENV=development`. The playground is served only to requests that list `text/html` in `Accept`. Its page sends its own CSP, which allows its inline script by hash and only the exact `cdn.jsdelivr.net` asset URLs it loads (no third-party font hosts: Google Fonts is blocked and the page falls back to system fonts), and `referrer-policy: no-referrer`. The playground stores its tabs, queries and the headers you enter (including `Authorization` tokens) in the browser's `localStorage` for the page's origin: clear it after using a real token, and do not enable the playground on an origin that serves untrusted scripts. Those assets carry pinned Subresource Integrity hashes (`PLAYGROUND_ASSETS`); Leaven's inline script is pinned too (`PLAYGROUND_SCRIPT_HASHES`, the sha256 of the page rendered for `/graphql`; `playgroundScriptHashes()` recomputes it). If Leaven's page references an asset without a pinned hash, or its inline script differs, this is logged once at bootstrap and the playground answers `503`. The page's subscription URL is `playground.subscriptionEndpoint` when set (`playground: { subscriptionEndpoint: 'wss://api.example.com/graphql' }`, a `ws://`/`wss://` URL or an absolute path); otherwise it is derived from the request's `Host` header only when that is a plain `host[:port]`, and is the relative GraphQL path for anything else, so a forged `Host` never reaches the page. Enabling the playground while the application is not in development (`HTTP_DEVELOPMENT`, else `NODE_ENV`) logs a warning at bootstrap.
-- **Bootstrap:** the schema is built and validated when the application is created. Errors name the class and field, for example `User.posts: type thunk returned undefined — is Post imported?`. In development, `emitSchemaFile` writes sorted SDL to `schema.graphql` by default.
-- **Testing:** `@knead-js/testing` provides `app.graphql(query, { variables })` and `app.graphqlSubscribe(query)`. Their `path` option (and `app.request(method, path)`) is resolved against the test server's URL, so an absolute URL is followed to whatever host it names, headers included: pass paths, never URLs built from untrusted input.
-- **Leaven integration:** Leaven's WebSocket handler, subscription manager and PubSub log through the application `LOGGER` (with its credential redaction), and its operation-type check parses with the executor's `parseOptions`. The pinned playground asset and inline-script hashes (`PLAYGROUND_ASSETS`, `PLAYGROUND_SCRIPT_HASHES`) match `@leaven-graphql/playground` 0.2.2 (`graphql-playground-react` 1.7.28) and must be recomputed when Leaven is upgraded.
+- **Typed, code-first schema.** `@ObjectType`, `@InterfaceType`, `@InputType`, `@ArgsType`,
+  `defineEnum()`, `defineScalar()` and `defineUnion()`; field, argument and return types are
+  checked against TypeScript.
+- **Resolvers with DI.** Singleton providers with `inject()`, per-operation DataLoaders, and
+  [Standard Schema](https://standardschema.dev) argument validation (`validate`).
+- **Fail-closed guards.** The `@knead-js/http` guard model on root fields, field guards on types,
+  `@Public()` and `defaultDeny`. A guard passes only on exactly `true`.
+- **Subscriptions.** `graphql-transport-ws` on the same path, an in-memory or Redis engine with
+  signing and encryption, and three ways to revoke access.
+- **Limits on by default.** Query length, tokens, fields, depth, aliases and complexity, over HTTP
+  and WebSocket.
+- **Masked errors.** Unexpected errors reach the client as `Internal server error` with a
+  correlation id; the log entry is redacted.
+- **Production-safe defaults.** Introspection, the playground and the schema file are on only in
+  development.
+- **Ordinary HTTP route.** CORS, rate limiting, security headers and global guards apply to the
+  endpoint unchanged.
 
-`bun add @knead-js/core @knead-js/http @knead-js/graphql graphql` (`@knead-js/core`, `@knead-js/http` and `graphql@^16` are peer dependencies). Leaven is pre-1.0, so its packages are pinned exactly (`core` and `ws` `0.2.3`, `playground` `0.2.2`, `errors` `0.2.1`). Licensed MIT OR Apache-2.0.
+## Types and resolvers
+
+| Thunk returns | GraphQL type |
+| --- | --- |
+| `String`, `Boolean` | `String`, `Boolean` |
+| `Number` | `Float` (use `Int` for whole numbers) |
+| `Int`, `Float`, `ID` (exported handles) | `Int`, `Float`, `ID` |
+| An `@ObjectType`, `@InterfaceType` or `@InputType` class | That type |
+| A `defineEnum()`, `defineScalar()` or `defineUnion()` handle | That enum, scalar or union |
+| `[T]` | A list of `T`; choose nullability with `nullable: 'items' \| 'list' \| 'both'` |
+
+- **Compile-time checks.** A non-null field is `name!: string`, a nullable one `bio?: string | null`.
+  A `defaultValue` must be a value of its type, and a query's return type must match the method.
+- **Arguments.** Pass an inline map (`{ first: Int, after: { type: () => ID, nullable: true } }`)
+  or an `@ArgsType()` class, not both. `ArgsOf<typeof options>` derives the TypeScript type.
+- **Validation.** `validate: { arg: schema }` runs after GraphQL coercion, and its output replaces
+  the argument. A failure is `BAD_USER_INPUT` with `extensions.issues`.
+- **Typed parents.** In `@Resolver(() => Book)`, every public method whose first parameter is a
+  `ResolverCtx<Args, Parent>` must accept a `Book` parent. A helper for another parent must be
+  `#private`.
+- **Context.** The module's `context(http)` result is spread into every `ResolverCtx`; type it by
+  augmenting `GraphQLContext`. Do not name its keys `args`, `parent`, `info`, `http`, `state`,
+  `meta` or `loader`: those are overwritten.
+
+## Guards
+
+Resolvers use the guards of `@knead-js/http` (a function, an object or a class with
+`canActivate()`), receiving the `ResolverCtx`. Anything but exactly `true`, including a truthy
+object, string or number, makes the field `FORBIDDEN`. For a root field the checks run in this
+order:
+
+1. With `defaultDeny: true`, a field that is not `@Public()` and has no guard of its own is denied.
+2. The module's `guards`, unless the field or its class is `@Public()`.
+3. The class's `@UseGuards()`, the field's `guards` option, then the method's `@UseGuards()`.
+4. The `validate` schemas.
+5. The field's `authorize` guards, which see the validated arguments.
+6. The resolver method.
+
+Rules to keep in mind:
+
+- **`defaultDeny` covers entry points only.** The module's `guards` do not count toward it. A
+  `@ResolveField()` and plain `@Field()` properties are reachable from every root field that
+  returns their type: protect sensitive ones with guards on the field resolver or with field guards.
+- **Guards before `validate` see unvalidated arguments.** Put checks that depend on validated or
+  transformed arguments in `authorize`.
+- **`@Public()` is GraphQL-only.** An HTTP `APP_GUARD` still runs once on the `/graphql` request
+  itself (and once per WebSocket upgrade, with `ctx.upgrade` set), not per resolver.
+- **Field guards.** `@UseFieldGuards(...guards)` on an `@ObjectType()` runs before every field of
+  the type, wherever it appears. A denied field is `null` with `FORBIDDEN`; for a non-null field
+  graphql-js nulls the nearest nullable parent, so make deniable fields nullable. Decorate concrete
+  object types: field guards on an `@InterfaceType()` are ignored.
+- **Bootstrap checks.** An `undefined` guard (a circular import), an arrow-function `canActivate`
+  field or an object without `canActivate()` is an `HttpConfigError` naming the resolver or type,
+  and never counts for `defaultDeny`.
+
+`GRAPHQL_ENDPOINT` and `FIELD_GUARDS` route meta let other packages, such as
+[`@knead-js/casl`](https://quinnjr.github.io/knead/packages/casl/), build on these guards.
+
+## Subscriptions
+
+`@Subscription(() => T, { topic, filter?, resolve?, recheckGuards? })` streams events from the
+`PUBSUB` engine over `graphql-transport-ws` on the GraphQL path. The socket runs subscriptions only:
+a query or mutation sent over it never executes.
+
+- **Authenticate in `onConnect`.** Browsers cannot set `Authorization` on a WebSocket, so clients
+  send credentials as `connectionParams`. `subscriptions.onConnect(http, params)` returns `false`
+  (close code `4403`) or an object merged into every operation's context.
+- **Never return `params` or spread it** into the result: the client would choose its own context
+  (`user`, roles). Return only values you derived and verified. Doing otherwise is a compile error.
+- **Same-origin upgrades.** Browser upgrades must come from the server's own origin or from
+  `subscriptions.allowedOrigins`; others get `403`, as does `Origin: null`. Behind a proxy that
+  rewrites `Host` or `X-Forwarded-Proto`, see the
+  [WebSockets guide](https://quinnjr.github.io/knead/guide/websockets/).
+- **Topics.** A computed topic containing `*` or `#`, or longer than 256 characters, is rejected
+  with `BAD_USER_INPUT` before anything subscribes. Static topic strings are not checked.
+- **Payloads are shared.** Plain objects and arrays are deep-frozen on arrival; class instances,
+  `Date`s and `Map`s are not. Publish fresh DTOs, and build new objects in `resolve`.
+- **Per-event state.** Each event gets fresh DataLoaders and an empty `ctx.state`. A subscriber
+  more than 1000 events behind loses the oldest, with a warning.
+
+Authorization is decided when the socket connects and when each subscription starts. To revoke it
+later:
+
+- `recheckGuards: true` re-runs the root and `authorize` guards before every event; pair it with
+  `subscriptions.refreshContext` for a live identity lookup (`false` ends the subscription).
+- `subscriptions.maxConnectionLifetime` closes every socket with `4408` after that many
+  milliseconds.
+- `inject(GraphQLSubscriptions).closeWhere(predicate)` closes matching sockets (code `1008`),
+  including ones whose `onConnect` is still pending.
+
+### Several instances: `RedisPubSub`
+
+The default engine is in-memory. Pass `pubsub: new RedisPubSub({ url })` (on `Bun.redis`) when
+several instances serve subscriptions.
+
+- **Sign messages.** Without `signingKey`, anything that can publish to Redis can inject events.
+  Set it (at least 32 bytes, the same on every instance, for example `openssl rand -base64 32`)
+  whenever the server is shared or remote. Unsigned, forged and stale messages are dropped.
+- **Encrypt payloads.** `encryptionKey` (AES-256-GCM) hides payloads from the Redis server. Both
+  keys take an array to rotate: sign with the first, accept any.
+- **Use TLS.** A plaintext `redis://` or `valkey://` URL to a non-loopback host logs a warning;
+  `requireTls: true` makes it throw. A caller-supplied `client` bypasses the check.
+- **Replay window.** Messages older than `maxSignatureAge` (default 60 s) are dropped, but a
+  captured message can be replayed on the same channel within it.
+- **Publishing.** `publish()` never rejects (a failure is logged and the event lost);
+  `publishOrThrow()` rejects. Payloads are JSON, so a `Date` arrives as a string.
+
+The application calls the engine's `close()` on shutdown, including one you passed in.
+
+## Errors
+
+| Thrown | `extensions.code` |
+| --- | --- |
+| `BadRequestException` (and `ArgsValidationError`) | `BAD_USER_INPUT` |
+| `UnauthorizedException` | `UNAUTHENTICATED` |
+| `ForbiddenException`, a denying guard | `FORBIDDEN` |
+| `NotFoundException` | `NOT_FOUND` |
+| `TooManyRequestsException` | `RATE_LIMITED` |
+| A `GraphQLError` thrown by resolver code | its own, else `BAD_USER_INPUT` |
+| A `LeavenError` | its own |
+| Anything else, including other `HttpException`s | `INTERNAL_SERVER_ERROR`, masked |
+
+- **Masking.** Unexpected errors are logged under a correlation id, which the client gets as
+  `extensions.correlationId`. The message is `Internal server error` unless the app is in
+  development or `maskErrors: false`.
+- **Redacted logs.** Outside development the log entry holds only the error's name and its
+  redacted message, truncated to 500 characters, never the stack or the object. The redaction
+  happens before `LOGGER` is called, so it holds for any logger.
+- **`mapError(error)`** maps errors from resolver code, `hooks`, subscription filters and the
+  WebSocket `context` factory to an `HttpException` (or `undefined` to leave them). Over HTTP the
+  `context` factory runs before GraphQL: an `HttpException` it throws becomes that HTTP problem
+  response, anything else a `500`.
+- **Echoed input.** graphql-js quotes an invalid variable's value in its `BAD_USER_INPUT` message,
+  so a client sees its own input, and so does anything that records responses.
+
+## HTTP transport
+
+- `POST` requires `Content-Type: application/json` (`415` otherwise) and runs queries and
+  mutations. A subscription over HTTP is a `400`.
+- `GET` runs queries only (a mutation is `405`) and, as a CSRF defense, must carry one of
+  `csrf.requiredHeaders` (default `x-graphql-request`). A `GET` puts the query and variables in the
+  URL, which proxies and logs record: send tokens and secrets in a `POST` body.
+- Responses carry `Cache-Control: no-store` (change it with `cacheControl`) and
+  `X-Content-Type-Options: nosniff`.
+- Clients that accept `application/graphql-response+json` get GraphQL-over-HTTP status codes; all
+  others get `200`, errors included.
+
+## Limits
+
+Every operation, over HTTP and WebSocket, is checked before it executes. The defaults are exported
+as `GRAPHQL_LIMITS`.
+
+| Option | Default | Rejected with |
+| --- | --- | --- |
+| `maxQueryLength` | `102400` characters | `400` over HTTP, checked before parsing |
+| `parseOptions.maxTokens` | `3000` | A syntax error |
+| `maxFields` | `1000` | `FIELD_LIMIT`, checked before validation |
+| `maxDepth` | `10` | `DEPTH_LIMIT` |
+| `maxIntrospectionDepth` | `20` | `DEPTH_LIMIT` |
+| `maxAliases` | `30` | `BAD_USER_INPUT` |
+| `maxComplexity` | `1000` | `COMPLEXITY_LIMIT` |
+
+`getIntrospectionQuery()` passes every default. Raise a limit with a larger number when your
+largest legitimate operation needs it (Relay schemas spend three levels per connection), or disable
+it with `Infinity` or `false`; anything else is an `HttpConfigError`. Validation still costs CPU, so
+also rate-limit the route. WebSocket messages have their own size, rate and per-IP connection
+limits, described in the [WebSockets guide](https://quinnjr.github.io/knead/guide/websockets/).
+
+## Production defaults
+
+| Option | In development | Otherwise |
+| --- | --- | --- |
+| `introspection` | on | off (on if `playground` is enabled) |
+| `playground` | on | off |
+| `maskErrors` | off | on |
+| `emitSchemaFile` | `'schema.graphql'` | `false` |
+
+Development is `KneadFactory.create(root, { development })` (the `HTTP_DEVELOPMENT` token), which
+defaults to `NODE_ENV === 'development'`. An app created with `development: false` keeps the
+production defaults even when `NODE_ENV=development`.
+
+- Enabling the playground outside development logs a warning at bootstrap.
+- The playground is served only to `GET` requests that list `text/html` in `Accept`. Its page sends
+  its own CSP and pins every asset with Subresource Integrity; if Leaven's page no longer matches
+  the pinned hashes, the playground answers `503`.
+- The playground stores the headers you type, including `Authorization` tokens, in `localStorage`.
+  Clear it after using a real token, and do not enable it on an origin that serves untrusted
+  scripts.
+
+## Testing
+
+`@knead-js/testing` starts the app on a random port: `app.graphql(query, { variables, headers })`
+posts an operation and `app.graphqlSubscribe(query, { connectionParams })` yields subscription
+events. Their `path` option is resolved against the test server's URL, so pass paths, never URLs
+built from untrusted input.
+
+## Documentation
+
+- [Package reference](https://quinnjr.github.io/knead/packages/graphql/): every option and export.
+- [GraphQL guide](https://quinnjr.github.io/knead/guide/graphql/): a complete API step by step.
+- [Authorization](https://quinnjr.github.io/knead/guide/authorization/): CASL abilities on GraphQL
+  fields.
+- [WebSockets](https://quinnjr.github.io/knead/guide/websockets/): origin checks and socket limits.
+
+## License
+
+Licensed under either of [MIT](https://github.com/quinnjr/knead/blob/develop/LICENSE-MIT) or
+[Apache-2.0](https://github.com/quinnjr/knead/blob/develop/LICENSE-APACHE) at your option.
