@@ -121,7 +121,7 @@ class AppModule {}
 | `P1001`, `P1002`, `P2024` (unreachable, timeout, pool timeout), `PrismaClientInitializationError` | 503 | `ServiceUnavailableException` |
 | any other Prisma error | 500 | `InternalServerErrorException` |
 
-Security trade-off: each row has a fixed, generic `detail`. Prisma's `message` is never copied into a response body or a production log, because it can contain query fragments, column values and connection details; the original error travels only as `cause`. In development, responses additionally carry `extensions.prismaCode` and, for unique violations, `extensions.fields` (field names from `meta.target`, never values).
+Security trade-off: each row has a fixed, generic `detail`. Prisma's `message` is never copied into a response body or a production log, because it can contain query fragments, column values and connection details; the original error travels only as `cause`. In development, responses additionally carry `extensions.prismaCode` and, for unique violations, `extensions.fields` (the constraint's field names, read from the driver adapter's `meta.driverAdapterError.cause.constraint.fields` or else `meta.target`; never values).
 
 `map` overrides or adds mappers by code (`P2034`) or by error name; a mapper that throws or returns something other than an `HttpException` becomes a 500:
 

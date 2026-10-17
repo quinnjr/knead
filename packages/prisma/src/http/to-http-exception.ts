@@ -42,15 +42,32 @@ export function isPrismaError(e: unknown): e is PrismaErrorLike {
   );
 }
 
+function stringArray(value: unknown): string[] | undefined {
+  return Array.isArray(value) && value.every((v) => typeof v === 'string') ? [...value] : undefined;
+}
+
+function field(value: unknown, key: string): unknown {
+  return typeof value === 'object' && value !== null
+    ? (value as Record<string, unknown>)[key]
+    : undefined;
+}
+
+/**
+ * The constraint's field names. Prisma 7 driver adapters put them at
+ * `meta.driverAdapterError.cause.constraint.fields`; the native engine used `meta.target`.
+ */
+function constraintFields(meta: Record<string, unknown> | undefined): string[] | undefined {
+  const adapter = field(field(field(meta?.driverAdapterError, 'cause'), 'constraint'), 'fields');
+  return stringArray(adapter) ?? stringArray(meta?.target);
+}
+
 function devExtensions(error: PrismaErrorLike, development: boolean | undefined) {
   if (!development) return undefined;
   const extensions: Record<string, unknown> = {};
   if (error.code !== undefined) extensions.prismaCode = error.code;
-  const target = error.meta?.target;
   // Field names only: never values, and never `message`.
-  if (Array.isArray(target) && target.every((t) => typeof t === 'string')) {
-    extensions.fields = [...target];
-  }
+  const fields = constraintFields(error.meta);
+  if (fields) extensions.fields = fields;
   return extensions;
 }
 

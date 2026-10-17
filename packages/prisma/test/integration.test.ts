@@ -175,6 +175,31 @@ describe.skipIf(!DATABASE_URL)('postgres integration', () => {
     expect(await client.user.count()).toBe(1);
   });
 
+  test('P2002 carries the field names in development', async () => {
+    const PrismaClient = await loadClient();
+    const adapter = await loadAdapter(DATABASE_URL!);
+    const dev = await Test.createModule({
+      imports: [
+        PrismaModule.forRoot({ client: () => new PrismaClient({ adapter }) as never }),
+        PrismaHttpModule.forRoot(),
+      ],
+      providers: [UserService],
+      controllers: [UsersController],
+    }).compile({ development: true });
+    try {
+      const app = await dev.createApp();
+      const email = 'dev-duplicate@example.test';
+      expect((await app.request('POST', '/users', { json: { email } })).ok).toBe(true);
+      const second = await app.request('POST', '/users', { json: { email } });
+      expect(second.status).toBe(409);
+      const body = (await second.json()) as { fields?: unknown; prismaCode?: unknown };
+      expect(body.prismaCode).toBe('P2002');
+      expect(body.fields).toEqual(['email']);
+    } finally {
+      await dev.close();
+    }
+  });
+
   test('withRollback isolates', async () => {
     const created = await withRollback(mod, async () => {
       const user = await users.create('isolated@example.test');

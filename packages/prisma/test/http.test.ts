@@ -145,6 +145,36 @@ describe('PrismaHttpModule', () => {
     expect(prod.body.prismaCode).toBeUndefined();
   });
 
+  test('dev fields come from a Prisma 7 driver adapter error', async () => {
+    const adapterMeta = (fields: unknown) => ({
+      modelName: 'User',
+      driverAdapterError: {
+        name: 'DriverAdapterError',
+        cause: {
+          originalCode: '23505',
+          originalMessage: 'duplicate key value violates unique constraint "User_email_key"',
+          kind: 'UniqueConstraintViolation',
+          constraint: { fields },
+        },
+      },
+    });
+    const dev = await hit(known('P2002', adapterMeta(['email'])), { development: true });
+    expect(dev.body.fields).toEqual(['email']);
+    expect(dev.text).not.toContain('duplicate key');
+    await mod?.close();
+    const odd = await hit(known('P2002', adapterMeta([{ email: 'a@b.c' }])), {
+      development: true,
+    });
+    expect(odd.body.fields).toBeUndefined();
+    expect(odd.text).not.toContain('a@b.c');
+    await mod?.close();
+    // `meta.target` is still read when the adapter shape is absent or unusable.
+    const fallback = await hit(known('P2002', { ...adapterMeta('email'), target: ['handle'] }), {
+      development: true,
+    });
+    expect(fallback.body.fields).toEqual(['handle']);
+  });
+
   test('declines non-Prisma errors to later filters', async () => {
     const { res, text } = await hit(new Error('x'), { after: true });
     expect(res.status).toBe(418);
