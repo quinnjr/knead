@@ -54,14 +54,20 @@ export function cronSchedule(pattern: string, timezone?: string): Schedule {
   }
   // croner returns the first match strictly after the given time, except in the second
   // occurrence of a repeated (fall-back) hour: there it maps the wall-clock match to its first
-  // occurrence, which is already past. The same wall-clock time in the current offset is the
-  // real next match.
+  // occurrence, which is already past. Every time in that hour ran in its first occurrence (an
+  // instance running through it fired them; croner skips the repeat for it), so the next match is
+  // the first one after the repeated hour ends. Every instance then agrees on the same firings,
+  // and a locked job cannot run twice.
   const next = (from: number): number | null => {
     const at = cron.nextRun(new Date(from))?.getTime() ?? null;
     if (at === null || at > from) return at;
-    const shifted = at + (offset(at) - offset(from)) * 60_000;
+    const end = repeatedHourEnd(offset, at, from);
+    if (end === null) return null;
+    // Asked from just before the end, croner sees the last second of the repeated wall-clock hour
+    // (mapped to its first occurrence), so a match at the end itself is still found.
+    const after = cron.nextRun(new Date(end - 1_000))?.getTime() ?? null;
     // Never arm a time in the past: that would fire on every tick.
-    return shifted > from ? shifted : null;
+    return after !== null && after > from ? after : null;
   };
   return {
     kind: 'cron',
@@ -81,6 +87,29 @@ export function intervalSchedule(every: number): Schedule {
 
 export function timeoutSchedule(after: number): Schedule {
   return { kind: 'timeout', first: (now) => now + after, following: () => null };
+}
+
+/**
+ * The instant the second occurrence of a repeated (fall-back) hour ends, given `before` in the
+ * first occurrence and `inside` in the second; null if no offset decrease lies between them.
+ */
+function repeatedHourEnd(
+  offset: (at: number) => number,
+  before: number,
+  inside: number,
+): number | null {
+  const shift = offset(before) - offset(inside);
+  if (shift <= 0) return null;
+  // Bisect for the transition: the first millisecond with the later offset.
+  let lo = before;
+  let hi = inside;
+  const later = offset(inside);
+  while (hi - lo > 1) {
+    const mid = lo + Math.floor((hi - lo) / 2);
+    if (offset(mid) === later) hi = mid;
+    else lo = mid;
+  }
+  return hi + shift * 60_000;
 }
 
 /** The UTC offset, in minutes, of `timezone` (default: the local zone) at an instant. */

@@ -90,7 +90,8 @@ aborts `signal` and waits for runs in progress.
   first, an optional 7th for the year, and macros such as `@daily` and `@hourly`. `timezone` is an
   IANA name; the default is the process time zone. Patterns are at most 1024 characters. Across
   daylight saving time changes, a time in the skipped hour runs an hour later that day, and a time
-  in the repeated hour runs once, in its first occurrence.
+  in the repeated hour runs once, in its first occurrence (an instance started during the second
+  occurrence skips it too, so a locked job cannot run twice).
 - `@Interval(every, { name? })` runs every `every`. The first run is one period after startup.
 - `@Timeout(after, { name? })` runs once. While that run is in progress the job is listed as
   `stopped`; when it settles, the job leaves the registry.
