@@ -207,7 +207,9 @@ describe('createErrorHandler', () => {
     ).json()) as { detail: string; stack: string };
     expect(dev.detail).toBe('connect redis://***@cache failed');
     expect(dev.stack).not.toContain('app:pw');
-    const logged = logger.entries.at(-1)!.meta[0] as string;
+    const loggedError = logger.entries.at(-1)!.meta[0] as Error;
+    expect(loggedError).toBeInstanceOf(Error);
+    const logged = loggedError.stack!;
     expect(logged).toContain('redis://***@cache');
     expect(logged).not.toContain('app:pw');
     expect(logged).not.toContain('Bearer t');

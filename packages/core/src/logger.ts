@@ -52,8 +52,9 @@ export class ConsoleLogger implements Logger {
     try {
       return this.#formatUnsafe(message, meta);
     } catch {
-      // Logging must never throw into the caller (for example, a request's error handler).
-      return [`[${this.prefix}] ${escapeControl(String(message))}`, '[unloggable arguments]'];
+      // Logging must never throw into the caller (for example, a request's error handler). The
+      // fallback still redacts: a non-string message (from untyped code) can hold credentials.
+      return [`[${this.prefix}] ${fallbackMessage(message)}`, '[unloggable arguments]'];
     }
   }
 
@@ -64,6 +65,14 @@ export class ConsoleLogger implements Logger {
         typeof value === 'string' ? escapeControl(redactCredentials(value)) : redactValue(value),
       ),
     ];
+  }
+}
+
+function fallbackMessage(message: unknown): string {
+  try {
+    return escapeControl(redactCredentials(String(message)));
+  } catch {
+    return '[unloggable message]';
   }
 }
 

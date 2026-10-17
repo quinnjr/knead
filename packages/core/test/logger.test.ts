@@ -1,5 +1,5 @@
-import { describe, expect, test } from 'bun:test';
-import { logError, MemoryLogger } from '../src/index.js';
+import { describe, expect, spyOn, test } from 'bun:test';
+import { ConsoleLogger, logError, MemoryLogger } from '../src/index.js';
 
 describe('logging in core', () => {
   test('logError logs a summary and returns a correlation id', () => {
@@ -21,10 +21,56 @@ describe('logging in core', () => {
     const entry = logger.entries[0]!;
     expect(entry.message).not.toContain('connect');
     expect(entry.meta).toHaveLength(1);
-    const meta = JSON.stringify(entry.meta);
-    expect(meta).toContain('postgres://***@db');
-    expect(meta).toContain('***');
-    expect(meta).not.toContain('app:pw');
-    expect(meta).not.toContain('t0ken');
+    // Still an Error, so loggers format it like any other error; only its text is redacted.
+    const logged = entry.meta[0] as Error;
+    expect(logged).toBeInstanceOf(Error);
+    expect(logged.name).toBe('Error');
+    expect(logged.message).toBe('connect postgres://***@db failed');
+    expect(logged.stack).toStartWith('Error: connect postgres://***@db failed');
+    expect(logged.stack).toContain('authorization: "***"');
+    expect(Object.keys(logged)).toEqual([]);
+    for (const text of [logged.message, logged.stack]) {
+      expect(text).not.toContain('app:pw');
+      expect(text).not.toContain('t0ken');
+    }
+    expect(error.message).toContain('app:pw');
+  });
+
+  test('logError in development passes an Error with nothing to redact through unchanged', () => {
+    const logger = new MemoryLogger();
+    const error = new TypeError('plain');
+    logError({ logger, development: true }, 'boom', error);
+    expect(logger.entries[0]!.meta[0]).toBe(error);
+  });
+});
+
+describe('ConsoleLogger fallback when formatting fails', () => {
+  test('a non-string message is still redacted', () => {
+    const spy = spyOn(console, 'info').mockImplementation(() => {});
+    try {
+      const message = { toString: () => 'connect redis://u:secret@h failed' };
+      new ConsoleLogger().info(message as unknown as string, 1);
+      expect(spy.mock.calls[0]).toEqual([
+        '[knead] connect redis://***@h failed',
+        '[unloggable arguments]',
+      ]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test('a message that cannot be stringified is replaced', () => {
+    const spy = spyOn(console, 'info').mockImplementation(() => {});
+    try {
+      const message = {
+        toString: () => {
+          throw new Error('no');
+        },
+      };
+      new ConsoleLogger().info(message as unknown as string);
+      expect(spy.mock.calls[0]).toEqual(['[knead] [unloggable message]', '[unloggable arguments]']);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
