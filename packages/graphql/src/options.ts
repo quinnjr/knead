@@ -33,8 +33,9 @@ export type ConnectContext = Partial<GraphQLContext> & { readonly [CONNECTION_PA
 
 export interface SubscriptionOptions {
   /**
-   * Runs on `connection_init` with the upgrade request's Ctx. `false` closes the socket with
-   * 4403; an object is merged into every operation's context on that socket. Never spread
+   * Runs on `connection_init` with the upgrade request's Ctx, after the `context` factory (which
+   * closes the socket with 4403 if it throws). `false` closes the socket with 4403; an object is
+   * merged into every operation's context on that socket. Never spread
    * `connectionParams` into the result: the client would choose its own context (`user`,
    * `roles`, ...). Return only values you derived and verified.
    */
@@ -74,7 +75,7 @@ export interface SubscriptionOptions {
   messageRate?: WsMessageRate | false;
   /**
    * Milliseconds after which every subscription socket is closed with 4408, so that clients
-   * reconnect and pass `onConnect` again. Default: no limit.
+   * reconnect and pass `onConnect` again: an integer from 1 to 2^31 - 1. Default: no limit.
    */
   maxConnectionLifetime?: number;
 }
@@ -89,7 +90,8 @@ export interface GraphQLModuleOptions {
   /**
    * Builds the user part of each operation's context, spread into each ResolverCtx. The built-in
    * members (`args`, `parent`, `info`, `http`, `state`, `meta`, `loader`) win over context keys
-   * with the same name, so do not use those names.
+   * with the same name, so do not use those names. Over WebSocket it also runs at
+   * `connection_init`; a throw there closes the socket with 4403.
    */
   context?: (http: Ctx) => object | Promise<object>;
   /**
@@ -164,7 +166,10 @@ export interface GraphQLModuleOptions {
   orphanedTypes?: readonly Class[];
   /** Default: enabled when the schema has subscriptions. */
   subscriptions?: SubscriptionOptions | false;
-  /** Default: Leaven's in-memory PubSub. Closed on shutdown if it has close(). */
+  /**
+   * Default: the in-memory PubSub (payloads deep-frozen on publish). Closed on shutdown if it has
+   * close().
+   */
   pubsub?: PubSubEngine;
   /**
    * Guards run on every root field (query, mutation and subscription), before the resolver's
@@ -172,9 +177,10 @@ export interface GraphQLModuleOptions {
    */
   guards?: readonly GuardRef<ResolverCtx<any, any>>[];
   /**
-   * Deny (FORBIDDEN) every root field that is neither `@Public()` nor protected by a guard of
-   * its own (class `@UseGuards`, the `guards` option or method `@UseGuards`); module `guards`
-   * do not count. Default false.
+   * Deny (FORBIDDEN) every root field that is neither `@Public()` nor protected by guards of
+   * its own (class `@UseGuards`, the field's `guards` or `authorize` option, or method
+   * `@UseGuards`): a field with no guards and no authorize guards of its own is denied. Module
+   * `guards` do not count. Default false.
    */
   defaultDeny?: boolean;
 }
@@ -332,6 +338,13 @@ export function validateGraphQLOptions(options: GraphQLModuleOptions): void {
       'maxSubscriptionsPerConnection',
       subscriptions.maxSubscriptionsPerConnection,
       1,
+    );
+    // Past 2^31 - 1 ms the lifetime timer would fire after 1 ms and close every socket.
+    subscriptionInteger(
+      'maxConnectionLifetime',
+      subscriptions.maxConnectionLifetime,
+      1,
+      MAX_TIMER_DELAY,
     );
   }
 }

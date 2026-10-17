@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
-import { deepFreeze, eventIterator, PubSub } from '../src/index.js';
+import { Module } from '@knead-js/core';
+import { deepFreeze, eventIterator, Int, PUBSUB, PubSub, Query, Resolver } from '../src/index.js';
+import { startGraphQL } from './helpers.js';
 
 describe('eventIterator', () => {
   test('an engine error ends the iterator with a generic error', async () => {
@@ -15,6 +17,22 @@ describe('eventIterator', () => {
     const pending = it.next();
     fail!(new Error('redis down: secret host'));
     await expect(pending).rejects.toThrow('Subscription event source failed.');
+  });
+
+  test('a subscribe throwing partway undoes the topics already subscribed', () => {
+    const active = new Set<string>();
+    const engine = {
+      subscribe: (topic: string) => {
+        if (topic === 'b') throw new Error('Maximum subscribers reached');
+        active.add(topic);
+        return () => active.delete(topic);
+      },
+      publish: () => {},
+    };
+    expect(() => eventIterator<number>(engine, ['a', 'b', 'c'])).toThrow(
+      'Maximum subscribers reached',
+    );
+    expect([...active]).toEqual([]);
   });
 
   test('yields events from every topic in order, buffering until pulled', async () => {
@@ -56,6 +74,32 @@ describe('eventIterator', () => {
 });
 
 describe('shared payloads are immutable', () => {
+  test('the in-memory PubSub deep-freezes a payload even with no subscriber', async () => {
+    const pubsub = new PubSub();
+    const payload = { user: { name: 'a' }, tags: ['x'] };
+    await pubsub.publish('nobody-listens', payload);
+    expect(Object.isFrozen(payload)).toBe(true);
+    expect(Object.isFrozen(payload.user)).toBe(true);
+    expect(Object.isFrozen(payload.tags)).toBe(true);
+  });
+
+  test('the PUBSUB default is the freezing in-memory PubSub', async () => {
+    @Resolver()
+    class R {
+      @Query(() => Int) n() {
+        return 1;
+      }
+    }
+    @Module({ providers: [R] })
+    class M {}
+    const { mod } = await startGraphQL([M]);
+    try {
+      expect(mod.get(PUBSUB)).toBeInstanceOf(PubSub);
+    } finally {
+      await mod.close();
+    }
+  });
+
   test('every subscriber of the in-memory PubSub gets the same deep-frozen payload', async () => {
     const pubsub = new PubSub();
     const a = eventIterator<{ post: { title: string; tags: string[] } }>(pubsub, ['t']);

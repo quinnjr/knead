@@ -188,7 +188,8 @@ a query or mutation sent over it never executes.
 
 - **Authenticate in `onConnect`.** Browsers cannot set `Authorization` on a WebSocket, so clients
   send credentials as `connectionParams`. `subscriptions.onConnect(http, params)` returns `false`
-  (close code `4403`) or an object merged into every operation's context.
+  (close code `4403`) or an object merged into every operation's context. A `context` factory
+  that throws at connection init closes the socket with `4403` too (fail closed).
 - **Never return `params` or spread it** into the result: the client would choose its own context
   (`user`, roles). Return only values you derived and verified. Doing otherwise is a compile error.
 - **Same-origin upgrades.** Browser upgrades must come from the server's own origin or from
@@ -197,8 +198,9 @@ a query or mutation sent over it never executes.
   [WebSockets guide](https://quinnjr.github.io/knead/guide/websockets/).
 - **Topics.** A computed topic containing `*` or `#`, or longer than 256 characters, is rejected
   with `BAD_USER_INPUT` before anything subscribes. Static topic strings are not checked.
-- **Payloads are shared.** Plain objects and arrays are deep-frozen on arrival; class instances,
-  `Date`s and `Map`s are not. Publish fresh DTOs, and build new objects in `resolve`.
+- **Payloads are shared.** Plain objects and arrays are deep-frozen on arrival (the in-memory
+  `PubSub` freezes them in `publish()`, even with no subscriber); class instances, `Date`s and
+  `Map`s are not. Publish fresh DTOs, and build new objects in `resolve`.
 - **Per-event state.** Each event gets fresh DataLoaders and an empty `ctx.state`. A subscriber
   more than 1000 events behind loses the oldest, with a warning.
 
@@ -233,6 +235,10 @@ several instances serve subscriptions.
   captured message can be replayed on the same channel within it.
 - **Publishing.** `publish()` never rejects (a failure is logged and the event lost);
   `publishOrThrow()` rejects. Payloads are JSON, so a `Date` arrives as a string.
+- **Connection loss.** When the subscriber connection closes or Bun reconnects it (losing its
+  channel subscriptions), every subscription on the instance ends with an error, so clients
+  resubscribe, and the next one opens a new connection. An owned publisher is reconnected on
+  next use.
 
 The application calls the engine's `close()` on shutdown, including one you passed in.
 

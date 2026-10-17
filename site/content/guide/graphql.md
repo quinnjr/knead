@@ -297,9 +297,11 @@ A field typed with a union or an interface returns instances of the member class
 ### The context factory
 
 The module's `context` option is a function of the request `Ctx` that returns an object (or a
-promise of one). Over HTTP it runs once per request. Over WebSocket it runs with the upgrade
-request once when the connection initializes (for `closeWhere`) and again for every `subscribe`
-operation. Type what it returns by augmenting `GraphQLContext`:
+promise of one). Over HTTP it runs once per request. Over WebSocket it runs with the upgrade request
+once when the connection initializes (for `closeWhere`) and again for every `subscribe` operation.
+If it throws when the connection initializes, the failure is logged and the socket is closed with
+`4403`, so no connection runs without the identity `closeWhere` matches on. Type what it returns by
+augmenting `GraphQLContext`:
 
 <<< graphql/sessions.ts#context-type title="sessions.ts"
 
@@ -456,7 +458,8 @@ socket limits.
 - Each event gets fresh `ctx.loader()` DataLoaders and an empty `ctx.state`. `ctx.meta` and the
   connection's context are the same for every event.
 - One payload is shared by every subscriber, so its plain objects and arrays are deep-frozen when it
-  arrives (`deepFreeze`). Class instances, `Date`s and `Map`s are not frozen or walked into. Publish
+  arrives (`deepFreeze`); the in-memory `PubSub` freezes it in `publish()`, even with no
+  subscriber. Class instances, `Date`s and `Map`s are not frozen or walked into. Publish
   plain DTOs, not entities, and build new objects in `resolve` or the method instead of changing the
   payload.
 - A subscriber more than 1000 events behind loses the oldest, and a warning is logged once per
@@ -487,7 +490,7 @@ checked again when `onConnect` completes, so it cannot slip through.
 
 ### Several instances
 
-The default engine, Leaven's in-memory `PubSub`, delivers events within one process. When several
+The default engine, the in-memory `PubSub`, delivers events within one process. When several
 instances serve subscriptions, pass a `RedisPubSub`:
 
 <<< graphql/redis.ts#redis title="app.module.ts"
@@ -496,8 +499,10 @@ instances serve subscriptions, pass a `RedisPubSub`:
 failed publish is logged and the event is lost); `publishOrThrow()` rejects. Without `signingKey`,
 anything that can publish to the Redis server can inject events, so set it (at least 32 bytes, the
 same on every instance) whenever the server is shared or remote; `encryptionKey` also hides the
-payloads from the server. Messages are JSON, so a `Date` arrives as a string. The application closes
-the engine on shutdown. The [package reference](/packages/graphql/#redispubsub) lists every option.
+payloads from the server. Messages are JSON, so a `Date` arrives as a string. If the subscriber
+connection drops, every subscription on the instance ends with an error (clients resubscribe) and
+the next subscription opens a new connection. The application closes the engine on shutdown. The
+[package reference](/packages/graphql/#redispubsub) lists every option.
 
 ## Errors
 

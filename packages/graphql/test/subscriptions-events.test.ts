@@ -103,9 +103,11 @@ describe('subscription events', () => {
   });
 
   test('a throwing context factory over WebSocket is logged and masked', async () => {
+    let wsCalls = 0;
     s = await startGraphQL([EventsModule], {
+      // connection_init succeeds (a failure there rejects the connection); the operation fails.
       context: (http) => {
-        if (http.req.headers.get('upgrade')) throw new Error('context secret');
+        if (http.req.headers.get('upgrade') && ++wsCalls > 1) throw new Error('context secret');
         return {};
       },
     });

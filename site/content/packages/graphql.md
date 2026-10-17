@@ -67,7 +67,7 @@ Both register a controller with `POST` and `GET` routes at the path, and provide
 | `emitSchemaFile` | `string \| false` | `'schema.graphql'` in development, else `false` | Writes the sorted SDL at bootstrap. |
 | `orphanedTypes` | `readonly Class[]` | `[]` | Types to build although no field returns them (for example interface implementations). |
 | `subscriptions` | `GraphQLSubscriptionOptions \| false` | `{}` | Subscription transport options. The endpoint is registered only when the schema has subscriptions. |
-| `pubsub` | `PubSubEngine` | a Leaven `PubSub` logging through `LOGGER` | The engine behind `PUBSUB`. Its `close()` runs on shutdown. |
+| `pubsub` | `PubSubEngine` | an in-memory `PubSub` logging through `LOGGER` | The engine behind `PUBSUB`. Its `close()` runs on shutdown. |
 | `guards` | `readonly GuardRef<ResolverCtx>[]` | `[]` | Guards run on every root field before its own guards, except `@Public()` ones. Not run for `@ResolveField`. |
 | `defaultDeny` | `boolean` | `false` | Deny every root field that is neither `@Public()` nor has a guard of its own. Module `guards` do not count. |
 
@@ -80,21 +80,23 @@ The `subscriptions` option (exported under this name; it is `SubscriptionOptions
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `onConnect` | `(http: Ctx, params: ConnectionParams) => boolean \| ConnectContext \| Promise<...>` | none | Runs on `connection_init`. `false` (or a throw, which is logged) closes the socket with `4403`; an object is merged into every operation's context on the socket. |
+| `onConnect` | `(http: Ctx, params: ConnectionParams) => boolean \| ConnectContext \| Promise<...>` | none | Runs on `connection_init`, after the `context` factory (a factory that throws there closes the socket with `4403` and `onConnect` does not run). `false` (or a throw, which is logged) closes the socket with `4403`; an object is merged into every operation's context on the socket. |
 | `refreshContext` | `({ http, context }) => ConnectContext \| false \| Promise<...>` | none | Runs before every recheck of a `recheckGuards: true` subscription. An object is merged over the context; anything else (`false`, but also `undefined`, `null` or `true`) ends the subscription with `FORBIDDEN`. |
 | `connectionInitTimeout` | `number` (ms) | `3000` (Leaven) | Time allowed for `connection_init`, an integer from 1 to 2147483647. |
 | `keepAliveInterval` | `number` (ms) | `12000` (Leaven) | Server pings, an integer up to 2147483647; `0` disables them. |
 | `maxSubscriptionsPerConnection` | `number` | `100` (Leaven) | Concurrent subscriptions per socket, a positive integer. |
 | `allowedOrigins` | `readonly string[] \| '*'` | same origin only | Browser origins allowed to open a socket besides the server's own. Upgrades without `Origin` are allowed; others get `403`. |
 | `messageRate` | `WsMessageRate \| false` | the server's, 100 messages per 10 s | Per-socket token bucket; exceeding it closes the socket with `1008`. |
-| `maxConnectionLifetime` | `number` (ms) | no limit | Closes every socket with `4408` after this long. |
+| `maxConnectionLifetime` | `number` (ms) | no limit | Closes every socket with `4408` after this long, an integer from 1 to 2147483647. |
 
-Other socket rules: the client must offer the `graphql-transport-ws` subprotocol (`400`
-otherwise); a second `connection_init` closes the socket with `4429`; a `subscribe` or `complete`
-whose id does not match `^[A-Za-z0-9_.:-]{1,64}$` closes it with `4400`; a `subscribe` before the
-connection is acknowledged closes it with `4401`; a `subscribe` whose query is longer than
-`maxQueryLength` gets an `error` message; queries and mutations get an `error` and never run. The
-timing and count options above are checked at bootstrap (`HttpConfigError`).
+Other socket rules: the client must offer the `graphql-transport-ws` subprotocol (`400` otherwise),
+anywhere in its list, and the server answers with it; a second `connection_init` closes the socket
+with `4429`; a `subscribe` or `complete` whose id does not match `^[A-Za-z0-9_.:-]{1,64}$` closes it
+with `4400`; a `subscribe` before the connection is acknowledged closes it with `4401`; a
+`subscribe` whose query is longer than `maxQueryLength` gets an `error` message; a `subscribe`
+reusing the id of an active subscription closes it with `4409`, whatever its length; queries and
+mutations get an `error` and never run. The timing and count options above are checked at bootstrap
+(`HttpConfigError`).
 
 ### `PlaygroundOptions`
 
@@ -443,16 +445,23 @@ no longer receive events; `RedisPubSub` does, and the subscription then fails.
 
 ### In-memory `PubSub`
 
-Leaven's in-memory engine, re-exported. `new PubSub(config?)` with `maxSubscribersPerTopic` (default
-10000; past it `subscribe` throws), `wildcards` (default `false`), `maxQueueSize` (default unbounded)
-and `logger` (default `console`; the module's default engine logs through `LOGGER` instead).
-`publish()` delivers synchronously, in-process only.
+Leaven's in-memory engine, extended so that `publish(topic, payload)` deep-freezes the payload
+(`deepFreeze`) before delivering it, whether or not anything is subscribed: a publisher cannot
+change a payload after publishing it, with or without listeners. `new PubSub(config?)` with
+`maxSubscribersPerTopic` (default 10000; past it `subscribe` throws), `wildcards` (default `false`),
+`maxQueueSize` (default unbounded) and `logger` (default `console`; the module's default engine logs
+through `LOGGER` instead). `publish()` delivers synchronously, in-process only.
 
 ### `RedisPubSub`
 
 A `PubSubEngine` on `Bun.redis` for several instances. Payloads are JSON. Subscriptions use a
 dedicated duplicate connection; when it or a `SUBSCRIBE` fails, the failure is logged, the topic's
-subscriptions end, and the next subscriber retries.
+subscriptions end, and the next subscriber retries. When that connection closes later, or Bun
+reconnects it (a reconnected connection has lost its channel subscriptions), the loss is logged,
+every subscription on every topic ends through `onError` (clients resubscribe), and the next
+`subscribe()` opens a new connection. A publisher the engine created itself is reconnected on its
+next use after Bun has given up on it (or closed it on `idleTimeout`); a supplied `client` is left
+to the caller.
 
 - `new RedisPubSub(options?: RedisPubSubOptions)` validates the options (`HttpConfigError`), and
   warns at construction when there is no `signingKey` and the server is not on loopback, or when the
@@ -498,7 +507,8 @@ construction.
 `eventIterator<T>(engine: PubSubEngine, topics: readonly string[], filter?, options?): AsyncIterableIterator<T>`
 subscribes to every topic and yields payloads, deep-frozen, that pass `filter`. It buffers up to
 1000 events per iterator and then drops the oldest, calling `options.onDrop()`. `return()`
-unsubscribes from every topic. `@Subscription()` fields use it.
+unsubscribes from every topic. If the engine throws while subscribing to one topic, the topics
+already subscribed are unsubscribed and the error is rethrown. `@Subscription()` fields use it.
 
 ### `deepFreeze()`
 

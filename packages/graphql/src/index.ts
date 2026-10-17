@@ -1,4 +1,4 @@
-export { PubSub, type PubSubEngine } from '@leaven-graphql/ws';
+export type { PubSubEngine } from '@leaven-graphql/ws';
 export type { BatchLoader, GraphQLContext, ResolverCtx, SubscriptionCtx } from './context.js';
 export {
   ArgsValidationError,
@@ -37,7 +37,7 @@ export {
   playgroundPage,
   playgroundScriptHashes,
 } from './playground.js';
-export { deepFreeze, eventIterator, PUBSUB } from './pubsub.js';
+export { deepFreeze, eventIterator, PUBSUB, PubSub } from './pubsub.js';
 export { RedisPubSub, type RedisPubSubKey, type RedisPubSubOptions } from './redis-pubsub.js';
 export {
   type ArgsOf,
