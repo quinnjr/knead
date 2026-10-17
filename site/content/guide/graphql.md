@@ -245,6 +245,12 @@ twice, derive it from the options with `ArgsOf`:
 resolved by the method; `ctx.parent` is the `Post`. A `@ResolveField()` in a `@Resolver()` without a
 type is a `SchemaBuildError`, and so is a second resolver for the same field.
 
+An `@ObjectType()` subclass of `Post` inherits `author`, with its resolver and guards; a
+`@Resolver(() => Subclass)` may declare its own `author`, which wins for the subclass. The resolver
+type must be an object type: graphql-js resolves an interface's fields on the concrete type, so
+`@ResolveField()` in a `@Resolver(() => SomeInterface)` is a `SchemaBuildError`. Resolve the field
+on each implementing type instead.
+
 In a typed resolver, every public method whose first parameter is a `ResolverCtx<Args, Parent>`
 must have a `Parent` that accepts the resolver's type; a mismatch is a compile error on
 `@Resolver()`. Queries and mutations use the default parent, `undefined`, and pass. Subscription
@@ -319,7 +325,8 @@ instead of twenty, write a batch loader:
 
 `ctx.loader(AuthorsById)` returns a [DataLoader](https://github.com/graphql/dataloader) created for
 the current operation, so every `Post.author` of one request lands in a single `batch()` call, and
-nothing is cached across requests. The loader class itself is a singleton: it is the provider when
+nothing is cached across requests. Each module gets its own DataLoader for a loader class, built
+over the provider that module sees. The loader class itself is a singleton: it is the provider when
 the resolver's module can see one (as `AuthorsById` is in `BlogModule`), and otherwise it is
 constructed once with `inject()` available. `batch(keys)` must return one value or `Error` per key,
 in key order. An `options` property is passed to DataLoader as its options.
@@ -345,7 +352,8 @@ Attach guards with `@UseGuards()` on the resolver class or method (from `@knead-
 
 For a query, mutation or subscription field, in this order:
 
-1. With `defaultDeny: true`, a field that is not `@Public()` and has no guard of its own is denied.
+1. With `defaultDeny: true`, a field that is not `@Public()` and has no guard of its own (steps 3
+   to 5, or `authorize`) is denied.
 2. The module's `guards`, unless the field or its class is `@Public()`.
 3. The class's `@UseGuards()` guards.
 4. The field's `guards` option.
@@ -370,7 +378,8 @@ points, not nested fields.
 request itself.
 
 `defaultDeny: true` makes forgetting a guard fail closed: a root field that is neither `@Public()`
-nor protected by a guard of its own (class or method `@UseGuards()`, or the `guards` option) is
+nor protected by a guard of its own (class or method `@UseGuards()`, or the `guards` or `authorize`
+option) is
 `FORBIDDEN`. The module's `guards` do not count, so every field states its authorization:
 
 <<< graphql/guards.ts#forgotten title="stats.resolver.ts"
@@ -395,7 +404,8 @@ nulls the nearest nullable parent instead: in the example, `account(id: "a1")` f
 returns `account: null`, because `id` is non-null.
 
 Field guards stack when the decorator is repeated, and a subclass inherits its parent's field guards.
-Decorate concrete object types: field guards on an `@InterfaceType()` are ignored. Guard classes are
+Decorate concrete object types: field guards on an `@InterfaceType()` or `@InputType()` would never
+run, so they are a `SchemaBuildError`. Guard classes are
 resolved from the root module. Types without field guards keep graphql-js's default resolvers and
 cost nothing extra per field.
 
@@ -412,7 +422,7 @@ A `@Subscription()` field streams events from the `PUBSUB` engine. Publish an ev
 | Option | Description |
 | --- | --- |
 | `topic` | A topic string, or a function of the `SubscriptionCtx` that returns one or more topics. |
-| `filter` | `({ payload, args, ctx }) => boolean`, run per event; `false` skips the event for this subscriber. |
+| `filter` | `({ payload, args, ctx }) => boolean`, run per event; `false` skips the event for this subscriber. `ctx` carries the current context (after the latest `refreshContext`). |
 | `resolve` | `(payload) => value`, applied to each event before the method. |
 | `recheckGuards` | Re-run the guards before every event. Default `false`. See [ending subscriptions](#ending-subscriptions). |
 
@@ -424,8 +434,9 @@ once, when the operation subscribes.
 
 > [!IMPORTANT]
 > A topic function usually embeds client input. A computed topic that contains `*` or `#`
-> (wildcards on engines that support patterns) or is longer than 256 characters is rejected with
-> `BAD_USER_INPUT` before anything subscribes. Static topic strings are not checked.
+> (wildcards on engines that support patterns) or is longer than 256 characters, or a list of more
+> than 100 distinct topics, is rejected with `BAD_USER_INPUT` before anything subscribes. Duplicate
+> topics are subscribed once. Static topic strings are not checked.
 
 ### The WebSocket transport
 
