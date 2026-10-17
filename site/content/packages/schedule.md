@@ -213,8 +213,10 @@ or throws that message as `ScheduleConfigError` with `requireTls: true`. The mes
 includes the URL's credentials. `rediss://`, `valkeys://` and Unix socket URLs pass.
 
 The store creates its own client with `enableOfflineQueue: false`, so a command that timed out is
-never sent later. Give a `client` you pass the same setting. `close()` closes a client the store
-created and does nothing for a supplied one.
+never sent later, and a `connectionTimeout` of `max(commandTimeout, 1000)` ms
+(`ownedRedisClientOptions()` from `@knead-js/core`), and connects it before sending. A `client`
+you pass is never connected by the store: create it with the same settings and connect it
+yourself. `close()` closes a client the store created and does nothing for a supplied one.
 
 Passing both `client` and `url` throws
 `ScheduleConfigError` (`Pass either client or url to RedisLockStore, not both.`).

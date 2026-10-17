@@ -187,9 +187,10 @@ applications).
   `ACL SETUSER scheduler on >long-random-password resetkeys ~knead:schedule:* -@all +set`.
 - A plaintext `redis://` or `valkey://` URL to a non-loopback host logs a warning without the
   credentials, and throws `ScheduleConfigError` with `requireTls: true`.
-- A `client` you pass yourself skips that check and is never closed by the store. Create it with
-  `enableOfflineQueue: false`, as the store does for its own client, so a timed-out command is
-  never sent later.
+- A `client` you pass yourself skips that check and is never connected or closed by the store.
+  Create it with `enableOfflineQueue: false` and a `connectionTimeout`, as the store does for its
+  own client (`ownedRedisClientOptions()` from `@knead-js/core`), so a timed-out command is never
+  sent later, and connect it yourself.
 
 ## Managing jobs at runtime
 
