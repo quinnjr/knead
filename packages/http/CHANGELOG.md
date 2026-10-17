@@ -1,5 +1,35 @@
 # @knead-js/http
 
+## 0.2.0
+
+### Minor Changes
+
+- 5296955: `KneadFactory.create` no longer registers its own `LOGGER`: a global module's `LOGGER` (such as `LoggingModule`'s) is now used in every module, not only in the modules that import it. The `logger` option replaces every module's `LOGGER`, including a global module's and a module's own `LOGGER` provider (it is applied as an override; an explicit `LOGGER` entry in `overrides` still wins).
+- 7b77d69: Add `@knead-js/prisma`: `PrismaModule.forRoot()` / `forRootAsync()` and `PrismaService`, which connects the Prisma 7 client at bootstrap and disconnects it on shutdown; `TransactionHost` and `@Transactional()` for ambient transactions (`required` and `requiresNew` propagation); `@knead-js/prisma/http` with `PrismaHttpModule`, `PrismaExceptionFilter` and `toHttpException`, mapping Prisma errors to problem responses without exposing their messages; and `@knead-js/prisma/testing` with `withRollback`. Register your client type through `PrismaClientRegistry` to type `PrismaService.db`.
+  
+  `@knead-js/core` now owns `LOGGER`, `Logger`, `ConsoleLogger`, `MemoryLogger`, `logError` and the `DEVELOPMENT` token, and `ApplicationContext.create` provides a default `LOGGER` and `DEVELOPMENT` and accepts `logger` and `development` options. `@knead-js/http` re-exports the same objects.
+  
+  `@knead-js/http` exception filters can now decline by returning `undefined`, so later filters and the default mapping still run, and `defaultErrorResponse` is exported. `ExceptionFilter.catch` is typed `Response | undefined | Promise<Response | undefined>` (was `Response | Promise<Response>`). Behaviour change: a filter that returns `undefined` used to be logged as "did not return a Response" and stop the chain with the default mapping; it now passes the error on to the next filter without logging. Other non-`Response` values are still logged and stop the chain.
+  
+  `HTTP_DEVELOPMENT` is now an alias of core's `DEVELOPMENT` (the same token object), so its description is `'DEVELOPMENT'` rather than `'HTTP_DEVELOPMENT'`; `NoProviderError` messages and other token names in error text change accordingly.
+  
+  `TransactionHost.run` marks a joined (`required`) transaction rollback-only when an inner run rejects: if the owning run then resolves, the transaction rolls back and the owning run rejects with a `KneadError` whose `cause` is the inner rejection.
+- 871883c: `@knead-js/http`: `WsRegistry.register()` accepts `meta`, route-style metadata that guards read as `ctx.meta` on the upgrade request (merged over the GET route's meta when the endpoint shares its path).
+  
+  `@knead-js/casl`: add `canMeta()` and `skipAbilityMeta()`, the meta forms of `@Can()` and `@SkipAbility()`, so a global `AbilityGuard` can authorize WebSocket endpoints that have no GET route.
+
+### Patch Changes
+
+- f779f8a: A route path whose `*` is not the whole last segment (`/a/*/b`, `/a*`) is a configuration error at `listen()`. Bun's router never matched such routes, so requests to them got a 405 from the fallback.
+  
+  Headers set on `ctx.res.headers` before a WebSocket upgrade (by middleware before `next()`, guards or the endpoint's `upgrade()`) are sent with the `101` handshake instead of being dropped. Headers that middleware adds to the returned response after `next()` still cannot reach the handshake, which Bun has already written.
+- 82ce070: Add `@knead-js/schedule`: `@Cron`, `@Interval` and `@Timeout` jobs discovered on providers, an injectable `SchedulerRegistry` to add, pause, resume, trigger and remove jobs at runtime, graceful shutdown that waits for runs in progress, and optional `MemoryLockStore`/`RedisLockStore` locks so each cron firing runs on one instance. `parseIp`, `isLoopbackHostname`, `plaintextRedisHost`, `defaultRedisUrl` and the log redaction helpers (`redactCredentials`, `redactValue`, `summarizeError`, `logValue`) move to `@knead-js/core`; `@knead-js/http` still re-exports them.
+- Updated dependencies [f779f8a]
+- Updated dependencies [7b77d69]
+- Updated dependencies [5296955]
+- Updated dependencies [82ce070]
+  - @knead-js/core@0.2.0
+
 ## 0.1.0
 
 ### Minor Changes

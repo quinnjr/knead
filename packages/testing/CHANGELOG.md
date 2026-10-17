@@ -1,5 +1,23 @@
 # @knead-js/testing
 
+## 0.2.0
+
+### Minor Changes
+
+- 5296955: `Test.createModule(...).compile()` passes its logger to `KneadFactory.create` as before, which now replaces every module's `LOGGER`: `mod.logs` captures entries from modules with their own `LOGGER` provider and from a global module such as `LoggingModule`, instead of only those using the default logger.
+
+### Patch Changes
+
+- Updated dependencies [f779f8a]
+- Updated dependencies [5296955]
+- Updated dependencies [f779f8a]
+- Updated dependencies [7b77d69]
+- Updated dependencies [5296955]
+- Updated dependencies [82ce070]
+- Updated dependencies [871883c]
+  - @knead-js/core@0.2.0
+  - @knead-js/http@0.2.0
+
 ## 0.1.0
 
 ### Minor Changes
