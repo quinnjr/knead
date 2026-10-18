@@ -1,5 +1,6 @@
 import {
   DEVELOPMENT,
+  Injectable,
   InjectionToken,
   inject,
   LOGGER,
@@ -12,6 +13,7 @@ import {
 export const REDIS_URL = new InjectionToken<string>('REDIS_URL');
 
 // #region inject
+@Injectable()
 export class CacheWarmer {
   readonly #log = inject(LOGGER);
   readonly #development = inject(DEVELOPMENT);

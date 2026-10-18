@@ -2,6 +2,7 @@ import {
   appendMetadata,
   appendMethodMetadata,
   type MetadataKey,
+  markInjectable,
   readMetadata,
   readMethodMetadata,
   setMetadata,
@@ -35,6 +36,7 @@ export type ClassOrMethodDecorator = (
 
 export function Controller(prefix = '', options: ControllerOptions = {}) {
   return (_target: Function, context: ClassDecoratorContext): void => {
+    markInjectable(context.metadata);
     setMetadata(context.metadata, CONTROLLER, { prefix, options });
   };
 }
@@ -88,9 +90,10 @@ export function UseFilters(...filters: FilterRef[]): ClassOrMethodDecorator {
   return classOrMethodList(FILTERS, filters);
 }
 
-/** Restricts an exception filter to errors of the given classes. */
+/** Restricts an exception filter to errors of the given classes; marks it injectable. */
 export function Catch(...errors: ErrorType[]) {
   return (_target: Function, context: ClassDecoratorContext): void => {
+    markInjectable(context.metadata);
     setMetadata(context.metadata, CATCH, errors);
   };
 }

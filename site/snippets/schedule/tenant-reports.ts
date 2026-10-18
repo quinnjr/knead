@@ -1,4 +1,4 @@
-import { inject } from '@knead-js/core';
+import { Injectable, inject } from '@knead-js/core';
 import { type JobInfo, SchedulerRegistry } from '@knead-js/schedule';
 import { ReportService } from './report-jobs.js';
 
@@ -9,6 +9,7 @@ export interface Tenant {
 }
 
 // #region registry
+@Injectable()
 export class TenantReports {
   readonly #registry = inject(SchedulerRegistry);
   readonly #reports = inject(ReportService);

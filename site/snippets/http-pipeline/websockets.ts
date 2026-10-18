@@ -1,8 +1,9 @@
-import { inject, Module, type OnModuleInit } from '@knead-js/core';
+import { Injectable, inject, Module, type OnModuleInit } from '@knead-js/core';
 import { type ListenOptions, WsRegistry, type WsSocket } from '@knead-js/http';
 
 // #region tickets
 /** One-time tickets that an authenticated HTTP endpoint hands to the browser. */
+@Injectable()
 export class ChatTickets {
   readonly #tickets = new Map<string, { userId: string; expires: number }>();
 
@@ -29,6 +30,7 @@ function member(ws: WsSocket): ChatMember {
   return ws.data.data as ChatMember;
 }
 
+@Injectable()
 export class ChatGateway implements OnModuleInit {
   readonly #ws = inject(WsRegistry);
   readonly #tickets = inject(ChatTickets);

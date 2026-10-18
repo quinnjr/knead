@@ -1,5 +1,12 @@
 import { describe, expect, test } from 'bun:test';
-import { getMetadata, getMethodMetadata, getOwnMetadata } from '@knead-js/core';
+import {
+  getMetadata,
+  getMethodMetadata,
+  getOwnMetadata,
+  INJECTABLE,
+  Injectable,
+  normalizeProvider,
+} from '@knead-js/core';
 import {
   All,
   CATCH,
@@ -139,5 +146,23 @@ describe('private route methods', () => {
       }
       return C;
     }).toThrow(TypeError);
+  });
+});
+
+describe('@Controller and @Catch mark the class injectable', () => {
+  test('a controller or filter class needs no @Injectable() to be a provider', () => {
+    @Controller('/a')
+    class A {}
+    @Catch(Error)
+    class F {}
+    expect(normalizeProvider(A).scope).toBe('singleton');
+    expect(normalizeProvider(F).scope).toBe('singleton');
+  });
+
+  test('an explicit @Injectable() scope is kept', () => {
+    @Injectable({ scope: 'transient' })
+    @Catch(Error)
+    class F {}
+    expect(getMetadata(F, INJECTABLE)).toEqual({ scope: 'transient' });
   });
 });

@@ -1,9 +1,10 @@
-import { inject, Module } from '@knead-js/core';
+import { Injectable, inject, Module } from '@knead-js/core';
 import { PrismaModule } from '@knead-js/prisma';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from './generated/prisma/client.js';
 
 // #region async
+@Injectable()
 export class DatabaseConfig {
   readonly url = process.env.DATABASE_URL;
   readonly schema = process.env.DATABASE_SCHEMA ?? 'public';

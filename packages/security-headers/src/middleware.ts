@@ -1,4 +1,4 @@
-import { InjectionToken, inject } from '@knead-js/core';
+import { Injectable, InjectionToken, inject } from '@knead-js/core';
 import {
   type Ctx,
   createRouteDecorator,
@@ -46,6 +46,7 @@ export function SecurityHeaders(options: SecurityHeadersOptions) {
   return override(options);
 }
 
+@Injectable()
 export class SecurityHeadersMiddleware implements Middleware {
   readonly #options = SecurityHeadersMiddleware.#validated(
     mergeOptions(DEFAULT_OPTIONS, inject(SECURITY_HEADERS_OPTIONS)),

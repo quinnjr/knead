@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  Injectable,
   InjectionToken,
   inject,
   Module,
@@ -16,7 +17,9 @@ function build(
   return buildModuleGraph(root, globals, new ContainerState());
 }
 
+@Injectable()
 class DbService {}
+@Injectable()
 class UsersService {
   readonly db = inject(DbService);
 }
@@ -97,6 +100,7 @@ describe('encapsulation', () => {
     const TOKEN = new InjectionToken<string>('TOKEN');
     @Module({})
     class Core {}
+    @Injectable()
     class NeedsToken {
       readonly value = inject(TOKEN);
     }
@@ -184,6 +188,7 @@ describe('dynamic variants', () => {
       exports: [FeatureModule],
     })
     class MiddleModule {}
+    @Injectable()
     class Consumer {
       readonly a = inject(A);
       readonly b = inject(B);
@@ -204,6 +209,7 @@ describe('dynamic variant export selection', () => {
       return { module: ConfigModule, providers: [{ provide: B, useValue: value }], exports: [B] };
     }
   }
+  @Injectable()
   class Consumer {
     readonly a = inject(A);
     readonly b = inject(B);
@@ -219,9 +225,11 @@ describe('dynamic variant export selection', () => {
   });
 
   test('exporting a dynamic module object selects only that variant', () => {
+    @Injectable()
     class OnlyB {
       readonly b = inject(B);
     }
+    @Injectable()
     class NeedsOther {
       readonly b = inject(C);
     }
@@ -257,6 +265,7 @@ describe('dynamic export fallback', () => {
         return { module: ConfigModule, providers: [{ provide: T, useValue: value }], exports: [T] };
       }
     }
+    @Injectable()
     class Consumer {
       readonly t = inject(T);
     }

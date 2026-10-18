@@ -1,3 +1,4 @@
+import { Injectable } from '@knead-js/core';
 import { NotFoundException } from '@knead-js/http';
 
 export interface Todo {
@@ -6,6 +7,7 @@ export interface Todo {
   done: boolean;
 }
 
+@Injectable()
 export class TodosService {
   readonly #todos = new Map<number, Todo>();
   #nextId = 1;

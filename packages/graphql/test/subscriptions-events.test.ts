@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { inject, Module } from '@knead-js/core';
+import { Injectable, inject, Module } from '@knead-js/core';
 import {
   type BatchLoader,
   Field,
@@ -16,11 +16,13 @@ import {
 } from '../src/index.js';
 import { type Started, startGraphQL, until } from './helpers.js';
 
+@Injectable()
 class Names {
   readonly byId = new Map([['a', 'Ada']]);
   batches = 0;
 }
 
+@Injectable()
 class NameLoader implements BatchLoader<string, string> {
   readonly #names = inject(Names);
   async batch(ids: readonly string[]): Promise<(string | Error)[]> {

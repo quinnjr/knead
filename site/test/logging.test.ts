@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import {
   ApplicationContext,
   ConsoleLogger,
+  Injectable,
   inject,
   LOGGER,
   type Logger,
@@ -90,6 +91,7 @@ describe('logging: the default logger', () => {
   });
 
   test('a global module providing LOGGER is used everywhere', async () => {
+    @Injectable()
     class Feature {
       readonly log = inject(LOGGER);
     }
@@ -475,6 +477,7 @@ describe('logging: child loggers', () => {
 });
 
 describe('logging: precedence', () => {
+  @Injectable()
   class Service {
     readonly log = inject(LOGGER);
   }

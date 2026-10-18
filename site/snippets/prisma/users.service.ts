@@ -1,4 +1,4 @@
-import { inject } from '@knead-js/core';
+import { Injectable, inject } from '@knead-js/core';
 import { Transactional, TransactionHost } from '@knead-js/prisma';
 import { AuditLog, OrdersRepository, UsersRepository } from './users.repository.js';
 
@@ -9,6 +9,7 @@ export interface SignUp {
 }
 
 // #region transactional
+@Injectable()
 export class SignupService {
   readonly #users = inject(UsersRepository);
   readonly #orders = inject(OrdersRepository);
@@ -26,6 +27,7 @@ export class SignupService {
 // #endregion transactional
 
 // #region run
+@Injectable()
 export class ImportService {
   readonly #host = inject(TransactionHost);
   readonly #users = inject(UsersRepository);

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { ApplicationContext, inject, Module } from '@knead-js/core';
+import { ApplicationContext, Injectable, inject, Module } from '@knead-js/core';
 import type { RequestContext } from '../src/context.js';
 import { Catch } from '../src/decorators.js';
 import {
@@ -314,6 +314,7 @@ describe('declining filters', () => {
 });
 
 describe('resolve refs', () => {
+  @Injectable()
   class Clock {
     now() {
       return 42;

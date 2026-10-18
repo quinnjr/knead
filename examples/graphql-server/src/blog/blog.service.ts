@@ -1,4 +1,5 @@
 import type { OnModuleInit } from '@knead-js/core';
+import { Injectable } from '@knead-js/core';
 import { NotFoundException } from '@knead-js/http';
 import type { CurrentUser } from '../auth/auth.js';
 import { Author, Comment, type Node, Post, PostStatus } from './blog.types.js';
@@ -18,6 +19,7 @@ export interface NewPost {
 }
 
 /** The blog's data, kept in memory and seeded at startup. */
+@Injectable()
 export class BlogService implements OnModuleInit {
   readonly #authors = new Map<string, Author>();
   readonly #posts = new Map<string, Post>();

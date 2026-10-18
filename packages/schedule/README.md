@@ -23,9 +23,10 @@ built-in Redis client, so Redis needs no extra package.
 ## Quick start
 
 ```ts
-import { inject, Module } from '@knead-js/core';
+import { Injectable, inject, Module } from '@knead-js/core';
 import { Cron, Interval, type JobContext, ScheduleModule, Timeout } from '@knead-js/schedule';
 
+@Injectable()
 export class ReportService {
   readonly built: string[] = [];
 
@@ -38,6 +39,7 @@ export class ReportService {
   async warmCache(): Promise<void> {}
 }
 
+@Injectable()
 export class ReportJobs {
   readonly reports = inject(ReportService);
 
@@ -142,6 +144,7 @@ const lockStore = new RedisLockStore({
   requireTls: true,
 });
 
+@Injectable()
 export class BillingJobs {
   // Every replica fires at 02:00 UTC; only the one that claims the firing runs it.
   @Cron('0 2 * * *', { name: 'charge-renewals', timezone: 'UTC', lock: true })
@@ -154,6 +157,7 @@ export class BillingJobs {
 
 // The scheduler never closes a lock store. onModuleDestroy runs after the scheduler has
 // drained its runs in beforeApplicationShutdown.
+@Injectable()
 class LockStoreLifecycle implements OnModuleDestroy {
   onModuleDestroy() {
     return lockStore.close();

@@ -1,7 +1,8 @@
-import { inject, Module } from '@knead-js/core';
+import { Injectable, inject, Module } from '@knead-js/core';
 import { Cron, Interval, type JobContext, ScheduleModule, Timeout } from '@knead-js/schedule';
 
 // #region service
+@Injectable()
 export class ReportService {
   readonly built: Date[] = [];
 
@@ -17,6 +18,7 @@ export class ReportService {
 // #endregion service
 
 // #region jobs
+@Injectable()
 export class ReportJobs {
   readonly reports = inject(ReportService);
 

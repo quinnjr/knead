@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import {
   ApplicationContext,
+  Injectable,
   inject,
   LOGGER,
   type LogLevel,
@@ -21,6 +22,7 @@ function sink() {
 describe('LoggingModule with ApplicationContext', () => {
   test('provides a JsonLogger as LOGGER, injectable from any module', async () => {
     const { write, records } = sink();
+    @Injectable()
     class Service {
       readonly log = childLogger(inject(LOGGER), { job: 'report' });
     }

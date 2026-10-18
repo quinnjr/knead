@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { inject, KneadError } from '@knead-js/core';
+import { Injectable, inject, KneadError } from '@knead-js/core';
 import { Controller, type Ctx, Post } from '@knead-js/http';
 import { Test, type TestingModule } from '@knead-js/testing';
 import { PrismaHttpModule } from '../src/http/index.js';
@@ -23,6 +23,7 @@ function db(prisma: PrismaService): FixtureDb {
   return prisma.db as unknown as FixtureDb;
 }
 
+@Injectable()
 class UserService {
   readonly #prisma = inject(PrismaService);
 
@@ -31,6 +32,7 @@ class UserService {
   }
 }
 
+@Injectable()
 class PostService {
   readonly #prisma = inject(PrismaService);
 
@@ -39,6 +41,7 @@ class PostService {
   }
 }
 
+@Injectable()
 class SignupService {
   readonly #users = inject(UserService);
   readonly #posts = inject(PostService);

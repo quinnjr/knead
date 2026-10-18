@@ -51,7 +51,7 @@ export class ContainerState {
   constructor(overrides: Iterable<readonly [Token, Provider]> = []) {
     const map = new Map<Token, NormalizedProvider>();
     for (const [token, provider] of overrides) {
-      map.set(token, { ...normalizeProvider(provider), token, multi: false });
+      map.set(token, { ...normalizeProvider(provider, 'the overrides'), token, multi: false });
     }
     this.overrides = map;
   }

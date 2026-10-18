@@ -4,6 +4,7 @@ import {
   CircularDependencyError,
   ConsoleLogger,
   DEVELOPMENT,
+  Injectable,
   InjectionContextError,
   InjectionToken,
   inject,
@@ -20,6 +21,7 @@ const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 describe('ApplicationContext.create', () => {
   test('async factories are awaited before classes that inject them', async () => {
+    @Injectable()
     class Repo {
       readonly conn = inject(CONN);
     }
@@ -103,6 +105,7 @@ describe('ApplicationContext.create', () => {
   });
 
   test('transient async factories are rejected', async () => {
+    @Injectable()
     class UsesIt {
       readonly c = inject(CONN);
     }
@@ -125,6 +128,7 @@ describe('ApplicationContext.create', () => {
   });
 
   test('missing dependencies fail at bootstrap, not at first use', async () => {
+    @Injectable()
     class NeedsConfig {
       readonly c = inject(CONFIG);
     }
@@ -136,6 +140,7 @@ describe('ApplicationContext.create', () => {
 
 describe('get and collect', () => {
   test('get is non-strict: finds providers in any module', async () => {
+    @Injectable()
     class Hidden {}
     @Module({ providers: [Hidden] })
     class Inner {}
@@ -185,6 +190,7 @@ describe('get and collect', () => {
 describe('ApplicationContext.initializeLate', () => {
   test('runs init hooks on instances constructed after create, then includes them in close', async () => {
     const log: string[] = [];
+    @Injectable()
     class Eager {
       onModuleInit() {
         log.push('eager:init');
@@ -219,6 +225,7 @@ describe('ApplicationContext.initializeLate', () => {
   test('transients resolved after create() are not tracked and receive no hooks', async () => {
     let inits = 0;
     let destroys = 0;
+    @Injectable()
     class Transient {
       onModuleInit() {
         inits++;
@@ -241,6 +248,7 @@ describe('ApplicationContext.initializeLate', () => {
 
   test('a transient injected into an instance constructed late still receives hooks', async () => {
     const log: string[] = [];
+    @Injectable()
     class Dep {
       onModuleInit() {
         log.push('dep:init');
@@ -267,11 +275,13 @@ describe('ApplicationContext.initializeLate', () => {
 
   test('a transient of a transient injected into a late instance also receives hooks', async () => {
     const log: string[] = [];
+    @Injectable()
     class Inner {
       onModuleInit() {
         log.push('inner:init');
       }
     }
+    @Injectable()
     class Outer {
       readonly inner = inject(Inner);
     }
@@ -294,6 +304,7 @@ describe('ApplicationContext.initializeLate', () => {
 
   test('trackConstructed tracks transients only while it runs', async () => {
     let inits = 0;
+    @Injectable()
     class Transient {
       onModuleInit() {
         inits++;
@@ -326,6 +337,7 @@ describe('ApplicationContext.initializeLate', () => {
 
   test('a failing late init hook closes the context and rejects', async () => {
     const log: string[] = [];
+    @Injectable()
     class Eager {
       onModuleDestroy() {
         log.push('eager:destroy');
@@ -393,6 +405,7 @@ describe('default LOGGER and DEVELOPMENT', () => {
   });
 
   test('a provider inside a module can inject LOGGER without importing anything', async () => {
+    @Injectable()
     class Service {
       readonly log = inject(LOGGER);
     }
@@ -409,6 +422,7 @@ describe('default LOGGER and DEVELOPMENT', () => {
 describe('review fixes', () => {
   test('async factory overrides of LOGGER and DEVELOPMENT are awaited', async () => {
     const logger = new MemoryLogger();
+    @Injectable()
     class UsesLogger {
       readonly logger = inject(LOGGER);
       readonly development = inject(DEVELOPMENT);

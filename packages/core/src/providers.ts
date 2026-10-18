@@ -29,19 +29,27 @@ export type NormalizedProvider =
   | { kind: 'factory'; token: Token; factory: () => unknown; scope: Scope; multi: boolean }
   | { kind: 'existing'; token: Token; existing: Token; scope: 'singleton'; multi: boolean };
 
-function scopeOf(cls: Type): Scope {
-  return getMetadata(cls, INJECTABLE)?.scope ?? 'singleton';
+/** The class's @Injectable scope, or undefined when the class is not marked injectable. */
+function injectableScope(cls: Type): Scope | undefined {
+  return getMetadata(cls, INJECTABLE)?.scope;
 }
 
-export function normalizeProvider(provider: Provider): NormalizedProvider {
+/**
+ * Validates and normalizes a provider. `owner` names the module (or other source) declaring it in
+ * error messages. Classes the container constructs must be marked with @Injectable().
+ */
+export function normalizeProvider(
+  provider: Provider,
+  owner = 'the application',
+): NormalizedProvider {
   if (typeof provider === 'function') {
-    return {
-      kind: 'class',
-      token: provider,
-      useClass: provider,
-      scope: scopeOf(provider),
-      multi: false,
-    };
+    const scope = injectableScope(provider);
+    if (scope === undefined) {
+      throw new ProviderConfigError(
+        `${tokenName(provider)} is listed in the providers of ${owner} but is not decorated with @Injectable().`,
+      );
+    }
+    return { kind: 'class', token: provider, useClass: provider, scope, multi: false };
   }
   if (provider === null || typeof provider !== 'object' || !('provide' in provider)) {
     throw new ProviderConfigError(
@@ -52,10 +60,14 @@ export function normalizeProvider(provider: Provider): NormalizedProvider {
   const multi = provider.multi === true;
   if ('useClass' in provider) {
     const useClass = provider.useClass as Type;
+    const marked = injectableScope(useClass);
+    if (marked === undefined) {
+      throw new ProviderConfigError(
+        `The provider for ${tokenName(token)} in ${owner} uses ${tokenName(useClass)}, which is not decorated with @Injectable().`,
+      );
+    }
     const scope =
-      provider.scope === undefined
-        ? scopeOf(useClass)
-        : checkScope(provider.scope, tokenName(token));
+      provider.scope === undefined ? marked : checkScope(provider.scope, tokenName(token));
     return { kind: 'class', token, useClass, scope, multi };
   }
   if ('useValue' in provider) {

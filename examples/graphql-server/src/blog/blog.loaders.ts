@@ -1,4 +1,4 @@
-import { inject } from '@knead-js/core';
+import { Injectable, inject } from '@knead-js/core';
 import type { BatchLoader } from '@knead-js/graphql';
 import { BlogService } from './blog.service.js';
 import type { Author, Comment, Post } from './blog.types.js';
@@ -7,6 +7,7 @@ import type { Author, Comment, Post } from './blog.types.js';
  * Authors by id. `ctx.loader(AuthorsById)` gives each operation its own DataLoader over this
  * singleton, so the `author` fields of a whole list are fetched in one `batch()` call.
  */
+@Injectable()
 export class AuthorsById implements BatchLoader<string, Author> {
   readonly #blog = inject(BlogService);
   /** How many times batch() ran; tests read it to prove batching. */
@@ -19,6 +20,7 @@ export class AuthorsById implements BatchLoader<string, Author> {
 }
 
 /** Posts by author id, batched the same way. */
+@Injectable()
 export class PostsByAuthor implements BatchLoader<string, Post[]> {
   readonly #blog = inject(BlogService);
   batchCalls = 0;
@@ -30,6 +32,7 @@ export class PostsByAuthor implements BatchLoader<string, Post[]> {
 }
 
 /** Comments by post id, batched the same way. */
+@Injectable()
 export class CommentsByPost implements BatchLoader<string, Comment[]> {
   readonly #blog = inject(BlogService);
   batchCalls = 0;

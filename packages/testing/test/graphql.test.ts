@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { inject, Module, type OnModuleInit } from '@knead-js/core';
+import { Injectable, inject, Module, type OnModuleInit } from '@knead-js/core';
 import { Controller, type Ctx, Post, WsRegistry } from '@knead-js/http';
 import { Test, type TestingModule } from '../src/index.js';
 
@@ -24,6 +24,7 @@ class PlainText {
   }
 }
 
+@Injectable()
 class FakeSubscriptions implements OnModuleInit {
   readonly #ws = inject(WsRegistry);
   onModuleInit() {

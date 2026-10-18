@@ -1,6 +1,7 @@
-import { inject } from '@knead-js/core';
+import { Injectable, inject } from '@knead-js/core';
 import { AppConfig } from './app-config.js';
 
+@Injectable()
 export class SignupService {
   readonly #config = inject(AppConfig);
 

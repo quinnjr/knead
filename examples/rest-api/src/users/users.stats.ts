@@ -1,9 +1,10 @@
-import { inject } from '@knead-js/core';
+import { Injectable, inject } from '@knead-js/core';
 import { LOGGER } from '@knead-js/http';
 import { Cron } from '@knead-js/schedule';
 import { UsersService } from './users.service.js';
 
 /** Logs the user count at the top of every hour; ScheduleModule finds the job on this provider. */
+@Injectable()
 export class UsersStats {
   readonly users = inject(UsersService);
   readonly logger = inject(LOGGER);

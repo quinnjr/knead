@@ -16,6 +16,7 @@ export abstract class Cache {
   abstract set(key: string, value: string): void;
 }
 
+@Injectable()
 export class MemoryCache extends Cache {
   readonly #entries = new Map<string, string>();
 
@@ -30,6 +31,7 @@ export class MemoryCache extends Cache {
 // #endregion abstract
 
 // #region forms
+@Injectable()
 export class Connection {
   readonly url = inject(APP_CONFIG).databaseUrl;
 }
@@ -72,6 +74,7 @@ export const secretsProvider = {
   },
 };
 
+@Injectable()
 export class PaymentsClient {
   // Classes can inject an async provider: it has settled before any class is built.
   readonly apiKey = inject(SECRETS).apiKey;
@@ -98,6 +101,7 @@ export const healthChecks: Provider[] = [
   },
 ];
 
+@Injectable()
 export class HealthService {
   readonly checks = inject(HEALTH_CHECKS);
 
@@ -113,10 +117,12 @@ export class RequestIdGenerator {
   readonly id = crypto.randomUUID();
 }
 
+@Injectable()
 export class AuditLog {
   readonly ids = inject(RequestIdGenerator);
 }
 
+@Injectable()
 export class AccessLog {
   readonly ids = inject(RequestIdGenerator);
 }

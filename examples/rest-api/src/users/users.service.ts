@@ -1,3 +1,4 @@
+import { Injectable } from '@knead-js/core';
 import { NotFoundException } from '@knead-js/http';
 
 export interface UserRecord {
@@ -6,6 +7,7 @@ export interface UserRecord {
   bio: string;
 }
 
+@Injectable()
 export class UsersService {
   readonly #users = new Map<string, UserRecord>([['1', { id: '1', name: 'Ada', bio: '' }]]);
   #nextId = 2;

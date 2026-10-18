@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { InjectionContextError, InjectionToken, inject, Module } from '@knead-js/core';
+import { Injectable, InjectionContextError, InjectionToken, inject, Module } from '@knead-js/core';
 import { Test, type TestingModule } from '@knead-js/testing';
 import { z } from 'zod';
 import {
@@ -26,6 +26,7 @@ afterEach(async () => {
 describe('ConfigModule', () => {
   test('forRoot injects typed config', async () => {
     process.env.PORT = '4000';
+    @Injectable()
     class Svc {
       readonly cfg = inject(Cfg);
     }
@@ -38,6 +39,7 @@ describe('ConfigModule', () => {
 
   test('forRoot values override env', async () => {
     process.env.PORT = '4000';
+    @Injectable()
     class Svc {
       readonly cfg = inject(Cfg);
     }
@@ -50,6 +52,7 @@ describe('ConfigModule', () => {
 
   test('is global', async () => {
     process.env.PORT = '1234';
+    @Injectable()
     class Inner {
       readonly cfg = inject(Cfg);
     }
@@ -181,6 +184,7 @@ describe('ConfigModule', () => {
 
   test('testing override', async () => {
     delete process.env.PORT;
+    @Injectable()
     class Svc {
       readonly cfg = inject(Cfg);
     }

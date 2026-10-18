@@ -1,5 +1,5 @@
 // #region quick-start
-import { ApplicationContext, InjectionToken, inject, Module } from '@knead-js/core';
+import { ApplicationContext, Injectable, InjectionToken, inject, Module } from '@knead-js/core';
 
 interface MailConfig {
   from: string;
@@ -7,6 +7,7 @@ interface MailConfig {
 
 const MAIL_CONFIG = new InjectionToken<MailConfig>('MAIL_CONFIG');
 
+@Injectable()
 export class Mailer {
   readonly #config = inject(MAIL_CONFIG);
 
@@ -21,6 +22,7 @@ export class Mailer {
 })
 export class MailModule {}
 
+@Injectable()
 export class SignupService {
   readonly #mailer = inject(Mailer);
 

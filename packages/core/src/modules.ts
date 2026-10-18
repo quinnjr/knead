@@ -171,7 +171,7 @@ export function buildModuleGraph(
 
   for (const node of order) {
     for (const p of node.def.options.providers ?? [])
-      node.injector.addProvider(normalizeProvider(p));
+      node.injector.addProvider(normalizeProvider(p, node.def.metatype.name));
     for (const c of node.def.options.controllers ?? []) {
       node.injector.addProvider({
         kind: 'class',

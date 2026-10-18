@@ -1,4 +1,4 @@
-import { inject } from '@knead-js/core';
+import { Injectable, inject } from '@knead-js/core';
 import { WsRegistry } from '@knead-js/http';
 import { GraphQLRuntime } from './runtime.js';
 import type { GraphQLConnection } from './subscriptions.js';
@@ -7,6 +7,7 @@ import type { GraphQLConnection } from './subscriptions.js';
  * Revokes subscription sockets, for example when a user signs out or loses a role:
  * `inject(GraphQLSubscriptions).closeWhere((c) => c.context.user?.id === id)`.
  */
+@Injectable()
 export class GraphQLSubscriptions {
   readonly #runtime = inject(GraphQLRuntime);
   readonly #ws = inject(WsRegistry);

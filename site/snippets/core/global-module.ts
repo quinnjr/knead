@@ -1,4 +1,4 @@
-import { InjectionToken, inject, Module } from '@knead-js/core';
+import { Injectable, InjectionToken, inject, Module } from '@knead-js/core';
 
 // #region global
 export interface FeatureFlags {
@@ -20,6 +20,7 @@ export const FEATURE_FLAGS = new InjectionToken<FeatureFlags>('FEATURE_FLAGS');
 export class FeatureFlagsModule {}
 
 // No import of FeatureFlagsModule needed here.
+@Injectable()
 export class CheckoutService {
   readonly flags = inject(FEATURE_FLAGS);
 }

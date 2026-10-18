@@ -23,9 +23,10 @@ Zod, ArkType); install the one you use.
 ## Quick start
 
 ```ts
-import { inject, Module } from '@knead-js/core';
+import { Injectable, inject, Module } from '@knead-js/core';
 import { Controller, type Ctx, Get, KneadFactory } from '@knead-js/http';
 
+@Injectable()
 class Greeter {
   greet(name: string) {
     return `hello ${name}`;
