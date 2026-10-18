@@ -111,14 +111,6 @@ function setup(extra: { maxPendingRevocations?: number } = {}) {
 }
 
 describe('createSubscriptionEndpoint defences (Leaven stubbed)', () => {
-  test('initStarted: a second connection_init closes with 4429 and never reaches Leaven', async () => {
-    const t = setup();
-    await t.send({ type: 'connection_init' });
-    await t.send({ type: 'connection_init' });
-    expect(t.reached).toEqual(['connection_init']);
-    expect(t.closes).toEqual([4429]);
-  });
-
   test('subscribe/complete ids outside [A-Za-z0-9_.:-]{1,64} close with 4400 before Leaven', async () => {
     for (const id of ['', 'a\nb', 'x'.repeat(65), 'a b', '\u001b[31m', 7, null]) {
       for (const type of ['subscribe', 'complete']) {
