@@ -32,7 +32,7 @@ A `WsEndpoint<D>` has one required method and four optional ones:
 
 | Method | Called |
 | --- | --- |
-| `upgrade(ctx)` | On the upgrade request, after middleware and guards. Return the socket data (`D`) to accept, `false` to reject with `403`, or throw an `HttpException` for another status. May be `async`. |
+| `upgrade(ctx)` | On the upgrade request, after middleware and guards. Return the socket data (`D`) to accept, `false` to reject with `403`, or throw an `HttpException` for another status. Returning `undefined` (or nothing) also rejects with `403`: return `null` or `{}` to accept without data. May be `async`. |
 | `open(ws)` | When the socket is open, unless it was closed first (a revocation, or `1013`). |
 | `message(ws, message)` | For each message: a `string` for text frames, a `Buffer` for binary ones. |
 | `close(ws, code, reason)` | When the socket has closed, if `open` ran for it. |
@@ -70,7 +70,7 @@ A `GET` request with `Upgrade: websocket` to the path of a registered endpoint t
 3. The [origin check](#origins): a disallowed `Origin` gets `403`.
 4. Global guards; on the path of a `GET` route, also that route's controller guards, route guards
    and `authorize` guards. Upgrades are not validated, so `authorize` guards see the raw request.
-5. The endpoint's `upgrade(ctx)`. `false` gets `403` (`WebSocket upgrade rejected`).
+5. The endpoint's `upgrade(ctx)`. `false` or `undefined` gets `403` (`WebSocket upgrade rejected`).
 6. The [connection limits](#limits): `503` over `maxConnections`, `429` over `maxConnectionsPerIp`.
 7. Bun's `server.upgrade()`. A request that is not a valid WebSocket handshake gets `400`
    (`WebSocket upgrade failed`).

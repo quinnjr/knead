@@ -77,14 +77,38 @@ describe('parseGrant', () => {
   test('object form stops reading once it has more pairs than areas', () => {
     let reads = 0;
     const target = Object.fromEntries(Array.from({ length: 10_000 }, (_, i) => [`a${i}`, 'read']));
+    let descriptors = 0;
     const input = new Proxy(target, {
       get(t, key) {
         reads++;
         return Reflect.get(t, key);
       },
+      // Object.keys() would read the descriptor of every key up front.
+      getOwnPropertyDescriptor(t, key) {
+        descriptors++;
+        return Reflect.getOwnPropertyDescriptor(t, key);
+      },
     });
     expect(parseGrant(input, p)).toBeNull();
-    expect(reads).toBeLessThanOrEqual(Object.keys(p.areas).length + 1);
+    const areas = Object.keys(p.areas).length;
+    expect(reads).toBeLessThanOrEqual(areas + 1);
+    // for...in checks enumerability and Object.hasOwn() reads the descriptor again: two per key.
+    expect(descriptors).toBeLessThanOrEqual(2 * (areas + 1));
+  });
+
+  test('object form ignores inherited keys and keeps own-key order', () => {
+    const inherited = Object.create({ posts: 'write' });
+    inherited.billing = 'read';
+    expect(parseGrant(inherited, p)).toEqual({ billing: 'read' });
+    const hidden = Object.defineProperty({ billing: 'read' }, 'posts', {
+      value: 'write',
+      enumerable: false,
+    });
+    expect(parseGrant(hidden, p)).toEqual({ billing: 'read' });
+    expect(Object.keys(parseGrant({ posts: 'read', billing: 'read' }, p) ?? {})).toEqual([
+      'posts',
+      'billing',
+    ]);
   });
 
   test('linear on adversarial input', () => {

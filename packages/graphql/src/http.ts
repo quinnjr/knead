@@ -141,8 +141,8 @@ async function execute(
   const graphqlJson = prefersGraphQLResponse(ctx.req.headers.get('accept'));
   // application/json: always 200. application/graphql-response+json: no data entry is 400 for
   // a request error and 500 only for a server failure (INTERNAL_SERVER_ERROR). normalizeResponse
-  // has already rewritten Leaven's INTERNAL_ERROR: a missing or unknown operation name is
-  // BAD_USER_INPUT (400), every other one INTERNAL_SERVER_ERROR (500).
+  // has already rewritten Leaven's codes: BAD_REQUEST is BAD_USER_INPUT (400), INTERNAL_ERROR is
+  // INTERNAL_SERVER_ERROR (500).
   let status = 200;
   if (graphqlJson && response.data === undefined) {
     const internal = response.errors?.some((e) => e.extensions?.code === 'INTERNAL_SERVER_ERROR');

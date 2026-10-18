@@ -1,6 +1,11 @@
 import { InjectionToken } from '@knead-js/core';
 import { type Logger, redactCredentials, redactValue, summarizeError } from '@knead-js/http';
-import { PubSub as LeavenPubSub, type PubSubEngine } from '@leaven-graphql/ws';
+import {
+  PubSub as LeavenPubSub,
+  type PubSubConfig,
+  type PubSubEngine,
+  type WebSocketLogger,
+} from '@leaven-graphql/ws';
 
 /** The PubSubEngine used by @Subscription resolvers: `inject(PUBSUB).publish(topic, payload)`. */
 export const PUBSUB = new InjectionToken<PubSubEngine>('PUBSUB');
@@ -68,6 +73,35 @@ export function deepFreeze<T>(value: T): T {
  * `publish()` does not depend on who happens to be listening. The default `PUBSUB` engine.
  */
 export class PubSub extends LeavenPubSub {
+  /** Where Leaven's diagnostics go when the constructor got no `logger`; useLogger() sets it. */
+  readonly #sink: { logger: WebSocketLogger } | undefined;
+
+  constructor(config: PubSubConfig = {}) {
+    const sink = config.logger === undefined ? { logger: console as WebSocketLogger } : undefined;
+    super(
+      sink
+        ? {
+            ...config,
+            logger: {
+              error: (...args) => sink.logger.error(...args),
+              warn: (...args) =>
+                sink.logger.warn ? sink.logger.warn(...args) : sink.logger.error(...args),
+            },
+          }
+        : config,
+    );
+    this.#sink = sink;
+  }
+
+  /**
+   * @internal GraphQLModule calls it with the application LOGGER and its development flag, so a
+   * hand-built engine logs through LOGGER (redacted, see leavenLogger) unless the constructor
+   * was given a `logger`.
+   */
+  useLogger(logger: Logger, development?: boolean): void {
+    if (this.#sink) this.#sink.logger = leavenLogger(logger, development);
+  }
+
   override publish<T = unknown>(topic: string, payload: T): void {
     super.publish(topic, deepFreeze(payload));
   }

@@ -164,8 +164,8 @@ See [server](/guide/server/).
 A `maxAge` from 1 to 15551999 seconds is allowed but logs one warning through `LOGGER`, because
 browsers then forget the policy quickly and the downgrade window reopens.
 `MIN_RECOMMENDED_HSTS_MAX_AGE` is that threshold, `15552000` (180 days). `maxAge: 0` and
-`strictTransportSecurity: false` do not warn. The warning is logged at most once per application:
-when the middleware is created, or the first time a route override with a short `maxAge` is used.
+`strictTransportSecurity: false` do not warn. The warning is logged at most once per application,
+when the middleware is created (which also merges every controller route's override).
 
 ## Per-route overrides
 
@@ -178,6 +178,15 @@ metadata under `SECURITY_HEADERS_META`. The middleware merges them over the modu
 - `false` drops a header for that route;
 - `contentSecurityPolicy.directives` merge over the module's directives, one directive at a time;
 - `strictTransportSecurity` fields merge over the module's HSTS fields.
+
+The merged options are validated too, when the middleware is created (at `createApp()` or
+`listen()`): for every controller route with an override, the merge is checked like the module
+options, and an invalid one is an `HttpConfigError` naming the route
+(`@SecurityHeaders() on PageController.home, merged with the module options: …`). Each override
+is valid alone, but a combination may not be: a module `{ maxAge: 86400 }` with a route
+`{ preload: true }` would send `max-age=86400; includeSubDomains; preload`, so it fails startup.
+An override that is not on a controller route is validated the same way the first time it is
+used, before its merge is cached.
 
 The `/widget` route in the example above allows framing by one partner site: it replaces
 `frame-ancestors`, drops `X-Frame-Options`, and keeps every other directive, the nonce and all
@@ -236,16 +245,18 @@ an HSTS `maxAge` that is not a non-negative integer, `preload` with `includeSubD
 `crossOriginResourcePolicy`, `xContentTypeOptions`, `xFrameOptions`, `xDnsPrefetchControl`,
 `permissionsPolicy`, `xPermittedCrossDomainPolicies`) that is neither `false` nor a string without
 control characters other than tab and without characters above U+00FF.
-`forRoot()`, `@SecurityHeaders()` and the middleware's constructor all call it.
+`forRoot()`, `@SecurityHeaders()` and the middleware's constructor all call it; the constructor
+also calls it on every route override merged over the module options.
 
 ## Classes and tokens
 
 ### `SecurityHeadersMiddleware`
 
 The middleware class (`implements Middleware`). It merges `DEFAULT_OPTIONS` with the options in
-`SECURITY_HEADERS_OPTIONS`, validates the result, and on each request applies the route override,
-generates the nonce and adds the headers after the rest of the pipeline has produced a response.
-Merged route options are cached per override.
+`SECURITY_HEADERS_OPTIONS`, validates the result and the merge of every controller route's
+override, and on each request applies the route override, generates the nonce and adds the headers
+after the rest of the pipeline has produced a response. Merged route options are cached per
+override.
 
 ### `SECURITY_HEADERS_OPTIONS`
 

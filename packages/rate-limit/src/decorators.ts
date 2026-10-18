@@ -1,6 +1,7 @@
 import { type Ctx, createRouteDecorator } from '@knead-js/http';
 import { type Duration, parseDuration } from './duration.js';
 
+/** The client key of a request. On a GraphQL resolver it receives the HTTP Ctx (`ctx.http`). */
 export type KeyFn = (ctx: Ctx) => string | undefined | Promise<string | undefined>;
 
 export interface RateLimitRouteOptions {

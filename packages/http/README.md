@@ -223,12 +223,12 @@ export async function bootstrap(
 | `port` / `hostname` | `3000` / `'0.0.0.0'` | The listener. |
 | `tls` | none | Bun `TLSOptions`; serves HTTPS. |
 | `redirectHttp` | none | A plain-HTTP listener answering `308` to HTTPS. Requires `tls`; set `host` to a canonical `host[:port]`. |
-| `allowedHosts` | development: loopback names; production: no check | Other `Host` headers get `421`. Set it to your public names in production. |
-| `trustProxy` | `false` | A list of proxy CIDRs (preferred) or a hop count, for `ctx.ip` and `ctx.secure`. |
+| `allowedHosts` | development: loopback names; production: no check | Other `Host` headers get `421`. Set it to your public names in production. An array or `false`; a single string is an `HttpConfigError`. |
+| `trustProxy` | `false` | A list of proxy CIDRs (preferred) or a hop count, for `ctx.ip` and `ctx.secure`. Another type (`true`, a single CIDR string) is an `HttpConfigError`. |
 | `maxRequestBodySize` | 1 MiB | Larger bodies get `413`. An integer >= 1; a string such as an unparsed env var is an `HttpConfigError`. |
 | `maxParams` | `1000` | More query parameters get `400`, more form fields `413`. |
-| `defaultCacheControl` | none | Added to every response without `Cache-Control` (including 404s, `421`s and rejected upgrades), such as `'no-store'`. A value that is not a valid header value is an `HttpConfigError` at `listen()`. |
-| `shutdownTimeout` | `10000` | Milliseconds `close()` waits for in-flight requests (an integer >= 0). |
+| `defaultCacheControl` | none | Added to every response without `Cache-Control` (including 404s, `421`s, rejected upgrades and the masked `500` of an error that reaches Bun, on both listeners), such as `'no-store'`. A value that is not a valid header value is an `HttpConfigError` at `listen()`. |
+| `shutdownTimeout` | `10000` | Milliseconds `close()` waits for in-flight requests (an integer from 0 to `2 ** 31 - 1`). |
 
 - `enableShutdownHooks()` closes the application on `SIGTERM` or `SIGINT` and exits: `close()`
   stops accepting connections, drains in-flight requests, closes WebSockets with `1001` and runs
@@ -246,7 +246,8 @@ export async function bootstrap(
 ## WebSockets
 
 Inject `WsRegistry` and `register(path, endpoint, options?)` an endpoint at an exact path. Its
-`upgrade(ctx)` returns the socket data, or `false` for a 403. An upgrade passes the host check,
+`upgrade(ctx)` returns the socket data, or `false` for a 403. Returning `undefined` (or nothing)
+is a 403 too, so return `null` or `{}` to accept without data. An upgrade passes the host check,
 global middleware, a same-origin `Origin` check and global guards first; when its path is also a
 `GET` route's, that route's middleware and guards run too. A parametric or wildcard `GET` route
 that covers the path (`/ws/:id`, `/*`) does not take its upgrades. Guards can tell upgrades apart

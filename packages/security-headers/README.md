@@ -163,7 +163,10 @@ export class PagesController {
 - directive sources containing `;`, `,`, a control character other than tab (CR, LF, NUL, ...) or
   a character above U+00FF, and array elements containing whitespace;
 - an HSTS `maxAge` that is not a non-negative integer, and `preload` with
-  `includeSubDomains: false` or a `maxAge` under one year;
+  `includeSubDomains: false` or a `maxAge` under one year, also after a route's
+  `@SecurityHeaders()` is merged over the module options (the middleware checks every controller
+  route's merge when it is created, so module `{ maxAge: 86_400 }` with a route
+  `{ preload: true }` fails startup);
 - any header-valued option (`referrerPolicy`, `xFrameOptions`, `permissionsPolicy` and the rest)
   that is neither `false` nor a string without control characters other than tab and without
   characters above U+00FF (Bun cannot send those in a header, so every response would fail).

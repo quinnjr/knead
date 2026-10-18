@@ -23,7 +23,7 @@ export function logError(
   const id = crypto.randomUUID();
   try {
     const text = `${redactCredentials(message)} (correlation id ${id})`;
-    if (options.development) options.logger[level](text, redactedError(error));
+    if (options.development === true) options.logger[level](text, redactedError(error));
     else options.logger[level](`${text}: ${summarizeError(error)}`);
   } catch {
     // A failing logger must not turn an error response into another error (or Bun's

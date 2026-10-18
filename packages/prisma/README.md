@@ -135,7 +135,9 @@ declare module '@knead-js/prisma' {
 | `disconnectOnShutdown` | `false` | With `instance` only: also disconnect it at shutdown. |
 
 - Give exactly one of `client` and `instance`. The client must have `$connect()`, `$disconnect()`
-  and `$transaction()`. Mistakes throw `KneadError` when `forRoot()` is called.
+  and `$transaction()`. Mistakes in the options, and an `instance` of the wrong shape, throw
+  `KneadError` when `forRoot()` is called. The client a `client` factory returns is checked at
+  bootstrap, which then fails with a `KneadError`.
 - `PrismaModule.forRootAsync({ imports, useFactory })` runs `useFactory` in an injection context at
   bootstrap, so it can `inject()` providers exported by `imports`. Its result is validated then;
   the call itself throws `KneadError` unless its options are an object with a `useFactory`
@@ -304,14 +306,16 @@ For unit tests, replace the client with a fake: `overrideProvider(PRISMA_CLIENT)
 needs `$connect()`, `$disconnect()`, `$transaction(fn, options)` and the models your code uses.
 
 Against a real database, `withRollback(moduleRef, fn)` from `@knead-js/prisma/testing` runs `fn`
-in a transaction that is always rolled back, so nothing it writes through `PrismaService.db`
-persists. `moduleRef` is a `TestingModule`, an `ApplicationContext` or anything with `get(token)`.
+in a transaction that is always rolled back, so what it writes through `PrismaService.db` in that
+transaction does not persist. `moduleRef` is a `TestingModule`, an `ApplicationContext` or anything with `get(token)`.
 Point these tests at a disposable database through a variable of their own, never `DATABASE_URL`.
 
 - It resolves with the function's value, and errors thrown by the function propagate unchanged.
 - Inner `@Transactional()` calls join the test's transaction, as they would join the owning
   transaction in production: if one rejects, `withRollback()` rejects with the rollback-only
   `KneadError` (its `cause` is the inner rejection), even when the function caught it.
+- Inner runs with `propagation: 'requiresNew'` open a transaction of their own, which commits for
+  real: the test's rollback does not undo it. Clean up after them yourself.
 - The default `timeout` is 30 seconds. It uses `requiresNew`, so the pool needs at least 2
   connections.
 - It fails closed: if the transaction does not end in the rollback it asked for, it throws a

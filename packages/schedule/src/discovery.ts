@@ -6,7 +6,7 @@ import type { JobDefinition } from './scheduler.js';
 /**
  * Jobs declared with @Cron/@Interval/@Timeout on class providers of every module. A class provided
  * by several modules contributes its jobs once, from the first module's instance. Jobs on
- * transient providers are refused.
+ * transient and multi providers are refused.
  */
 export function discoverJobs(modules: readonly ModuleRef[]): JobDefinition[] {
   const seen = new Set<Function>();
@@ -14,11 +14,21 @@ export function discoverJobs(modules: readonly ModuleRef[]): JobDefinition[] {
   for (const mod of modules) {
     for (const record of mod.injector.ownRecords()) {
       const provider = record.provider;
-      if (provider.kind !== 'class' || provider.multi || seen.has(provider.useClass)) continue;
+      if (provider.kind !== 'class') continue;
+      const className = provider.useClass.name || '<anonymous>';
+      // A multi token resolves to an array of every entry, not to this class's instance.
+      if (provider.multi) {
+        if (!getMetadata(provider.useClass, JOBS)?.length) continue;
+        throw new ScheduleConfigError(
+          `${className} has scheduled jobs but is a multi provider; jobs need a singleton ` +
+            'provider of their own (list the class in providers, and use useExisting in the ' +
+            'multi entry).',
+        );
+      }
+      if (seen.has(provider.useClass)) continue;
       const specs = getMetadata(provider.useClass, JOBS);
       if (!specs?.length) continue;
       seen.add(provider.useClass);
-      const className = provider.useClass.name || '<anonymous>';
       if (provider.scope !== 'singleton') {
         throw new ScheduleConfigError(
           `${className} has scheduled jobs but is a ${provider.scope} provider; jobs need a ` +

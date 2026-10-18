@@ -71,12 +71,42 @@ describe('checkReleaseTag', () => {
     ]);
   });
 
-  test.each(['1.2.3', 'v1.2', 'v1.2.3.4', 'release-1.2.3', 'v01.2.3', 'v1.2.3 ', ''])(
-    'rejects malformed tag %p',
+  test.each(['v1.0.0-0', 'v1.0.0-rc.1', 'v1.0.0-0a', 'v1.0.0-alpha-1.0', 'v1.0.0--'])(
+    'accepts the SemVer prerelease %p',
     (tag) => {
-      expect(checkReleaseTag(tag, pkgs)[0]).toContain('not a release tag');
+      expect(checkReleaseTag(tag, [pkg('@knead-js/core', tag.slice(1))])).toEqual([]);
     },
   );
+
+  test.each([
+    '1.2.3',
+    'v1.2',
+    'v1.2.3.4',
+    'release-1.2.3',
+    'v01.2.3',
+    'v1.2.3 ',
+    '',
+    // SemVer 2.0 forbids leading zeros in numeric prerelease identifiers.
+    'v1.0.0-01',
+    'v1.0.0-rc.01',
+    'v1.0.0-',
+    'v1.0.0-rc..1',
+    'v1.0.0+build',
+  ])('rejects malformed tag %p', (tag) => {
+    expect(checkReleaseTag(tag, pkgs)[0]).toContain('not a release tag');
+  });
+
+  test('rejects pathological tags in linear time', () => {
+    const tags = [
+      `v1.0.0-${'1'.repeat(100_000)}!`,
+      `v1.0.0-${'0'.repeat(100_000)}`,
+      `v1.0.0-${'1.'.repeat(50_000)}`,
+      `v1.0.0-${'a1'.repeat(50_000)}.01`,
+    ];
+    const start = performance.now();
+    for (const tag of tags) expect(checkReleaseTag(tag, pkgs)[0]).toContain('not a release tag');
+    expect(performance.now() - start).toBeLessThan(250);
+  });
 
   test('fails when there is nothing to publish', () => {
     expect(checkReleaseTag('v1.2.3', [])[0]).toContain('no publishable packages');

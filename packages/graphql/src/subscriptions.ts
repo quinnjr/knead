@@ -42,8 +42,6 @@ interface SocketState {
   extra: object | undefined;
   /** The `context(http)` factory result, computed once when the connection initializes. */
   base: object | undefined;
-  /** Set synchronously on the first connection_init, before Leaven awaits onConnect. */
-  initStarted: boolean;
   /** Set when the socket closed; a subscribe that completes later is returned at once. */
   closed: boolean;
   pending: Set<PendingSubscribe>;
@@ -67,10 +65,18 @@ interface PeekedMessage {
   payload?: { query?: unknown } | null;
 }
 
+/**
+ * Whether `text` may be a frame whose type is one the message handler checks before Leaven
+ * (subscribe or complete). Without a backslash, a JSON string holds its
+ * characters literally, so such a type must appear as is; any frame with an escape is parsed.
+ */
+const mayNeedPeek = (text: string): boolean =>
+  text.includes('\\') || text.includes('subscribe') || text.includes('complete');
+
 /** The message as JSON, or undefined when it is not a JSON object (Leaven then rejects it). */
-function peek(message: string | Buffer): PeekedMessage | undefined {
+function peek(text: string): PeekedMessage | undefined {
   try {
-    const parsed: unknown = JSON.parse(typeof message === 'string' ? message : message.toString());
+    const parsed: unknown = JSON.parse(text);
     return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
       ? (parsed as PeekedMessage)
       : undefined;
@@ -416,7 +422,6 @@ export function createSubscriptionEndpoint(
         http,
         extra: undefined,
         base: undefined,
-        initStarted: false,
         closed: false,
         pending: new Set(),
         iterators: new Map(),
@@ -429,16 +434,11 @@ export function createSubscriptionEndpoint(
       const facade = facades.get(ws);
       if (!facade) return;
       const state = stateOf(facade);
-      const parsed = peek(message);
-      if (parsed?.type === 'connection_init') {
-        // Leaven marks the socket initialized only after awaiting onConnect, so two quick
-        // connection_init messages would both be acknowledged.
-        if (state.initStarted) {
-          ws.close(4429, 'Too many initialisation requests');
-          return;
-        }
-        state.initStarted = true;
-      }
+      // Leaven parses the frame again: skip the first parse for frames (connection_init, pings,
+      // pongs) whose type cannot be one checked here. Leaven rejects a repeated connection_init
+      // with 4429 itself, before awaiting onConnect.
+      const text = typeof message === 'string' ? message : message.toString();
+      const parsed = mayNeedPeek(text) ? peek(text) : undefined;
       // Ids end up in Leaven's logs and maps: anything but a short, plain id closes the socket
       // before the message reaches Leaven. Leaven validates ids too; this is a duplicate safety
       // net, with Leaven's close reason.
@@ -484,7 +484,7 @@ export function createSubscriptionEndpoint(
         );
         return;
       }
-      await handler.handleMessage(asLeavenSocket(facade), message);
+      await handler.handleMessage(asLeavenSocket(facade), text);
     },
     async close(ws) {
       const facade = facades.get(ws);

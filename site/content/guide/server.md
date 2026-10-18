@@ -35,19 +35,19 @@ are an `HttpConfigError` here), constructs middleware, guards and filters, and r
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `port` | `number` | `3000` | TCP port. `0` picks a free port. |
+| `port` | `number` | `3000` | TCP port. `0` picks a free port. An integer from 0 to 65535. |
 | `hostname` | `string` | `'0.0.0.0'` | Interface to bind. |
 | `tls` | `TLSOptions \| TLSOptions[]` | none | Bun TLS options; an array serves several certificates by SNI. See [TLS](#tls). |
-| `redirectHttp` | `{ port: number; hostname?: string; host?: string }` | none | A second, plain-HTTP listener that redirects to HTTPS. Requires `tls`. |
+| `redirectHttp` | `{ port: number; hostname?: string; host?: string }` | none | A second, plain-HTTP listener that redirects to HTTPS. Requires `tls`; its `port` is an integer from 0 to 65535. |
 | `allowedHosts` | `readonly string[] \| false` | Development: loopback names. Production: no check. | Host names the server answers to. See [allowed hosts](#allowed-hosts). |
 | `trustProxy` | `false \| number \| readonly string[]` | `false` | Which proxies' `X-Forwarded-*` headers to believe. See [proxies](#running-behind-a-proxy). |
 | `maxRequestBodySize` | `number` | `1048576` (1 MiB) | Largest request body in bytes; a larger one gets `413`. An integer of at least 1. |
 | `maxParams` | `number` | `1000` | Most query parameters (more is a `400`) or urlencoded or multipart body fields (more is a `413`) parsed per request. An integer of at least 1. |
 | `idleTimeout` | `number` | Bun's default (10 seconds) | Seconds a connection may be idle before Bun closes it. An integer from 0 to 255. |
-| `defaultCacheControl` | `string` | none | `Cache-Control` value added to responses that have none, for example `'no-store'`. |
+| `defaultCacheControl` | `string` | none | `Cache-Control` value added to responses that have none, for example `'no-store'`, including the `421` and masked `500` answers of both listeners. |
 | `validation` | `ValidationOptions` | `{}` | `{ redactIssueMessages: true }` makes validation issue messages generic. See [validation](/guide/validation/). |
 | `websocket` | `WsServerOptions` | `WS_DEFAULTS` | Server-wide WebSocket limits. See [WebSockets](/guide/websockets/#limits). |
-| `shutdownTimeout` | `number` | `10000` | Milliseconds `close()` waits for in-flight requests: an integer of at least 0. See [shutdown](#graceful-shutdown). |
+| `shutdownTimeout` | `number` | `10000` | Milliseconds `close()` waits for in-flight requests: an integer from 0 to `2 ** 31 - 1`. See [shutdown](#graceful-shutdown). |
 
 `listen()` can be called once. A second call, or a call after `close()` has started, rejects with
 an `HttpConfigError`. `useGlobalMiddleware()`, `useGlobalGuards()` and `useGlobalFilters()` must be
@@ -164,7 +164,7 @@ The default depends on development mode:
 ## Running behind a proxy
 
 By default `ctx.ip` and `ctx.secure` come from the socket, and `X-Forwarded-For` and
-`X-Forwarded-Proto` are ignored (`X-Forwarded-Host` is never used). When one of these headers
+`X-Forwarded-Proto` are ignored (`X-Forwarded-Host` is never used). When any of these three headers
 arrives while `trustProxy` is off, Knead logs
 one warning, since that usually means a proxy was left unconfigured. `trustProxy` says which
 proxies to believe:
@@ -203,7 +203,10 @@ keys whose value is an object. See
 [prototype pollution](/guide/request-context/#prototype-pollution).
 
 `defaultCacheControl` must be a non-empty header value without line breaks, and `maxParams` an
-integer of at least 1; anything else is an `HttpConfigError` at `listen()`.
+integer of at least 1; anything else is an `HttpConfigError` at `listen()`. So are a `port`,
+`redirectHttp.port` or `shutdownTimeout` out of range (or a string, `NaN` or `Infinity`), a
+`trustProxy` that is not `false`, a non-negative integer or an array (`true`, or a single CIDR
+string), and an `allowedHosts` that is not an array or `false` (a single string).
 
 ## Development mode warnings
 

@@ -220,4 +220,13 @@ describe.skipIf(TEST_DATABASE_URL === '')('postgres integration', () => {
     expect(created.email).toBe('isolated@example.test');
     expect(await client.user.count()).toBe(0);
   });
+
+  test('requiresNew inside withRollback commits for real', async () => {
+    await withRollback(mod, async () => {
+      await users.create('rolled-back@example.test');
+      await host.run(() => users.create('committed@example.test'), { propagation: 'requiresNew' });
+    });
+    expect(await client.user.count({ where: { email: 'committed@example.test' } })).toBe(1);
+    expect(await client.user.count({ where: { email: 'rolled-back@example.test' } })).toBe(0);
+  });
 });

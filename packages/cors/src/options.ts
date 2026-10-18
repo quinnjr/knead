@@ -90,10 +90,37 @@ function assertOriginString(origin: string): void {
   }
 }
 
+/** An RFC 9110 token (`1*tchar`): what a method or header name must be. */
+const HTTP_TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+
+/**
+ * Throws unless `value` is undefined or an array of HTTP tokens. An entry with CR/LF, NUL, a
+ * character above U+00FF or a comma would otherwise make every response with the header fail
+ * (or split one value into several) at request time.
+ */
+function assertTokenList(name: string, value: unknown): void {
+  if (value === undefined) return;
+  if (!Array.isArray(value)) {
+    throw new CorsConfigError(
+      `CORS ${name} must be an array of strings, got ${value === null ? 'null' : typeof value}.`,
+    );
+  }
+  for (const entry of value) {
+    if (typeof entry !== 'string' || !HTTP_TOKEN.test(entry)) {
+      const shown = typeof entry === 'string' ? JSON.stringify(entry.slice(0, 64)) : typeof entry;
+      throw new CorsConfigError(
+        `CORS ${name} entry ${shown} is not an HTTP token ` +
+          "(letters, digits and !#$%&'*+-.^_`|~ only, no spaces or commas).",
+      );
+    }
+  }
+}
+
 /**
  * @throws CorsConfigError for invalid options: an origin that is not a string, string array,
  * RegExp or function, a string origin that is not a serialized origin, an unanchored RegExp
- * origin, a non-boolean credentials, and more.
+ * origin, a non-boolean credentials, `methods`/`allowedHeaders`/`exposedHeaders` that are not
+ * arrays of HTTP tokens, and more.
  */
 export function validateCorsOptions(options: CorsOptions): void {
   const origin: unknown = options.origin;
@@ -142,6 +169,9 @@ export function validateCorsOptions(options: CorsOptions): void {
         'write it as /^...$/, grouping alternatives as /^(?:a|b)$/.',
     );
   }
+  assertTokenList('methods', options.methods);
+  assertTokenList('allowedHeaders', options.allowedHeaders);
+  assertTokenList('exposedHeaders', options.exposedHeaders);
   if (options.maxAge !== undefined && (!Number.isInteger(options.maxAge) || options.maxAge < 0)) {
     throw new CorsConfigError(`CORS maxAge must be a non-negative integer, got ${options.maxAge}`);
   }

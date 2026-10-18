@@ -99,6 +99,51 @@ describe('operation selection errors', () => {
   }
 });
 
+describe('document errors', () => {
+  test('a syntax error is PARSE_ERROR and a 400, with its location', async () => {
+    s = await startGraphQL([M]);
+    const res = await s.app.graphql('{ n', {
+      headers: { accept: 'application/graphql-response+json' },
+    });
+    expect(res.status).toBe(400);
+    expect(res.errors?.[0]?.extensions?.code).toBe('PARSE_ERROR');
+    expect(res.errors?.[0]?.locations).toEqual([{ line: 1, column: 4 }]);
+  });
+
+  test('an unknown field is VALIDATION_ERROR and a 400', async () => {
+    s = await startGraphQL([M]);
+    const res = await s.app.graphql('{ nope }', {
+      headers: { accept: 'application/graphql-response+json' },
+    });
+    expect(res.status).toBe(400);
+    expect(res.errors?.[0]).toMatchObject({
+      message: 'Cannot query field "nope" on type "Query".',
+      extensions: { code: 'VALIDATION_ERROR' },
+    });
+  });
+
+  test('too many tokens is PARSE_ERROR; an invalid literal or disabled introspection is VALIDATION_ERROR', async () => {
+    s = await startGraphQL([M], { parseOptions: { maxTokens: 5 } });
+    const tokens = await s.app.graphql('{ n n n n n n }');
+    expect(tokens.errors?.[0]?.extensions?.code).toBe('PARSE_ERROR');
+    await s.mod.close();
+    s = await startGraphQL([M], { introspection: false });
+    const literal = await s.app.graphql('{ n(x: 1) }');
+    expect(literal.errors?.[0]?.extensions?.code).toBe('VALIDATION_ERROR');
+    const introspection = await s.app.graphql('{ __schema { types { name } } }');
+    expect(introspection.errors?.[0]?.extensions?.code).toBe('VALIDATION_ERROR');
+  });
+
+  test('document errors keep their message under maskErrors', async () => {
+    s = await startGraphQL([M], { maskErrors: true });
+    const res = await s.app.graphql('{ nope }');
+    expect(res.errors?.[0]).toMatchObject({
+      message: 'Cannot query field "nope" on type "Query".',
+      extensions: { code: 'VALIDATION_ERROR' },
+    });
+  });
+});
+
 describe('errors outside resolvers are masked', () => {
   test('a throwing execution hook does not leak its message', async () => {
     s = await startGraphQL([M], {

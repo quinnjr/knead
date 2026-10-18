@@ -1,5 +1,22 @@
 # @knead-js/prisma
 
+## 0.6.0
+
+### Patch Changes
+
+- 1175350: - casl: `parseGrant()` walks an object grant with `for...in` and `Object.hasOwn()`, so an oversized
+    object stops being read as soon as it has more pairs than the catalog has areas (it read every
+    key's descriptor first). Same keys, same order.
+  - casl: the README and authorization guide no longer claim nothing fails at request time: a route
+    with `@PermittedFields()` but no `AbilityGuard` responds `403`.
+  - prisma: the docs no longer say nothing persists inside `withRollback()`: an inner
+    `propagation: 'requiresNew'` run commits for real. They also say when the client shape is
+    checked: an `instance` when `forRoot()` is called, a `client` factory's result at bootstrap.
+- Updated dependencies [1175350]
+- Updated dependencies [1175350]
+  - @knead-js/core@0.6.0
+  - @knead-js/http@0.6.0
+
 ## 0.5.0
 
 ### Minor Changes

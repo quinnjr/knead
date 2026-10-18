@@ -50,14 +50,25 @@ process.on('SIGINT', () => {
 });
 
 let failures = 0;
-/** Runs one check; a string result is printed as detail. */
+/**
+ * Runs one check; a string result is printed as detail. A check that has not settled after 30 s
+ * fails, so every check prints PASS or FAIL even when the server stops answering.
+ */
 async function check(name: string, fn: () => Promise<unknown>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const detail = await fn();
+    const detail = await Promise.race([
+      fn(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('timed out after 30 s')), 30_000);
+      }),
+    ]);
     console.log(`PASS  ${name}${typeof detail === 'string' ? `  (${detail})` : ''}`);
   } catch (error) {
     failures++;
     console.log(`FAIL  ${name}: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -101,12 +112,18 @@ function subscribe(query: string, variables: object, token: string) {
   const ws = new WebSocket(`${base.replace('http', 'ws')}/graphql`, 'graphql-transport-ws');
   const events: GqlBody[] = [];
   const ready = new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('no connection_ack within 5 s')), 5000);
+    const fail = (error: Error) => {
+      clearTimeout(timer);
+      reject(error);
+    };
     ws.onopen = () => ws.send(JSON.stringify({ type: 'connection_init', payload: { token } }));
-    ws.onerror = () => reject(new Error('WebSocket error'));
-    ws.onclose = (e) => reject(new Error(`WebSocket closed: ${e.code} ${e.reason}`));
+    ws.onerror = () => fail(new Error('WebSocket error'));
+    ws.onclose = (e) => fail(new Error(`WebSocket closed: ${e.code} ${e.reason}`));
     ws.onmessage = (message) => {
       const msg = JSON.parse(String(message.data)) as { type: string; payload?: GqlBody };
       if (msg.type === 'connection_ack') {
+        clearTimeout(timer);
         ws.send(JSON.stringify({ id: '1', type: 'subscribe', payload: { query, variables } }));
         resolve();
       } else if (msg.type === 'next' && msg.payload) events.push(msg.payload);
@@ -279,12 +296,23 @@ try {
 
   await check('subscription without a token is closed with 4403', async () => {
     const ws = new WebSocket(`${base.replace('http', 'ws')}/graphql`, 'graphql-transport-ws');
-    const code = await new Promise<number>((resolve, reject) => {
-      ws.onopen = () => ws.send(JSON.stringify({ type: 'connection_init', payload: {} }));
-      ws.onclose = (e) => resolve(e.code);
-      ws.onerror = () => reject(new Error('WebSocket error'));
-    });
-    assert(code === 4403, `close code ${code}`);
+    try {
+      const code = await new Promise<number>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('socket stayed open')), 5000);
+        ws.onopen = () => ws.send(JSON.stringify({ type: 'connection_init', payload: {} }));
+        ws.onclose = (e) => {
+          clearTimeout(timer);
+          resolve(e.code);
+        };
+        ws.onerror = () => {
+          clearTimeout(timer);
+          reject(new Error('WebSocket error'));
+        };
+      });
+      assert(code === 4403, `close code ${code}`);
+    } finally {
+      ws.close();
+    }
   });
 
   await check('cross-origin WebSocket upgrade is rejected with 403', async () => {

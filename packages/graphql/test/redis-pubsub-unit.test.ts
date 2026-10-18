@@ -494,6 +494,16 @@ describe('RedisPubSub hardening', () => {
     ).toThrow('maxSignatureAge');
   });
 
+  test('publishTimeout must be an integer from 1 to 2 ** 31 - 1 (a longer timer fires at once)', () => {
+    const make = (publishTimeout: number) => () =>
+      new RedisPubSub({ client: loopback().client, publishTimeout });
+    for (const bad of [0, 1.5, 2 ** 31, Number.POSITIVE_INFINITY]) {
+      expect(make(bad)).toThrow(HttpConfigError);
+      expect(make(bad)).toThrow('publishTimeout');
+    }
+    expect(make(2 ** 31 - 1)).not.toThrow();
+  });
+
   test('a signingKey shorter than 32 bytes is a configuration error', () => {
     expect(() => new RedisPubSub({ client: loopback().client, signingKey: 'short' })).toThrow(
       '32 bytes',
@@ -690,6 +700,80 @@ describe('RedisPubSub connection loss', () => {
       await pubsub.close();
     });
   }
+
+  test('a SUBSCRIBE still queued when the connection is lost is dropped, not made on the next one', async () => {
+    // Each connection keeps its own handlers (one per SUBSCRIBE call, as Bun does); PUBLISH
+    // reaches every open connection's.
+    type Handler = (message: string) => void;
+    const connections = new Map<object, Map<string, Handler[]>>();
+    const subscribers: { onclose: ((error: Error) => void) | null }[] = [];
+    let gate: Promise<void> | undefined;
+    let subscribeCalls = 0;
+    const client = {
+      duplicate: async () => {
+        const own = new Map<string, Handler[]>();
+        const subscriber = {
+          onclose: null as ((error: Error) => void) | null,
+          onconnect: null as (() => void) | null,
+          connected: true,
+          subscribe: async (channel: string, handler: Handler) => {
+            subscribeCalls++;
+            if (gate) await gate;
+            own.set(channel, [...(own.get(channel) ?? []), handler]);
+            return 1;
+          },
+          unsubscribe: async (channel: string) => {
+            own.delete(channel);
+          },
+          close() {
+            connections.delete(subscriber);
+          },
+        };
+        connections.set(subscriber, own);
+        subscribers.push(subscriber);
+        return subscriber;
+      },
+      publish: async (channel: string, message: string) => {
+        for (const own of connections.values()) for (const h of own.get(channel) ?? []) h(message);
+        return 1;
+      },
+      close: () => {},
+    } as unknown as RedisClient;
+    const pubsub = new RedisPubSub({ client, logger: new MemoryLogger() });
+    pubsub.subscribe('a', () => {});
+    await until(() => pubsub.pendingOperations === 0);
+    let release!: () => void;
+    gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    // A SUBSCRIBE, its UNSUBSCRIBE, then a second SUBSCRIBE queued behind them.
+    pubsub.subscribe('t', () => {})();
+    const stale: unknown[] = [];
+    const errors: Error[] = [];
+    const offStale = pubsub.subscribe(
+      't',
+      (payload) => stale.push(payload),
+      (error) => errors.push(error),
+    );
+    await until(() => subscribeCalls === 2);
+    subscribers[0]!.onclose!(new Error('Connection closed'));
+    expect(errors).toHaveLength(1);
+    offStale();
+    // The client resubscribes on the new connection.
+    const received: unknown[] = [];
+    const off = pubsub.subscribe('t', (payload) => received.push(payload));
+    gate = undefined;
+    release();
+    await until(() => pubsub.pendingOperations === 0);
+    await pubsub.publish('t', { n: 1 });
+    expect(received).toEqual([{ n: 1 }]);
+    expect(stale).toEqual([]);
+    off();
+    await until(() => pubsub.pendingOperations === 0);
+    const live = [...connections.values()];
+    expect(live.some((own) => own.has('knead:gql:t'))).toBe(false);
+    await pubsub.close();
+  });
 
   test('close() does not report its own subscriber close as a loss', async () => {
     const fake = watchedClient();

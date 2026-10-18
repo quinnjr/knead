@@ -47,7 +47,9 @@ The rules of the catalog work as follows:
 rule key, a duplicate level, a level without rules, a rules key that is not a level, an empty
 catalog) throws a `CaslConfigError` naming the problem, for example
 `area "posts": level "read" must add at least one rule`. `CaslConfigError` is a `KneadError`, so
-configuration mistakes stop the application at startup, never at request time.
+invalid catalogs and options stop the application at startup, never at request time. One wiring
+mistake is not caught at startup: a route with `@PermittedFields()` but no `AbilityGuard` responds
+`403` to every request (see [strip fields from responses](#strip-fields-from-responses)).
 
 The result is deep-frozen. Two methods expose it:
 

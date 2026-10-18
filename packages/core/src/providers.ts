@@ -2,7 +2,7 @@ import { INJECTABLE } from './decorators.js';
 import { ProviderConfigError } from './errors.js';
 import { getMetadata } from './metadata.js';
 import { checkScope, describe } from './provider-checks.js';
-import { type Token, type Type, tokenName } from './tokens.js';
+import { InjectionToken, type Token, type Type, tokenName } from './tokens.js';
 
 export type Scope = 'singleton' | 'transient';
 
@@ -34,6 +34,26 @@ function injectableScope(cls: Type): Scope | undefined {
   return getMetadata(cls, INJECTABLE)?.scope;
 }
 
+const CIRCULAR_HINT =
+  'This usually means a circular file import; check the import order of your files.';
+
+/** Whether `value` can be a token: a class (any function) or an InjectionToken. */
+function isToken(value: unknown): value is Token {
+  return typeof value === 'function' || value instanceof InjectionToken;
+}
+
+/**
+ * Throws unless `value` (the `key` of a provider object) satisfies `valid`. An undefined value
+ * gets the circular-import hint: an import that has not finished evaluating reads as undefined.
+ */
+function check(valid: boolean, value: unknown, key: string, where: string, expected: string): void {
+  if (valid) return;
+  if (value === undefined) {
+    throw new ProviderConfigError(`${where}: ${key} is undefined. ${CIRCULAR_HINT}`);
+  }
+  throw new ProviderConfigError(`${where}: ${key} must be ${expected}, got ${describe(value)}.`);
+}
+
 /**
  * Validates and normalizes a provider. `owner` names the module (or other source) declaring it in
  * error messages. Classes the container constructs must be marked with @Injectable().
@@ -57,9 +77,12 @@ export function normalizeProvider(
     );
   }
   const token = provider.provide as Token;
+  check(isToken(token), token, 'provide', `A provider in ${owner}`, 'a class or an InjectionToken');
+  const where = `The provider for ${tokenName(token)} in ${owner}`;
   const multi = provider.multi === true;
   if ('useClass' in provider) {
     const useClass = provider.useClass as Type;
+    check(typeof useClass === 'function', useClass, 'useClass', where, 'a class');
     const marked = injectableScope(useClass);
     if (marked === undefined) {
       throw new ProviderConfigError(
@@ -75,15 +98,18 @@ export function normalizeProvider(
   }
   if ('useFactory' in provider) {
     const factory = provider.useFactory as () => unknown;
+    check(typeof factory === 'function', factory, 'useFactory', where, 'a function');
     const scope =
       provider.scope === undefined ? 'singleton' : checkScope(provider.scope, tokenName(token));
     return { kind: 'factory', token, factory, scope, multi };
   }
   if ('useExisting' in provider) {
+    const existing = provider.useExisting as Token;
+    check(isToken(existing), existing, 'useExisting', where, 'a class or an InjectionToken');
     return {
       kind: 'existing',
       token,
-      existing: provider.useExisting as Token,
+      existing,
       scope: 'singleton',
       multi,
     };

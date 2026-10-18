@@ -466,8 +466,11 @@ socket limits.
 
 ### Events
 
-- Each event gets fresh `ctx.loader()` DataLoaders and an empty `ctx.state`. `ctx.meta` and the
-  connection's context are the same for every event.
+- Each event gets fresh `ctx.loader()` DataLoaders and an empty `ctx.state`, before its `filter`
+  and its `recheckGuards` recheck run, so a guard that memoises roles in `ctx.state` or loads them
+  through `ctx.loader()` never reuses what subscribe time or an earlier event cached. The event's
+  resolvers see what its filter and recheck set. `ctx.meta` and the connection's context are the
+  same for every event.
 - One payload is shared by every subscriber, so its plain objects and arrays are deep-frozen when it
   arrives (`deepFreeze`); the in-memory `PubSub` freezes it in `publish()`, even with no
   subscriber. Class instances, `Date`s and `Map`s are not frozen or walked into. Publish
@@ -579,8 +582,10 @@ original error is masked as usual. With these resolvers:
 
 ### Request errors
 
-Errors in the document itself (syntax, too many tokens, an unknown field, an invalid literal
-argument, a disabled introspection field) come from graphql-js and have no `extensions.code`. A missing or unknown operation name is `BAD_USER_INPUT`.
+Errors in the document itself keep their graphql-js message under `maskErrors` and carry a code:
+a syntax error or too many tokens is `PARSE_ERROR`, and an unknown field, an invalid literal
+argument or a disabled introspection field is `VALIDATION_ERROR`. A missing or unknown operation
+name, or a variable that does not coerce, is `BAD_USER_INPUT`.
 
 ## HTTP transport
 

@@ -140,7 +140,7 @@ export function rejectWildcards(topics: string | readonly string[]): void {
   }
 }
 
-/** Stands in for an event whose rechecked guards denied; its resolver rethrows `error`. */
+/** Stands in for an event whose filter threw or whose rechecked guards denied; its resolver rethrows `error`. */
 class RevokedEvent {
   constructor(readonly error: unknown) {}
 }
@@ -149,7 +149,7 @@ class RevokedEvent {
  * Runs `check` before each event of `source`. When it throws, the next value is a RevokedEvent
  * and the iterator then ends (and unsubscribes).
  */
-function recheckEvents<T>(
+function checkEvents<T>(
   source: AsyncIterableIterator<T>,
   check: () => Promise<void>,
 ): AsyncIterableIterator<T | RevokedEvent> {
@@ -573,31 +573,26 @@ export function checkAliases(document: DocumentNode, max: number): void {
   }
 }
 
-const OPERATION_NOT_FOUND = /^Operation "(.*)" not found(?: in document)?$/;
-
 /**
- * Leaven reports anything non-GraphQL thrown inside its pipeline (a failing custom cache, a
- * compiler error) as INTERNAL_ERROR with the raw message. The two client mistakes among them, a
- * missing or unknown operation name, become BAD_USER_INPUT as graphql-js reports them; every
- * other INTERNAL_ERROR is logged and becomes INTERNAL_SERVER_ERROR, masked when `maskErrors`.
+ * Leaven codes client mistakes in the request (a missing or unknown operation name, a variable
+ * that does not coerce) BAD_REQUEST; Knead reports client input as BAD_USER_INPUT. Anything
+ * non-GraphQL thrown inside Leaven's pipeline (a failing custom cache, a compiler error) is
+ * INTERNAL_ERROR with the raw message: it is logged and becomes INTERNAL_SERVER_ERROR, masked
+ * when `maskErrors`.
  */
 export function normalizeResponse<T>(
   response: GraphQLResponse<T>,
   masking: ErrorMaskingOptions,
 ): GraphQLResponse<T> {
-  if (!response.errors?.some((e) => e.extensions?.code === 'INTERNAL_ERROR')) return response;
+  const code = (error: { extensions?: { code?: unknown } }) => error.extensions?.code;
+  if (!response.errors?.some((e) => code(e) === 'INTERNAL_ERROR' || code(e) === 'BAD_REQUEST')) {
+    return response;
+  }
   const errors = response.errors.map((error) => {
-    if (error.extensions?.code !== 'INTERNAL_ERROR') return error;
-    const named = OPERATION_NOT_FOUND.exec(error.message);
-    const message =
-      error.message === 'No operation found in document'
-        ? 'Must provide operation name if query contains multiple operations.'
-        : named
-          ? `Unknown operation named "${named[1]}".`
-          : undefined;
-    if (message) {
-      return { ...error, message, extensions: { ...error.extensions, code: 'BAD_USER_INPUT' } };
+    if (code(error) === 'BAD_REQUEST') {
+      return { ...error, extensions: { ...error.extensions, code: 'BAD_USER_INPUT' } };
     }
+    if (code(error) !== 'INTERNAL_ERROR') return error;
     const correlationId = logInternalError(
       masking,
       'GraphQL execution failed inside Leaven',
@@ -786,6 +781,8 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
     for (const ref of this.options.guards) assertGuardRef(ref, 'GraphQLModule guards');
     for (const resolver of discoverResolvers(this.#modules)) {
       const target = getMetadata(resolver.cls, RESOLVER)?.type?.();
+      // The target is built even when no field returns it, whatever the resolver's methods are.
+      if (target && !types.includes(target)) types.push(target);
       for (const def of getMetadata(resolver.cls, RESOLVER_METHODS) ?? []) {
         const spec = this.#spec(resolver, def);
         if (def.kind === 'query') query.push(spec);
@@ -815,7 +812,6 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
           }
           list.push(spec);
           typeFields.set(target, list);
-          if (!types.includes(target)) types.push(target);
         }
       }
     }
@@ -940,6 +936,10 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
     // The arguments validated at subscribe time, reused for every event of that subscription
     // (graphql-js passes each event the same contextValue; a subscription has one root field).
     const validated = new WeakMap<OperationContext, unknown>();
+    // Each event starts with fresh state and DataLoaders, reset by its first stage (the filter,
+    // then the guard recheck, then the resolver), so no stage sees what subscribe time or the
+    // previous event cached, and the later stages of an event see what the earlier ones set.
+    const resetIn = sub.filter ? 'filter' : sub.recheckGuards ? 'recheck' : 'resolve';
     spec.subscribe = marked(async (parent, args, op: OperationContext, info) => {
       const ctx = await prepare(parent, args, op, info, true);
       validated.set(op, ctx.args);
@@ -957,17 +957,22 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
       }
       const filter = sub.filter;
       let warned = false;
+      // A throwing filter lets its event through as this error, delivered (formatted, so a client
+      // HttpException keeps its code) in place of the event, which then ends the subscription.
+      let filterError: unknown;
       const events = eventIterator(
         this.pubsub,
         topics,
         filter
           ? async (payload) => {
+              op.resetForEvent();
               try {
                 // Built per event from op.user, so the filter sees a refreshContext identity.
                 const current = createResolverCtx(op, injector, meta, ctx.args, parent, info);
                 return await filter({ payload, args: ctx.args, ctx: current });
               } catch (error) {
-                throw toSafeError(error, this.masking, `${owner} filter`);
+                filterError = toSafeError(error, this.masking, `${owner} filter`);
+                return true;
               }
             }
           : undefined,
@@ -981,10 +986,13 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
           },
         },
       );
-      if (!sub.recheckGuards) return events;
+      if (!filter && !sub.recheckGuards) return events;
       const subscriptions = this.options.subscriptions;
       const refresh = subscriptions === false ? undefined : subscriptions.refreshContext;
-      return recheckEvents(events, async () => {
+      return checkEvents(events, async () => {
+        if (filterError !== undefined) throw filterError;
+        if (!sub.recheckGuards) return;
+        if (resetIn === 'recheck') op.resetForEvent();
         if (refresh) {
           let refreshed: unknown;
           try {
@@ -1010,7 +1018,7 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
       if (!validated.has(op)) {
         throw new BadRequestException('Subscriptions are only available over WebSocket.');
       }
-      op.resetForEvent();
+      if (resetIn === 'resolve') op.resetForEvent();
       const value = sub.resolve ? await sub.resolve(payload) : payload;
       const ctx = createResolverCtx(op, injector, meta, validated.get(op), value, info);
       const result = await call(ctx);

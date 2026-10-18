@@ -75,7 +75,7 @@ curl localhost:3000/graphql -H 'content-type: application/json' -H 'authorizatio
   -d '{"query":"{ me { id name roles } }"}'
 ```
 
-`createPost` input is validated with valibot (a 3-character title fails with `BAD_USER_INPUT` and `extensions.issues`), and post and comment bodies are sanitized with `@knead-js/sanitize`.
+`createPost` input is validated with valibot (a title shorter than 3 characters fails with `BAD_USER_INPUT` and `extensions.issues`), and post and comment bodies are sanitized with `@knead-js/sanitize`.
 
 ## Subscriptions
 

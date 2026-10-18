@@ -153,7 +153,7 @@ describe('graphql: resolvers', () => {
     });
   });
 
-  test('variable coercion errors are BAD_USER_INPUT, literal ones have no code', async () => {
+  test('variable coercion errors are BAD_USER_INPUT, literal ones are VALIDATION_ERROR', async () => {
     const app = await boot({ imports: [AppModule] });
     const variable = await app.graphql('query ($first: Int!) { posts(first: $first) { id } }', {
       variables: { first: 'x' },
@@ -164,7 +164,7 @@ describe('graphql: resolvers', () => {
       extensions: { code: 'BAD_USER_INPUT' },
     });
     const literal = await app.graphql('{ posts(first: "x") { id } }');
-    expect(literal.errors?.[0]?.extensions).toBeUndefined();
+    expect(literal.errors?.[0]?.extensions).toEqual({ code: 'VALIDATION_ERROR' });
   });
 
   test('an HttpException keeps its code and message', async () => {

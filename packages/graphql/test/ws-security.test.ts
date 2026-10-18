@@ -194,6 +194,39 @@ describe('graphql-transport-ws handshake', () => {
     expect(calls).toBe(1);
   });
 
+  test('frame checks see a type written with JSON escapes', async () => {
+    s = await startGraphQL([M], { maxQueryLength: 100 });
+    const socket = rawSocket(s);
+    await socket.opened;
+    socket.ws.send(JSON.stringify({ type: 'connection_init' }));
+    await until(() => socket.messages.length === 1);
+    const query = `subscription { t }${' '.repeat(200)}`;
+    // "\u0073ubscribe" is "subscribe": the over-long query is refused before Leaven runs it.
+    socket.ws.send(`{"id":"1","type":"\\u0073ubscribe","payload":${JSON.stringify({ query })}}`);
+    await until(() => socket.messages.length === 2);
+    expect(socket.messages[1]).toMatchObject({
+      id: '1',
+      type: 'error',
+      payload: [{ extensions: { code: 'BAD_USER_INPUT' } }],
+    });
+    // And an invalid id on an escaped "complete" closes the socket.
+    socket.ws.send('{"id":"bad id!","type":"\\u0063omplete"}');
+    expect((await socket.closed).code).toBe(4400);
+  });
+
+  test('ping frames are answered with pong', async () => {
+    s = await startGraphQL([M]);
+    const socket = rawSocket(s);
+    await socket.opened;
+    socket.ws.send(JSON.stringify({ type: 'connection_init' }));
+    await until(() => socket.messages.length === 1);
+    socket.ws.send(JSON.stringify({ type: 'ping', payload: { at: 1 } }));
+    await until(() => socket.messages.length === 2);
+    expect(socket.messages[1]).toEqual({ type: 'pong', payload: { at: 1 } });
+    socket.ws.close();
+    await socket.closed;
+  });
+
   test('an over-long subscribe reusing an active id closes the socket with 4409', async () => {
     s = await startGraphQL([M], { maxQueryLength: 100 });
     const socket = rawSocket(s);

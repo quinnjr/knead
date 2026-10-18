@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Injectable, inject, Module } from '@knead-js/core';
+import { ForbiddenException } from '@knead-js/http';
 import {
   type BatchLoader,
   Field,
@@ -31,6 +32,8 @@ class NameLoader implements BatchLoader<string, string> {
   }
 }
 
+class MappedFilterError extends Error {}
+
 @ObjectType()
 class Event {
   @Field(() => ID) authorId!: string;
@@ -52,6 +55,22 @@ class EventResolver {
     },
   })
   broken() {}
+
+  @Subscription(() => Event, {
+    topic: 'events',
+    filter: () => {
+      throw new ForbiddenException('not for you');
+    },
+  })
+  refused() {}
+
+  @Subscription(() => Event, {
+    topic: 'events',
+    filter: () => {
+      throw new MappedFilterError('mapped secret');
+    },
+  })
+  mapped() {}
 
   @ResolveField(() => String)
   author(ctx: ResolverCtx<{}, Event>) {
@@ -102,6 +121,35 @@ describe('subscription events', () => {
     expect(JSON.stringify(result.value)).not.toContain('filter secret');
     expect(result.value?.errors?.[0]?.message).toBe('Internal server error');
     expect(s.mod.logs.some((e) => e.level === 'error')).toBe(true);
+  });
+
+  test('a filter throwing a client HttpException keeps its code and is not logged', async () => {
+    s = await startGraphQL([EventsModule]);
+    const sub = await s.app.graphqlSubscribe('subscription { refused { authorId } }');
+    await until(() => count(s!) === 1);
+    s.mod.get(PUBSUB).publish('events', { authorId: 'a' });
+    const result = await sub.next();
+    expect(result.value?.errors?.[0]).toMatchObject({
+      message: 'not for you',
+      extensions: { code: 'FORBIDDEN' },
+    });
+    expect((await sub.next()).done).toBe(true);
+    expect(s.mod.logs.some((e) => e.level === 'error')).toBe(false);
+  });
+
+  test('a filter error that mapError maps to an HttpException keeps its code', async () => {
+    s = await startGraphQL([EventsModule], {
+      mapError: (e) => (e instanceof MappedFilterError ? new ForbiddenException('no') : undefined),
+    });
+    const sub = await s.app.graphqlSubscribe('subscription { mapped { authorId } }');
+    await until(() => count(s!) === 1);
+    s.mod.get(PUBSUB).publish('events', { authorId: 'a' });
+    const result = await sub.next();
+    expect(JSON.stringify(result.value)).not.toContain('mapped secret');
+    expect(result.value?.errors?.[0]).toMatchObject({
+      message: 'no',
+      extensions: { code: 'FORBIDDEN' },
+    });
   });
 
   test('a throwing context factory over WebSocket is logged and masked', async () => {

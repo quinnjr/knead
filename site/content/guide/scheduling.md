@@ -56,6 +56,9 @@ module in the application, not only the root module. Keep these rules in mind:
   `SchedulerRegistry.list()` shows what was registered.
 - The provider must be a singleton. Jobs on a `transient` provider fail at bootstrap with
   `ScheduleConfigError`.
+- Jobs on a `multi: true` class provider fail at bootstrap with `ScheduleConfigError` too: the
+  multi token resolves to an array of every entry, not to the class's own instance. List the
+  class as a provider of its own and add it to the multi token with `useExisting`.
 - A class provided by several modules registers its jobs once, on the first module's instance.
 - Subclasses inherit their parent's jobs. An override that is decorated again replaces the
   parent's jobs for that method; an undecorated override keeps the parent's schedule and runs the

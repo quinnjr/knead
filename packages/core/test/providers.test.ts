@@ -106,6 +106,41 @@ describe('normalizeProvider', () => {
     expect(() => normalizeProvider(42 as never)).toThrow(/Invalid provider: 42/);
   });
 
+  test('a malformed provide, useClass, useFactory or useExisting is a ProviderConfigError', () => {
+    const cases: [unknown, RegExp][] = [
+      [{ provide: undefined, useValue: 1 }, /provide is undefined.*circular file import/],
+      [{ provide: 'CONFIG', useValue: 1 }, /provide must be a class or an InjectionToken/],
+      [{ provide: CONFIG, useClass: undefined }, /CONFIG.*useClass is undefined.*circular/],
+      [{ provide: CONFIG, useClass: {} }, /CONFIG.*useClass must be a class/],
+      [{ provide: CONFIG, useFactory: 42 }, /CONFIG.*useFactory must be a function/],
+      [{ provide: CONFIG, useExisting: undefined }, /CONFIG.*useExisting is undefined.*circular/],
+      [{ provide: CONFIG, useExisting: 'X' }, /CONFIG.*useExisting must be a class or/],
+    ];
+    for (const [provider, message] of cases) {
+      expect(() => normalizeProvider(provider as never, 'AppModule')).toThrow(ProviderConfigError);
+      expect(() => normalizeProvider(provider as never, 'AppModule')).toThrow(message);
+    }
+  });
+
+  test('malformed provider messages, as documented', () => {
+    const MAILER = new InjectionToken<unknown>('MAILER');
+    const CLOCK = new InjectionToken<unknown>('CLOCK');
+    expect(() =>
+      normalizeProvider({ provide: MAILER, useClass: undefined as never }, 'AppModule'),
+    ).toThrow(
+      'The provider for MAILER in AppModule: useClass is undefined. This usually means a circular file import; check the import order of your files.',
+    );
+    expect(() =>
+      normalizeProvider({ provide: CLOCK, useFactory: 42 as never }, 'AppModule'),
+    ).toThrow('The provider for CLOCK in AppModule: useFactory must be a function, got 42.');
+  });
+
+  test('a malformed provider fails when the module graph is built', async () => {
+    @Module({ providers: [{ provide: CONFIG, useClass: undefined as never }] })
+    class Root {}
+    await expect(ApplicationContext.create(Root)).rejects.toThrow(ProviderConfigError);
+  });
+
   test('an invalid provider message names its keys, never its values', () => {
     let message = '';
     try {
