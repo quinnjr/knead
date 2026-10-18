@@ -1,6 +1,6 @@
 {
   "name": "@knead-js/schedule",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Cron, interval and timeout jobs with distributed locking for Knead, the NestJS-style web framework for Bun",
   "keywords": [
     "bun",

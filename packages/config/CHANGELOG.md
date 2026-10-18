@@ -1,5 +1,22 @@
 # @knead-js/config
 
+## 0.5.0
+
+### Minor Changes
+
+- 151bf6c: **Breaking:** `@Injectable()` is now required on every class the container constructs as a
+  provider, whether listed in `providers` or used through `useClass` (including testing overrides).
+  An unmarked class is a `ProviderConfigError` at bootstrap naming the class and module. Value,
+  factory and alias providers, and guard, middleware and filter classes, need no decorator.
+  `@Controller()`, `@Resolver()` and `@Catch()` mark their classes. New `markInjectable(metadata)`
+  lets other class decorators do the same; `normalizeProvider()` takes an optional `owner` for its
+  error messages.
+
+### Patch Changes
+
+- Updated dependencies [151bf6c]
+  - @knead-js/core@0.5.0
+
 ## 0.4.0
 
 ### Patch Changes
