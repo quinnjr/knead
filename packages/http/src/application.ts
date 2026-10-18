@@ -429,6 +429,8 @@ export class HttpApplication {
         const redirectStopped = this.#redirect?.stop(true).catch((error: unknown) => {
           logError(this, 'Stopping the redirect listener failed', error);
         });
+        // Open streams would hold their requests pending until the deadline: end them first.
+        this.context.get(WsRegistry).endStreams();
         const deadline = Date.now() + this.shutdownTimeout;
         const pending = () => servers.reduce((n, server) => n + server.pendingRequests, 0);
         while (pending() > 0 && Date.now() < deadline) await Bun.sleep(10);
@@ -511,7 +513,7 @@ export class HttpApplication {
       .map((item, index) => ({ ...item, index }))
       .sort((a, b) => (b.entry.priority ?? 0) - (a.entry.priority ?? 0) || a.index - b.index);
     const ws = this.context.get(WsRegistry);
-    ws.configure(options.websocket ?? {});
+    ws.configure(options.websocket ?? {}, { idleTimeout });
     // Transients built for the routes here (guards, middleware, filters) are startup instances:
     // tracked, so initializeLate() below gives them init hooks and close() shutdown hooks.
     const compiled = this.context.trackConstructed(() =>
