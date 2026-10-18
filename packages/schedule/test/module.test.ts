@@ -2,6 +2,7 @@ import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import {
   ApplicationContext,
   Injectable,
+  InjectionToken,
   inject,
   MemoryLogger,
   Module,
@@ -272,6 +273,32 @@ describe('ScheduleModule', () => {
     class Feature {}
     await expect(boot([Feature])).rejects.toThrow(/transient/);
     ctx = undefined;
+  });
+
+  test('jobs on multi providers are refused', async () => {
+    const PLUGINS = new InjectionToken<object[]>('PLUGINS');
+    @Injectable()
+    class Plugin {
+      @Interval(100) a() {}
+    }
+    @Module({ providers: [{ provide: PLUGINS, useClass: Plugin, multi: true }] })
+    class Feature {}
+    const booted = boot([Feature]);
+    await expect(booted).rejects.toThrow(ScheduleConfigError);
+    await expect(booted).rejects.toThrow('Plugin has scheduled jobs but is a multi provider');
+    ctx = undefined;
+  });
+
+  test('a multi entry that uses an existing singleton provider runs its jobs once', async () => {
+    const PLUGINS = new InjectionToken<object[]>('PLUGINS');
+    @Injectable()
+    class Plugin {
+      @Interval(100, { name: 'plugin' }) a() {}
+    }
+    @Module({ providers: [Plugin, { provide: PLUGINS, useExisting: Plugin, multi: true }] })
+    class Feature {}
+    const { registry } = await boot([Feature]);
+    expect(registry.list().map((job) => job.name)).toEqual(['plugin']);
   });
 
   test('anonymous classes get a readable default name', async () => {

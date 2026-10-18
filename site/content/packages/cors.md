@@ -35,9 +35,9 @@ that throws, still produces a response with the CORS headers, so the browser can
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `origin` | `CorsOrigin` | required | Which origins are allowed. See [origin rules](#origin-rules). |
-| `methods` | `readonly string[]` | `GET, HEAD, PUT, PATCH, POST, DELETE` | Sent as `Access-Control-Allow-Methods` on preflights, joined with `, `. |
-| `allowedHeaders` | `readonly string[]` | reflect the request | Sent as `Access-Control-Allow-Headers` on preflights. Unset, the preflight's `Access-Control-Request-Headers` value is echoed back. |
-| `exposedHeaders` | `readonly string[]` | none | Sent as `Access-Control-Expose-Headers` on allowed non-preflight responses, when the list is not empty. |
+| `methods` | `readonly string[]` | `GET, HEAD, PUT, PATCH, POST, DELETE` | Sent as `Access-Control-Allow-Methods` on preflights, joined with `, `. Each entry must be an HTTP token. |
+| `allowedHeaders` | `readonly string[]` | reflect the request | Sent as `Access-Control-Allow-Headers` on preflights. Unset, the preflight's `Access-Control-Request-Headers` value is echoed back. Each entry must be an HTTP token. |
+| `exposedHeaders` | `readonly string[]` | none | Sent as `Access-Control-Expose-Headers` on allowed non-preflight responses, when the list is not empty. Each entry must be an HTTP token. |
 | `credentials` | `boolean` | `false` | Sends `Access-Control-Allow-Credentials: true` to allowed origins. Cannot be combined with `origin: '*'`. |
 | `maxAge` | `number` | none | Seconds a browser may cache a preflight, sent as `Access-Control-Max-Age`. A non-negative integer. |
 
@@ -51,6 +51,8 @@ that throws, still produces a response with the CORS headers, so the browser can
 | `'*'` | Any origin. The response says `Access-Control-Allow-Origin: *`, never the request's origin, and no `Vary: Origin` is added. |
 | A string | The `Origin` header equals it exactly (scheme, host and port, case-sensitive). |
 | A string array | The `Origin` header equals one of the entries exactly. |
+| A `RegExp` | The pattern matches the whole `Origin` header. `lastIndex` is reset before each test, so `g` and `y` flags are safe. |
+| A function | It returns (or resolves to) exactly `true`. Any other value, even a truthy one such as `1` or `{}`, disallows the origin. It receives the origin and the request `Ctx`. |
 
 A string origin (alone or in an array) must be written exactly as browsers send it: the
 serialized origin `scheme://host[:port]`, lowercase, without a path, a trailing slash or a default
@@ -58,8 +60,6 @@ port, and with an internationalized host in its `xn--` form. `'https://app.examp
 `'https://App.example'` would never match, so it is a `CorsConfigError` that names the canonical
 form (`"https://app.example"`). `'null'`, the origin of sandboxed and `file:` pages, is accepted
 as is.
-| A `RegExp` | The pattern matches the whole `Origin` header. `lastIndex` is reset before each test, so `g` and `y` flags are safe. |
-| A function | It returns (or resolves to) exactly `true`. Any other value, even a truthy one such as `1` or `{}`, disallows the origin. It receives the origin and the request `Ctx`. |
 
 A RegExp must be anchored and must not have a top-level `|`:
 
@@ -162,6 +162,12 @@ list your cross-origin front ends in the endpoint's `allowedOrigins` as well. Se
   is not a URL with a host, `CORS origin "app.example" is not an origin; …`.
 - A `credentials` that is not a boolean: `CORS credentials must be a boolean, got string.`
 - A `maxAge` that is not a non-negative integer: `CORS maxAge must be a non-negative integer, got …`.
+- A `methods`, `allowedHeaders` or `exposedHeaders` that is not an array:
+  `CORS methods must be an array of strings, got string.` (naming the option).
+- An entry of one of those arrays that is not an HTTP token (RFC 9110 `tchar`: letters, digits and
+  ``!#$%&'*+-.^_`|~``), such as one with a space, a comma, CR/LF, NUL or a character above U+00FF:
+  `CORS allowedHeaders entry "x-a, x-b" is not an HTTP token …`. Such an entry would otherwise make
+  `Headers.set()` throw on every request.
 
 `CorsModule.forRoot()` calls it for you.
 

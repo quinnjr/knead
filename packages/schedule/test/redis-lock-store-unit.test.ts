@@ -112,6 +112,15 @@ describe('RedisLockStore commands', () => {
     expect(calls[0]).toEqual(['SET', ['p:job:123', '1', 'NX', 'PX', '60000']]);
   });
 
+  test('commandTimeout defaults to 250 ms', async () => {
+    const never = { connected: true, send: () => new Promise(() => {}) } as unknown as RedisClient;
+    const started = performance.now();
+    await expect(new RedisLockStore({ client: never }).acquire('k', 1_000)).rejects.toThrow(
+      'within 250ms',
+    );
+    expect(performance.now() - started).toBeGreaterThanOrEqual(240);
+  });
+
   test('a client that never answers fails after commandTimeout', async () => {
     const never = { connected: true, send: () => new Promise(() => {}) } as unknown as RedisClient;
     await expect(

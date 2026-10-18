@@ -167,6 +167,9 @@ export class UsageController {
 export class AppModule {}
 ```
 
+On GraphQL resolvers the key function receives the HTTP `Ctx` (`ctx.http` of the `ResolverCtx`), so
+the same function works there: store what it reads on `ctx.http.state`.
+
 ## Redis
 
 `MemoryStore` keeps counters in the process, so with four instances behind a load balancer a

@@ -246,7 +246,7 @@ Both extend `KneadError` from `@knead-js/core`, and their `name` is the class na
 ### `ScheduleConfigError`
 
 An invalid job, schedule or option, a duplicate job name, a second `forRoot()` import, jobs on a
-transient provider, `lock` without a `lockStore`, or a change
+transient or `multi` class provider, `lock` without a `lockStore`, or a change
 made after the scheduler shut down. Thrown when a decorator is evaluated, when `forRoot()` is
 called, at bootstrap, or by a registry method.
 

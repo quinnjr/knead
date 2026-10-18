@@ -171,7 +171,8 @@ export class RateLimiter implements OnModuleDestroy {
     const limit = override?.limit ?? this.#options.limit;
     const windowMs = override?.windowMs ?? this.#windowMs;
     const keyFn: KeyFn = override?.key ?? this.#options.key ?? this.#defaultKey;
-    const key = await (keyFn === this.#defaultKey && resolver ? keyFn(resolver.http) : keyFn(ctx));
+    // Every key function receives the HTTP Ctx, on a resolver too: KeyFn is typed for it.
+    const key = await keyFn(resolver?.http ?? ctx);
     const route = !override
       ? 'global'
       : resolver

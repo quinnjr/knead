@@ -140,9 +140,15 @@ Use it with `@UseGuards(AuthGuard, RateLimitGuard)` or as an `APP_GUARD`. With `
 only the guard counts.
 
 `RateLimitGuard` also works on GraphQL resolvers (`@UseGuards(RateLimitGuard)` on a resolver
-class or method): it reads the request from `ctx.http` (the default key is `ctx.http.ip`), keeps one
+class or method): it reads the request from `ctx.http`, keeps one
 counter per resolver field that has `@RateLimit()`, puts the headers on the GraphQL HTTP response,
 and a denial is a `RATE_LIMITED` GraphQL error. See [GraphQL](/guide/graphql/).
+
+Key functions always receive the HTTP `Ctx`, on a resolver too: the default key is `ctx.http.ip`,
+and a module or `@RateLimit()` `key` is called with `ctx.http`, never the `ResolverCtx`. So the
+same key function works on routes and resolvers. For a per-user limit on resolvers, have the
+authentication guard store the user on `ctx.http.state`, which is what the key function sees
+(`ResolverCtx.state` is the operation's scratch space, a different object).
 
 A guarded field without `@RateLimit()` counts against the guard's global budget once per HTTP
 request: a nested field in a list resolves once per item, but all its checks, and a `RateLimitGuard`
