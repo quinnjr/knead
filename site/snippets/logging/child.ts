@@ -1,6 +1,7 @@
-import { inject, LOGGER } from '@knead-js/core';
+import { Injectable, inject, LOGGER } from '@knead-js/core';
 import { childLogger } from '@knead-js/logging';
 
+@Injectable()
 export class InvoiceJob {
   // Every entry from this class carries `component: 'invoices'`.
   readonly #log = childLogger(inject(LOGGER), { component: 'invoices' });

@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { ConsoleLogger, inject, LOGGER, type Logger, Module } from '@knead-js/core';
+import { ConsoleLogger, Injectable, inject, LOGGER, type Logger, Module } from '@knead-js/core';
 import { KneadFactory, MemoryLogger } from '../src/index.js';
 
+@Injectable()
 class Service {
   readonly log = inject(LOGGER);
 }

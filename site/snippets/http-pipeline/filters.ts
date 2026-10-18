@@ -1,4 +1,4 @@
-import { inject, Module } from '@knead-js/core';
+import { Injectable, inject, Module } from '@knead-js/core';
 import {
   APP_FILTER,
   Catch,
@@ -51,6 +51,7 @@ export class AccountsController {
 // #endregion scopes
 
 // #region decline
+@Injectable()
 export class ErrorTracker {
   readonly reported: unknown[] = [];
 

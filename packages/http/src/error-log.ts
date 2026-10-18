@@ -1,4 +1,4 @@
-import { type ErrorLogOptions, inject, LOGGER, logError } from '@knead-js/core';
+import { type ErrorLogOptions, Injectable, inject, LOGGER, logError } from '@knead-js/core';
 import { HTTP_DEVELOPMENT } from './tokens.js';
 
 export {
@@ -9,6 +9,7 @@ export {
 } from '@knead-js/core';
 
 /** Injectable logError(), with LOGGER and HTTP_DEVELOPMENT. */
+@Injectable()
 export class ErrorLog implements ErrorLogOptions {
   readonly logger = inject(LOGGER);
   readonly development: boolean = inject(HTTP_DEVELOPMENT);

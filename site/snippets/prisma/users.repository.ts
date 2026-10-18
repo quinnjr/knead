@@ -1,7 +1,8 @@
-import { inject } from '@knead-js/core';
+import { Injectable, inject } from '@knead-js/core';
 import { PrismaService } from '@knead-js/prisma';
 
 // #region repository
+@Injectable()
 export class UsersRepository {
   readonly #prisma = inject(PrismaService);
 
@@ -20,6 +21,7 @@ export class UsersRepository {
 }
 // #endregion repository
 
+@Injectable()
 export class OrdersRepository {
   readonly #prisma = inject(PrismaService);
 
@@ -28,6 +30,7 @@ export class OrdersRepository {
   }
 }
 
+@Injectable()
 export class AuditLog {
   readonly #prisma = inject(PrismaService);
 

@@ -264,6 +264,7 @@ export class AppModule {}
 Before issuing a token, check that the requested grant does not exceed its user:
 
 ```ts
+@Injectable()
 export class TokenIssuer {
   readonly #abilities = inject(AbilityService);
 

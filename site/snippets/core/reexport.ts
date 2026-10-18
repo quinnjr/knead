@@ -1,7 +1,8 @@
-import { inject, Module } from '@knead-js/core';
+import { Injectable, inject, Module } from '@knead-js/core';
 import { Database, DatabaseModule } from './feature-modules.js';
 
 // #region reexport
+@Injectable()
 export class Clock {
   now(): Date {
     return new Date();
@@ -16,6 +17,7 @@ export class Clock {
 })
 export class SharedModule {}
 
+@Injectable()
 export class ReportsService {
   readonly db = inject(Database);
   readonly clock = inject(Clock);

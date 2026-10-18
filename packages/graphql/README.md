@@ -24,7 +24,7 @@ and `@leaven-graphql/ws` 0.2.3, `@leaven-graphql/playground` 0.2.2, `@leaven-gra
 ## Quick start
 
 ```ts
-import { inject, Module } from '@knead-js/core';
+import { Injectable, inject, Module } from '@knead-js/core';
 import {
   type BatchLoader,
   Field,
@@ -53,6 +53,7 @@ export class Book {
   authorId!: string;
 }
 
+@Injectable()
 export class Library {
   readonly books: Book[] = [
     { id: 'b1', title: 'Kindred', authorId: 'a1' },
@@ -62,6 +63,7 @@ export class Library {
 }
 
 /** Batches every `Book.author` of one operation into a single call. */
+@Injectable()
 export class AuthorsById implements BatchLoader<string, Author> {
   readonly #library = inject(Library);
 

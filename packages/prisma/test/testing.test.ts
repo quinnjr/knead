@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { inject, KneadError, Module } from '@knead-js/core';
+import { Injectable, inject, KneadError, Module } from '@knead-js/core';
 import { Test } from '@knead-js/testing';
 import { PrismaModule, Transactional, TransactionHost } from '../src/index.js';
 import { withRollback } from '../src/testing/index.js';
@@ -91,6 +91,7 @@ describe('withRollback', () => {
   // failure inside one marks it rollback-only even when fn catches it, and withRollback rejects.
   test('a caught failure in a joined @Transactional call rejects with the rollback-only error', async () => {
     const boom = new Error('boom');
+    @Injectable()
     class Users {
       readonly host = inject(TransactionHost);
 

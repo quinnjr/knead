@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, mock, setSystemTime, test } from 'bun:test';
-import { ApplicationContext, inject, Module, type OnModuleInit } from '@knead-js/core';
+import { ApplicationContext, Injectable, inject, Module, type OnModuleInit } from '@knead-js/core';
 import type { HttpApplication, ListenOptions } from '../src/application.js';
 import { Controller, Get, Post } from '../src/decorators.js';
 import { HttpConfigError, TooManyRequestsException } from '../src/exceptions.js';
@@ -59,6 +59,7 @@ function upgradeStatus(
 type Endpoints = Record<string, { endpoint?: Partial<WsEndpoint>; options?: WsEndpointOptions }>;
 
 function gatewayModule(endpoints: Endpoints) {
+  @Injectable()
   class Gateway implements OnModuleInit {
     readonly ws = inject(WsRegistry);
     onModuleInit() {
@@ -556,6 +557,7 @@ describe('closeWhere and upgrades in progress', () => {
     const inGuard = new Promise<void>((resolve) => {
       entered = resolve;
     });
+    @Injectable()
     class Gateway implements OnModuleInit {
       readonly ws = inject(WsRegistry);
       onModuleInit() {
@@ -802,6 +804,7 @@ describe('closeWhere re-application at open (fail closed)', () => {
 
   test('upgrades that never open stop counting: failed, and timed out', async () => {
     let allow = false;
+    @Injectable()
     class Gateway implements OnModuleInit {
       readonly ws = inject(WsRegistry);
       onModuleInit() {
@@ -832,6 +835,7 @@ describe('closeWhere re-application at open (fail closed)', () => {
 describe('WebSocket endpoints covered by a parametric or wildcard GET route', () => {
   const opened: string[] = [];
   const gateway = (path: string) => {
+    @Injectable()
     class Gateway implements OnModuleInit {
       readonly ws = inject(WsRegistry);
       onModuleInit() {

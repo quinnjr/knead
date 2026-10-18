@@ -1,9 +1,10 @@
 import { AbilityService, type Grant } from '@knead-js/casl';
-import { inject } from '@knead-js/core';
+import { Injectable, inject } from '@knead-js/core';
 import { BadRequestException } from '@knead-js/http';
 import type { User } from './users.js';
 
 // #region issuer
+@Injectable()
 export class TokenIssuer {
   readonly #abilities = inject(AbilityService);
 

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { inject, LOGGER, Module } from '@knead-js/core';
+import { Injectable, inject, LOGGER, Module } from '@knead-js/core';
 import {
   Controller,
   type Ctx,
@@ -15,6 +15,7 @@ import {
 } from '@knead-js/http';
 import { Test, TestApp, type TestingModule } from '../src/index.js';
 
+@Injectable()
 class Greeter {
   greet(name: string) {
     return `hello ${name}`;
@@ -220,6 +221,7 @@ describe('Test.createModule', () => {
 describe('the testing logger', () => {
   test('captures every module, replacing global and module-local LOGGER providers', async () => {
     const local = new MemoryLogger();
+    @Injectable()
     class LocalService {
       readonly log = inject(LOGGER);
     }

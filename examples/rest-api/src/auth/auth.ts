@@ -1,5 +1,5 @@
 import { fullGrant } from '@knead-js/casl';
-import { inject, Module } from '@knead-js/core';
+import { Injectable, inject, Module } from '@knead-js/core';
 import { type Ctx, type Guard, UnauthorizedException } from '@knead-js/http';
 import { permissions, type Session } from './permissions.js';
 
@@ -31,6 +31,7 @@ export const demoUsers: Readonly<Record<'admin' | 'regular', User>> = {
  * Each token carries a grant, as a personal access token would. A real token issuer checks the
  * requested grant with `AbilityService.validateGrant()` before issuing it.
  */
+@Injectable()
 export class AuthService {
   constructor() {
     if (process.env.NODE_ENV === 'production') {

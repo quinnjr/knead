@@ -1,7 +1,8 @@
-import { ApplicationContext, inject, Module } from '@knead-js/core';
+import { ApplicationContext, Injectable, inject, Module } from '@knead-js/core';
 import { Database, EVENTS, JobRunner } from './lifecycle.js';
 
 // #region module
+@Injectable()
 export class ReportService {
   readonly #db = inject(Database);
 

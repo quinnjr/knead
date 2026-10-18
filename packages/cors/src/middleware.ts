@@ -1,4 +1,4 @@
-import { inject } from '@knead-js/core';
+import { Injectable, inject } from '@knead-js/core';
 import {
   type Ctx,
   ForbiddenException,
@@ -23,6 +23,7 @@ export function mergeVary(res: Response, values: readonly string[]): Response {
   return withHeaders(res, { vary: [...merged.values()].join(', ') });
 }
 
+@Injectable()
 export class CorsMiddleware implements Middleware {
   readonly #options = inject(CORS_OPTIONS);
   // Everything that does not depend on the request is built once.

@@ -222,7 +222,7 @@ function consumerApp(): string {
 import type { StandardJSONSchemaV1, StandardSchemaV1 } from '@standard-schema/spec';
 import { AbilityGuard, Can, CaslModule, definePermissions } from '@knead-js/casl';
 import { ConfigModule, defineConfig } from '@knead-js/config';
-import { inject, Module } from '@knead-js/core';
+import { Injectable, inject, Module } from '@knead-js/core';
 import { CorsModule } from '@knead-js/cors';
 import { Field, GraphQLModule, ID, ObjectType, Query, Resolver, type ResolverCtx } from '@knead-js/graphql';
 import { Controller, type Ctx, Get, KneadFactory, UseGuards } from '@knead-js/http';
@@ -258,6 +258,7 @@ const settingsSchema: StandardSchemaV1<Settings> & StandardJSONSchemaV1<Settings
 };
 const AppConfig = defineConfig(settingsSchema, { name: 'AppConfig' });
 
+@Injectable()
 class Greeter {
   greet(name: string): string {
     return sanitize(\`<b>hello \${name}</b><script>x</script>\`, 'basic');
@@ -303,6 +304,7 @@ const fakePrisma = {
   },
 };
 
+@Injectable()
 class Ticker {
   ticks = 0;
 

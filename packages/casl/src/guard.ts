@@ -1,4 +1,4 @@
-import { inject } from '@knead-js/core';
+import { Injectable, inject } from '@knead-js/core';
 import type { Guard } from '@knead-js/http';
 import { CAN, type CanRequirement, SKIP } from './metadata.js';
 import type { AbilityCtx } from './options.js';
@@ -34,6 +34,7 @@ function graphqlDefersToAbilityGuard(ctx: AbilityCtx): boolean {
  * `AbilityGuard` in its `guards`, since every root field is then checked; without that, the
  * endpoint is denied like any other route without `@Can()`.
  */
+@Injectable()
 export class AbilityGuard implements Guard<AbilityCtx> {
   readonly #abilities = inject(AbilityService);
 

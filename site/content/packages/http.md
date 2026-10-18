@@ -115,7 +115,7 @@ header`. Port 443 is left out of the URL. The `redirectHttp` listener uses this 
 
 | Decorator | Usage | Description |
 | --- | --- | --- |
-| `Controller` | `@Controller(prefix = '', options = {})` | Marks a class as a controller. `options` is a `ControllerOptions`. |
+| `Controller` | `@Controller(prefix = '', options = {})` | Marks a class as a controller (and as injectable). `options` is a `ControllerOptions`. |
 | `Get` | `@Get(path, options?)` | `GET` route (also answers `HEAD`). |
 | `Post` | `@Post(path, options?)` | `POST` route. |
 | `Put` | `@Put(path, options?)` | `PUT` route. |
@@ -137,7 +137,7 @@ header`. Port 443 is left out of the URL. The `redirectHttp` listener uses this 
 | `UseMiddleware` | `@UseMiddleware(...middleware)` | Adds middleware to a controller (class) or a route (method). See [middleware](/guide/middleware/). |
 | `UseGuards` | `@UseGuards(...guards)` | Adds guards to a controller or a route. See [guards](/guide/guards/). |
 | `UseFilters` | `@UseFilters(...filters)` | Adds exception filters to a controller or a route. See [exception filters](/guide/exception-filters/). |
-| `Catch` | `@Catch(...errors)` | Restricts an exception filter class to errors that are instances of the given classes. Without it, a filter handles every error. |
+| `Catch` | `@Catch(...errors)` | Restricts an exception filter class to errors that are instances of the given classes. Without it, a filter handles every error. Also marks the class as injectable, so it can be listed in `providers` without `@Injectable()`. |
 | `ModuleMiddleware` | `@ModuleMiddleware(...middleware)` | On a module class: applies middleware to every controller declared in that module. |
 
 The three `Use*` decorators return a `ClassOrMethodDecorator`, a decorator type that accepts both

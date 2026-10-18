@@ -1,5 +1,6 @@
 import {
   type BeforeApplicationShutdown,
+  Injectable,
   inject,
   LOGGER,
   MODULES,
@@ -19,6 +20,7 @@ import { cronSchedule, intervalSchedule, timeoutSchedule } from './schedules.js'
  * application bootstraps; jobs can also be added, paused, resumed, triggered and removed at
  * runtime. Shutdown stops all timers and waits for runs in progress.
  */
+@Injectable()
 export class SchedulerRegistry implements OnApplicationBootstrap, BeforeApplicationShutdown {
   /** Module graphs that already have a registry: a second one would run every job twice. */
   static readonly #claimed = new WeakSet<object>();

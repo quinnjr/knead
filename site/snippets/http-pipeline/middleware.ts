@@ -1,4 +1,4 @@
-import { inject, Module } from '@knead-js/core';
+import { Injectable, inject, Module } from '@knead-js/core';
 import {
   APP_MIDDLEWARE,
   Controller,
@@ -35,6 +35,7 @@ export const requestId: MiddlewareFn = async (ctx, next) => {
 // #endregion function
 
 // #region short-circuit
+@Injectable()
 export class MaintenanceSwitch {
   enabled = false;
 }

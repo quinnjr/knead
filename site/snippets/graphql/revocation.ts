@@ -1,8 +1,9 @@
-import { inject } from '@knead-js/core';
+import { Injectable, inject } from '@knead-js/core';
 import { GraphQLSubscriptions } from '@knead-js/graphql';
 import { type Member, SessionService } from './sessions.js';
 
 // #region close-where
+@Injectable()
 export class SignOutService {
   readonly #sessions = inject(SessionService);
   readonly #subscriptions = inject(GraphQLSubscriptions);

@@ -1,4 +1,4 @@
-import { inject } from '@knead-js/core';
+import { Injectable, inject } from '@knead-js/core';
 import {
   ConflictException,
   Controller,
@@ -19,6 +19,7 @@ export class PaymentRequiredException extends HttpException {
 }
 // #endregion subclass
 
+@Injectable()
 export class InventoryClient {
   async reserve(_sku: string): Promise<void> {
     throw new Error('connect ECONNREFUSED postgres://app:hunter2@10.0.0.5:5432/inventory');

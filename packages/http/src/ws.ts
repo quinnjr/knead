@@ -1,4 +1,4 @@
-import { inject } from '@knead-js/core';
+import { Injectable, inject } from '@knead-js/core';
 import type { ServerWebSocket, WebSocketHandler } from 'bun';
 import { logError } from './error-log.js';
 import {
@@ -294,6 +294,7 @@ function copyOwn(meta: object): Record<PropertyKey, unknown> {
 }
 
 /** Bun allows one websocket handler per server; modules register endpoints here instead. */
+@Injectable()
 export class WsRegistry {
   readonly #endpoints = new Map<string, WsEndpoint<any>>();
   readonly #options = new Map<string, WsEndpointOptions>();

@@ -2,6 +2,7 @@ import {
   getMetadata,
   getMethodMetadata,
   getOwnMetadata,
+  Injectable,
   inject,
   MODULES,
   type ModuleInjector,
@@ -638,6 +639,7 @@ export class GraphQLExecutor extends LeavenExecutor {
 }
 
 /** Owns the schema, the Leaven executor and the subscription endpoint. */
+@Injectable()
 export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
   /** The application's development flag (HTTP_DEVELOPMENT). */
   readonly development: boolean = inject(HTTP_DEVELOPMENT);

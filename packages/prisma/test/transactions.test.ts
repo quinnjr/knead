@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   ApplicationContext,
+  Injectable,
   InjectionContextError,
   inject,
   KneadError,
@@ -305,6 +306,7 @@ describe('TransactionHost', () => {
 
 describe('@Transactional', () => {
   test('@Transactional wraps the method in run', async () => {
+    @Injectable()
     class Users {
       readonly host = inject(TransactionHost);
 
@@ -395,6 +397,7 @@ describe('@Transactional', () => {
 
   test('a rejecting @Transactional method rolls back and rethrows the same error', async () => {
     const boom = new Error('boom');
+    @Injectable()
     class Users {
       @Transactional()
       async create(): Promise<never> {

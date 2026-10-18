@@ -2,7 +2,13 @@ import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { type BeforeApplicationShutdown, inject, Module, type OnModuleInit } from '@knead-js/core';
+import {
+  type BeforeApplicationShutdown,
+  Injectable,
+  inject,
+  Module,
+  type OnModuleInit,
+} from '@knead-js/core';
 import { KneadFactory, redirectToHttps } from '../src/application.js';
 import { Controller, type Ctx, Get, HttpConfigError, WsRegistry } from '../src/index.js';
 import { MemoryLogger } from '../src/logger.js';
@@ -105,6 +111,7 @@ describe.skipIf(!hasOpenssl)('TLS', () => {
   test.skipIf(process.platform !== 'linux')(
     'reloadTls resolves while a websocket keeps the old listener open',
     async () => {
+      @Injectable()
       class Gateway implements OnModuleInit {
         readonly ws = inject(WsRegistry);
         onModuleInit() {
@@ -445,6 +452,7 @@ describe('graceful shutdown', () => {
   test('in-flight requests finish, then shutdown hooks run; new connections are refused', async () => {
     serverEvents.length = 0;
     let body = '';
+    @Injectable()
     class Hooks implements BeforeApplicationShutdown {
       beforeApplicationShutdown(signal?: string) {
         serverEvents.push(`shutdown:${signal}`);
@@ -480,6 +488,7 @@ describe('graceful shutdown', () => {
   });
 
   test('open WebSockets are closed with 1001', async () => {
+    @Injectable()
     class Gateway implements OnModuleInit {
       readonly ws = inject(WsRegistry);
       onModuleInit() {
@@ -502,6 +511,7 @@ describe('graceful shutdown', () => {
 
   test('enableShutdownHooks closes on signal and removes listeners', async () => {
     const log: string[] = [];
+    @Injectable()
     class Hooks implements BeforeApplicationShutdown {
       beforeApplicationShutdown(signal?: string) {
         log.push(String(signal));
@@ -527,6 +537,7 @@ describe('graceful shutdown', () => {
   });
 
   test('a failing close is logged, not unhandled, and still removes listeners', async () => {
+    @Injectable()
     class Hooks implements BeforeApplicationShutdown {
       beforeApplicationShutdown() {
         throw new Error('hook boom');
@@ -547,6 +558,7 @@ describe('graceful shutdown', () => {
     expect(process.listenerCount('SIGUSR2')).toBe(before);
   });
   test('enableShutdownHooks exits 0 on success and 1 on failure', async () => {
+    @Injectable()
     class Failing implements BeforeApplicationShutdown {
       beforeApplicationShutdown() {
         throw new Error('hook boom');

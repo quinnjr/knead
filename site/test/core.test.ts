@@ -6,6 +6,7 @@ import {
   DEVELOPMENT,
   defaultRedisUrl,
   escapeControl,
+  Injectable,
   InjectionContextError,
   InjectionToken,
   inject,
@@ -96,6 +97,7 @@ describe('guide/modules', () => {
   test('exported providers are visible to importers, private ones are not', async () => {
     const ctx = await create(AppModule);
     expect(ctx.get(UsersService).findAll()).toEqual(['result of select * from users']);
+    @Injectable()
     class NeedsPool {
       readonly pool = inject(ConnectionPool);
     }
@@ -107,6 +109,7 @@ describe('guide/modules', () => {
   });
 
   test('exports are not transitive', async () => {
+    @Injectable()
     class NeedsDb {
       readonly db = inject(Database);
     }
@@ -161,6 +164,7 @@ describe('guide/modules', () => {
     // Not imported anywhere: not in the graph, so not visible.
     @Module({ imports: [] })
     class Alone {}
+    @Injectable()
     class NeedsFlags {
       readonly flags = inject(FEATURE_FLAGS);
     }
@@ -176,6 +180,7 @@ describe('guide/modules', () => {
     class G {}
     @Module({ providers: [{ provide: T, useValue: 'import' }], exports: [T] })
     class I {}
+    @Injectable()
     class Reader {
       readonly t = inject(T);
     }
@@ -212,6 +217,7 @@ describe('guide/modules', () => {
     class First {}
     @Module({ providers: [{ provide: T, useValue: 'second' }], exports: [T] })
     class Second {}
+    @Injectable()
     class Reader {
       readonly t = inject(T);
     }
@@ -224,6 +230,7 @@ describe('guide/modules', () => {
     const mine = new MemoryLogger();
     @Module({ global: true, providers: [{ provide: LOGGER, useValue: mine }], exports: [LOGGER] })
     class LogModule {}
+    @Injectable()
     class UsesLog {
       readonly log = inject(LOGGER);
     }
@@ -288,6 +295,7 @@ describe('guide/modules', () => {
         };
       }
     }
+    @Injectable()
     class Reader {
       readonly a = inject(A, { optional: true });
       readonly b = inject(B, { optional: true });
@@ -319,6 +327,7 @@ describe('guide/modules', () => {
     class Inner {}
     @Module({ imports: [Inner], exports: [A] })
     class Middle {}
+    @Injectable()
     class Reader {
       readonly a = inject(A);
       readonly b = inject(B, { optional: true });
@@ -333,6 +342,7 @@ describe('guide/modules', () => {
     class ReportsController {}
     @Module({ controllers: [ReportsController] })
     class Reports {}
+    @Injectable()
     class Needs {
       readonly c = inject(ReportsController);
     }
@@ -446,6 +456,7 @@ describe('guide/dependency-injection', () => {
       exports: [PLUGINS],
     })
     class I {}
+    @Injectable()
     class Reader {
       readonly plugins = inject(PLUGINS);
     }
@@ -485,6 +496,7 @@ describe('guide/dependency-injection', () => {
     expect(() => normalizeProvider(42 as never)).toThrow(
       'Invalid provider: 42. Expected a class or an object with "provide".',
     );
+    @Injectable()
     class UsesT {
       readonly t = inject(T);
     }
@@ -571,6 +583,7 @@ describe('guide/dependency-injection', () => {
 
   test('every singleton is created at bootstrap; transients only when injected', async () => {
     let built = 0;
+    @Injectable()
     class Eager {
       constructor() {
         built++;
@@ -593,11 +606,13 @@ describe('guide/dependency-injection', () => {
   });
 
   test('optional injection still throws errors from building a visible provider', async () => {
+    @Injectable()
     class Broken {
       constructor() {
         throw new Error('broken');
       }
     }
+    @Injectable()
     class Uses {
       readonly b = inject(Broken, { optional: true });
     }
@@ -623,6 +638,7 @@ describe('guide/dependency-injection', () => {
 
   test('NoProviderError without any provider', async () => {
     class Missing {}
+    @Injectable()
     class Needs {
       readonly m = inject(Missing);
     }
@@ -651,6 +667,7 @@ describe('guide/dependency-injection', () => {
 
   test('an override for a token no module registers has no effect', async () => {
     const T = new InjectionToken<string>('T');
+    @Injectable()
     class Reader {
       readonly t = inject(T, { optional: true });
     }
@@ -706,6 +723,7 @@ describe('guide/lifecycle', () => {
 
   test('all onModuleInit run before any onApplicationBootstrap', async () => {
     const log: string[] = [];
+    @Injectable()
     class A {
       onModuleInit() {
         log.push('a:init');
@@ -714,6 +732,7 @@ describe('guide/lifecycle', () => {
         log.push('a:bootstrap');
       }
     }
+    @Injectable()
     class B {
       readonly a = inject(A);
       onModuleInit() {
@@ -729,6 +748,7 @@ describe('guide/lifecycle', () => {
         log.push('b:destroy');
       }
     }
+    @Injectable()
     class C {
       beforeApplicationShutdown() {
         log.push('c:before');
@@ -750,11 +770,13 @@ describe('guide/lifecycle', () => {
     const log: string[] = [];
     const VALUE = new InjectionToken<object>('VALUE');
     const MADE = new InjectionToken<object>('MADE');
+    @Injectable()
     class Hooked {
       onModuleInit() {
         log.push('transient');
       }
     }
+    @Injectable()
     class Uses {
       readonly h = inject(Hooked);
     }
@@ -778,6 +800,7 @@ describe('guide/lifecycle', () => {
   test('a failing onModuleInit closes what was initialized and rethrows', async () => {
     const log: string[] = [];
     const boom = new Error('init failed');
+    @Injectable()
     class A {
       onModuleInit() {
         log.push('a:init');
@@ -786,6 +809,7 @@ describe('guide/lifecycle', () => {
         log.push('a:destroy');
       }
     }
+    @Injectable()
     class B {
       readonly a = inject(A);
       onModuleInit() {
@@ -803,6 +827,7 @@ describe('guide/lifecycle', () => {
 
   test('a failing onApplicationBootstrap shuts every initialized instance down', async () => {
     const log: string[] = [];
+    @Injectable()
     class A {
       onApplicationBootstrap() {
         throw new Error('bootstrap failed');
@@ -811,6 +836,7 @@ describe('guide/lifecycle', () => {
         log.push('a:destroy');
       }
     }
+    @Injectable()
     class B {
       onModuleDestroy() {
         log.push('b:destroy');
@@ -824,11 +850,13 @@ describe('guide/lifecycle', () => {
 
   test('shutdown errors: every hook runs, one error rethrown, several aggregated', async () => {
     const log: string[] = [];
+    @Injectable()
     class A {
       onModuleDestroy() {
         throw new Error('a');
       }
     }
+    @Injectable()
     class B {
       onModuleDestroy() {
         log.push('b');

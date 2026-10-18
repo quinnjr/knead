@@ -67,9 +67,10 @@ export class AppModule {}
 `ConfigModule` is global, so any provider can inject the handle and read typed values:
 
 ```ts
-import { inject } from '@knead-js/core';
+import { Injectable, inject } from '@knead-js/core';
 import { AppConfig } from './app-config.js';
 
+@Injectable()
 export class SignupService {
   readonly #config = inject(AppConfig);
 

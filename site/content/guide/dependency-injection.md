@@ -140,6 +140,8 @@ A malformed provider is a `ProviderConfigError` when the module graph is built:
 
 - `Invalid provider: 42. Expected a class or an object with "provide".`
 - `Provider for APP_CONFIG must define useClass, useValue, useFactory or useExisting.`
+- `UsersService is listed in the providers of UsersModule but is not decorated with @Injectable().`
+- `The provider for MAILER in AppModule uses SmtpMailer, which is not decorated with @Injectable().`
 
 ## Scopes
 
@@ -155,7 +157,11 @@ provider (the `scope` option takes precedence over `@Injectable()`):
 `AuditLog` and `AccessLog` each get their own `RequestIdGenerator`. Transient instances are created
 when something injects them, not eagerly at startup.
 
-`@Injectable()` is optional. Classes are injectable without it; its only option is `scope`.
+Every class the container constructs as a provider, whether listed directly (`providers: [Cls]`)
+or through `useClass`, must carry `@Injectable()`; its only option is `scope`. Value, factory and
+alias providers need no decorator, nor do guard, middleware and filter classes. Controllers and
+resolvers are marked by `@Controller()` and `@Resolver()`, and exception filters by `@Catch()`. A
+subclass of a marked class is marked too and inherits its scope.
 
 > [!NOTE]
 > There is no request scope. A transient provider is still created when the class that injects it

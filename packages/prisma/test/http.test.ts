@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { KneadError, Module } from '@knead-js/core';
+import { Injectable, KneadError, Module } from '@knead-js/core';
 import {
   APP_FILTER,
   BadRequestException,
@@ -31,6 +31,7 @@ class ThrowController {
   }
 }
 
+@Injectable()
 class CatchAll implements ExceptionFilter {
   catch() {
     return new Response('teapot', { status: 418 });

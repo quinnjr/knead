@@ -1,5 +1,6 @@
 import {
   type DynamicModule,
+  Injectable,
   InjectionToken,
   inject,
   Module,
@@ -23,6 +24,7 @@ export const MAIL_OPTIONS = new InjectionToken<MailOptions>('MAIL_OPTIONS');
 // #endregion options
 
 // #region service
+@Injectable()
 export class MailService {
   readonly options = inject(MAIL_OPTIONS);
 
@@ -66,6 +68,7 @@ export class MailModule {
 // #endregion module
 
 // #region usage
+@Injectable()
 export class Settings {
   readonly mailFrom = 'noreply@example.com';
 }

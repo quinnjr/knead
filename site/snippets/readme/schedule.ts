@@ -1,7 +1,8 @@
 // #region quick-start
-import { inject, Module } from '@knead-js/core';
+import { Injectable, inject, Module } from '@knead-js/core';
 import { Cron, Interval, type JobContext, ScheduleModule, Timeout } from '@knead-js/schedule';
 
+@Injectable()
 export class ReportService {
   readonly built: string[] = [];
 
@@ -14,6 +15,7 @@ export class ReportService {
   async warmCache(): Promise<void> {}
 }
 
+@Injectable()
 export class ReportJobs {
   readonly reports = inject(ReportService);
 

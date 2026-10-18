@@ -1,4 +1,4 @@
-import { inject, LOGGER } from '@knead-js/core';
+import { Injectable, inject, LOGGER } from '@knead-js/core';
 
 export interface Order {
   id: string;
@@ -10,6 +10,7 @@ export class PaymentDeclinedError extends Error {
   override name = 'PaymentDeclinedError';
 }
 
+@Injectable()
 export class OrdersService {
   readonly #log = inject(LOGGER);
 

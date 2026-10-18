@@ -1,5 +1,6 @@
 import {
   type BeforeApplicationShutdown,
+  Injectable,
   InjectionToken,
   inject,
   LOGGER,
@@ -12,6 +13,7 @@ import {
 export const EVENTS = new InjectionToken<string[]>('EVENTS');
 
 // #region hooks
+@Injectable()
 export class Database implements OnModuleInit, OnModuleDestroy {
   readonly #events = inject(EVENTS);
   connected = false;
@@ -28,6 +30,7 @@ export class Database implements OnModuleInit, OnModuleDestroy {
   }
 }
 
+@Injectable()
 export class JobRunner implements OnApplicationBootstrap, BeforeApplicationShutdown {
   readonly #db = inject(Database);
   readonly #events = inject(EVENTS);

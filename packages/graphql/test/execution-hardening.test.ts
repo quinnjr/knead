@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { InjectionToken, inject, Module } from '@knead-js/core';
+import { Injectable, InjectionToken, inject, Module } from '@knead-js/core';
 import type { Ctx } from '@knead-js/http';
 import { OperationContext } from '../src/context.js';
 import {
@@ -301,6 +301,7 @@ describe('subscription filters and refreshContext', () => {
 describe('ctx.loader per module', () => {
   test('the same BatchLoader class in two modules gets one DataLoader per module', async () => {
     const PREFIX = new InjectionToken<string>('prefix');
+    @Injectable()
     class Prefixer implements BatchLoader<string, string> {
       readonly #prefix = inject(PREFIX);
       async batch(keys: readonly string[]) {
