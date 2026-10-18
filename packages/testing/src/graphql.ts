@@ -1,4 +1,4 @@
-/** Minimal graphql-transport-ws and GraphQL-over-HTTP clients for TestApp. */
+/** Minimal graphql-transport-ws, graphql-sse and GraphQL-over-HTTP clients for TestApp. */
 
 export interface GraphQLErrorJson {
   message: string;
@@ -166,4 +166,137 @@ export function subscribe<TData>(
     };
     socket.onerror = () => reject(new Error('WebSocket connection failed'));
   });
+}
+
+/** One server-sent event: its `event` name and its `data` lines joined with newlines. */
+export interface SseEvent {
+  event: string;
+  data: string;
+}
+
+/** Parses one event block; undefined for a block of comments only (a keep-alive). */
+function sseEvent(block: string): SseEvent | undefined {
+  let event = 'message';
+  const data: string[] = [];
+  let fields = 0;
+  for (const line of block.split('\n')) {
+    if (line === '' || line.startsWith(':')) continue;
+    fields++;
+    if (line.startsWith('event:')) event = line.slice(6).trim();
+    else if (line.startsWith('data:')) data.push(line.slice(5).replace(/^ /, ''));
+  }
+  return fields === 0 ? undefined : { event, data: data.join('\n') };
+}
+
+/**
+ * The events of a `text/event-stream` response body, skipping keep-alive comments. `return()`
+ * cancels the body (closing the stream), also before the first `next()`.
+ */
+export function readSse(res: Response): AsyncIterableIterator<SseEvent> {
+  const reader = res.body?.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = '';
+  const finish = async (): Promise<IteratorResult<SseEvent>> => {
+    await reader?.cancel().catch(() => {});
+    return { value: undefined, done: true };
+  };
+  return {
+    [Symbol.asyncIterator]() {
+      return this;
+    },
+    async next() {
+      if (!reader) return { value: undefined, done: true };
+      for (;;) {
+        const end = buffer.indexOf('\n\n');
+        if (end !== -1) {
+          const parsed = sseEvent(buffer.slice(0, end));
+          buffer = buffer.slice(end + 2);
+          if (parsed) return { value: parsed, done: false };
+          continue;
+        }
+        const { value, done } = await reader.read();
+        if (done) return { value: undefined, done: true };
+        buffer += value.replaceAll('\r\n', '\n');
+      }
+    },
+    return: finish,
+  };
+}
+
+/**
+ * Subscribes over graphql-sse (a POST that asks for `text/event-stream`). Resolves once the
+ * response headers arrive: a non-200 status rejects with an Error naming the status and the body.
+ */
+export async function subscribeSse<TData>(
+  url: URL,
+  query: string,
+  options: GraphQLRequestOptions,
+): Promise<GraphQLSubscription<TData>> {
+  const controller = new AbortController();
+  const headers = new Headers({ accept: 'text/event-stream', 'content-type': 'application/json' });
+  for (const [key, value] of new Headers(options.headers)) headers.set(key, value);
+  const res = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      query,
+      variables: options.variables,
+      operationName: options.operationName,
+    }),
+    signal: controller.signal,
+    ...(options.tls ? { tls: options.tls } : {}),
+  });
+  if (res.status !== 200) {
+    const text = await res.text();
+    const shown = text.length > 1024 ? `${text.slice(0, 1024)}…` : text;
+    throw new Error(`GraphQL SSE request failed (status ${res.status}): ${shown}`);
+  }
+  const events = readSse(res);
+  let finished = false;
+  let closed = false;
+  /** Why the stream ended abnormally; set once, then every later next() rejects with it. */
+  let failure: Error | undefined;
+  const close = async () => {
+    closed = true;
+    finished = true;
+    controller.abort();
+    await events.return?.().catch(() => {});
+  };
+  const iterator: GraphQLSubscription<TData> = {
+    [Symbol.asyncIterator]() {
+      return this;
+    },
+    async next() {
+      if (failure) throw failure;
+      if (finished) return { value: undefined, done: true };
+      try {
+        for (;;) {
+          const { value, done } = await events.next();
+          if (done) throw new Error('SSE stream ended without a complete event');
+          if (value.event === 'complete') {
+            await close();
+            return { value: undefined, done: true };
+          }
+          if (value.event !== 'next') continue;
+          try {
+            return { value: JSON.parse(value.data) as GraphQLPayload<TData>, done: false };
+          } catch {
+            const shown = value.data.length > 1024 ? `${value.data.slice(0, 1024)}…` : value.data;
+            throw new Error(`graphql-sse next event is not JSON: ${shown}`);
+          }
+        }
+      } catch (error) {
+        if (closed) return { value: undefined, done: true };
+        finished = true;
+        failure = error instanceof Error ? error : new Error(String(error));
+        controller.abort();
+        throw failure;
+      }
+    },
+    async return() {
+      await close();
+      return { value: undefined, done: true };
+    },
+    close,
+  };
+  return iterator;
 }

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Module } from '@knead-js/core';
 import type { Ctx, ListenOptions } from '@knead-js/http';
+import { readSse, type SseEvent } from '@knead-js/testing';
 import {
   type GraphQLModuleOptions,
   GraphQLSubscriptions,
@@ -11,7 +12,7 @@ import {
   Resolver,
   Subscription,
 } from '../src/index.js';
-import { readSse, type SseEvent, type Started, startGraphQL, until } from './helpers.js';
+import { type Started, startGraphQL, until } from './helpers.js';
 
 declare module '../src/index.js' {
   interface GraphQLContext {

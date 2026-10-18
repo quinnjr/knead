@@ -24,6 +24,50 @@ class PlainText {
   }
 }
 
+const sseBody = (chunks: string[], keepOpen = false) => {
+  const encoder = new TextEncoder();
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+      if (!keepOpen) controller.close();
+    },
+  });
+};
+const sseResponse = (body: ReadableStream<Uint8Array>) =>
+  new Response(body, { headers: { 'content-type': 'text/event-stream' } });
+
+@Controller('/sse')
+class FakeSse {
+  @Post('/') async post(ctx: Ctx) {
+    const body = (await ctx.json()) as { query: string };
+    const seen = JSON.stringify({
+      accept: ctx.req.headers.get('accept'),
+      type: ctx.req.headers.get('content-type'),
+      auth: ctx.req.headers.get('authorization'),
+    });
+    if (body.query.includes('forbidden')) {
+      return new Response(JSON.stringify({ title: 'Forbidden' }), {
+        status: 403,
+        headers: { 'content-type': 'application/problem+json' },
+      });
+    }
+    if (body.query.includes('cut')) {
+      return sseResponse(sseBody([':\n\n', `event: next\ndata: {"data":{"n":1}}\n\n`]));
+    }
+    if (body.query.includes('hang')) {
+      return sseResponse(sseBody([':\n\n', `event: next\ndata: {"data":{"n":1}}\n\n`], true));
+    }
+    return sseResponse(
+      sseBody([
+        ':\n\n',
+        `event: next\ndata: {"data":{"n":1,"seen":${seen}}}\n\n`,
+        `event: next\ndata: {"data":{"n":2}}\n\n`,
+        'event: complete\ndata:\n\n',
+      ]),
+    );
+  }
+}
+
 @Injectable()
 class FakeSubscriptions implements OnModuleInit {
   readonly #ws = inject(WsRegistry);
@@ -54,7 +98,7 @@ class FakeSubscriptions implements OnModuleInit {
   }
 }
 
-@Module({ controllers: [FakeGraphQL, PlainText], providers: [FakeSubscriptions] })
+@Module({ controllers: [FakeGraphQL, PlainText, FakeSse], providers: [FakeSubscriptions] })
 class FakeModule {}
 
 let mod: TestingModule | undefined;
@@ -116,6 +160,59 @@ describe('TestApp.graphqlSubscribe', () => {
     const app = await mod.createApp();
     const sub = await app.graphqlSubscribe('subscription { garbage }');
     await expect(sub.next()).rejects.toThrow('not JSON');
+  });
+});
+
+describe('TestApp.subscribeSse', () => {
+  const opts = { path: '/sse' };
+
+  test('yields next payloads and ends on complete', async () => {
+    mod = await Test.createModule({ imports: [FakeModule] }).compile();
+    const app = await mod.createApp();
+    const sub = await app.subscribeSse('subscription { n }', {
+      ...opts,
+      headers: { authorization: 'Bearer t' },
+    });
+    const values = [];
+    for await (const value of sub) values.push(value);
+    expect(values).toEqual([
+      {
+        data: {
+          n: 1,
+          seen: { accept: 'text/event-stream', type: 'application/json', auth: 'Bearer t' },
+        },
+      },
+      { data: { n: 2 } },
+    ]);
+  });
+
+  test('rejects on a 403 with the status and body', async () => {
+    mod = await Test.createModule({ imports: [FakeModule] }).compile();
+    const app = await mod.createApp();
+    const error = (await app
+      .subscribeSse('subscription { forbidden }', opts)
+      .catch((e: unknown) => e)) as Error;
+    expect(error.message).toBe('GraphQL SSE request failed (status 403): {"title":"Forbidden"}');
+  });
+
+  test('close() aborts the stream', async () => {
+    mod = await Test.createModule({ imports: [FakeModule] }).compile();
+    const app = await mod.createApp();
+    const sub = await app.subscribeSse('subscription { hang }', opts);
+    expect(await sub.next()).toEqual({ value: { data: { n: 1 } }, done: false });
+    const pending = sub.next();
+    await sub.close();
+    expect(await pending).toEqual({ value: undefined, done: true });
+    expect(await sub.next()).toEqual({ value: undefined, done: true });
+  });
+
+  test('a stream cut without complete makes next() reject', async () => {
+    mod = await Test.createModule({ imports: [FakeModule] }).compile();
+    const app = await mod.createApp();
+    const sub = await app.subscribeSse('subscription { cut }', opts);
+    expect(await sub.next()).toEqual({ value: { data: { n: 1 } }, done: false });
+    await expect(sub.next()).rejects.toThrow('without a complete event');
+    await expect(sub.next()).rejects.toThrow('without a complete event');
   });
 });
 

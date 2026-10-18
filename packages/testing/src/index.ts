@@ -16,6 +16,7 @@ import {
   type GraphQLSubscribeOptions,
   type GraphQLSubscription,
   subscribe,
+  subscribeSse,
 } from './graphql.js';
 
 export type {
@@ -25,7 +26,9 @@ export type {
   GraphQLResult,
   GraphQLSubscribeOptions,
   GraphQLSubscription,
+  SseEvent,
 } from './graphql.js';
+export { readSse } from './graphql.js';
 
 export interface OverrideBy<T> {
   useValue(value: T): TestingModuleBuilder;
@@ -209,6 +212,17 @@ export class TestApp {
     const url = this.#urlOf(options.path ?? '/graphql');
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
     return subscribe<TData>(url, query, options);
+  }
+
+  /**
+   * Subscribes over graphql-sse: POSTs the operation with `Accept: text/event-stream`. Resolves
+   * once the response starts; a non-200 status rejects with an Error naming the status and body.
+   */
+  async subscribeSse<TData = Record<string, unknown>>(
+    query: string,
+    options: GraphQLRequestOptions = {},
+  ): Promise<GraphQLSubscription<TData>> {
+    return subscribeSse<TData>(this.#urlOf(options.path ?? '/graphql'), query, options);
   }
 
   close(): Promise<void> {

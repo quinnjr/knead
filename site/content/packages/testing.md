@@ -95,9 +95,10 @@ interface OverrideBy<T> {
 | `request(method: string, path: string, init?: TestRequestInit): Promise<Response>` | method | Sends a request with `fetch()` to the server's origin followed by `path`. |
 | `graphql<TData>(query: string, options?: GraphQLRequestOptions): Promise<GraphQLResult<TData>>` | method | POSTs `{ query, variables, operationName }` as JSON to `options.path` (default `'/graphql'`) and returns the parsed body plus `status` and `headers`. A response that is not JSON rejects with `Error: GraphQL response is not JSON (status <status>): <body text>` (the text capped at 1024 characters). |
 | `graphqlSubscribe<TData>(query: string, options?: GraphQLSubscribeOptions): Promise<GraphQLSubscription<TData>>` | method | Opens a `graphql-transport-ws` connection (`ws:`, or `wss:` for an HTTPS server) and subscribes. |
+| `subscribeSse<TData>(query: string, options?: GraphQLRequestOptions): Promise<GraphQLSubscription<TData>>` | method | Subscribes over graphql-sse: POSTs the operation as JSON with `Accept: text/event-stream` and resolves once the response starts. Any status but 200 rejects with `Error: GraphQL SSE request failed (status <status>): <body text>` (the text capped at 1024 characters). |
 | `close(): Promise<void>` | method | Closes the application, like `TestingModule.close()`. |
 
-`path` (for `graphql()` and `graphqlSubscribe()`, `options.path`) must start with `/`, or the
+`path` (for `graphql()`, `graphqlSubscribe()` and `subscribeSse()`, `options.path`) must start with `/`, or the
 call rejects with a `TypeError`: an absolute URL or a relative path is not accepted. It is appended
 to the test server's origin, so `'//other.example/x'` is sent to the test server, never to the
 host it seems to name.
@@ -122,15 +123,38 @@ acknowledgment, and with `Error: WebSocket connection failed` when the connectio
 server may still be registering the subscription when the promise resolves, so publish events
 until one arrives (see the [testing guide](/guide/testing/)).
 
+`subscribeSse()` sends the `GraphQLRequestOptions` headers after its defaults
+(`Accept: text/event-stream`, `Content-Type: application/json`), so a header you pass wins. It
+yields the payload of each `next` event and skips keep-alive comments; the iteration ends on a
+`complete` event. A body that ends without `complete` (a revoked or expired stream) makes
+`next()` reject with `Error: SSE stream ended without a complete event`, after the payloads
+already received, and every later `next()` rejects too. A `next` event whose data is not JSON
+rejects with `Error: graphql-sse next event is not JSON: <text>`. `close()` (and `return()`)
+aborts the request. It returns the same `GraphQLSubscription` as `graphqlSubscribe()`.
+
+### `readSse()` and `SseEvent`
+
+```text
+function readSse(res: Response): AsyncIterableIterator<SseEvent>;
+interface SseEvent {
+  event: string; // 'message' when the event has no `event:` field
+  data: string; // the `data:` lines joined with newlines
+}
+```
+
+Parses a `text/event-stream` response body into events, skipping comment-only blocks such as
+keep-alives. Use it on a raw `app.request()` response to assert on the wire format; `return()`
+cancels the body.
+
 ### `GraphQLRequestOptions`
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `variables` | `Record<string, unknown>` | none | Operation variables. |
 | `operationName` | `string` | none | The operation to run. |
-| `headers` | `Bun.HeadersInit` | none | Request headers (for subscriptions, the upgrade request's headers). |
+| `headers` | `Bun.HeadersInit` | none | Request headers (for `graphqlSubscribe()`, the upgrade request's headers). |
 | `path` | `string` | `'/graphql'` | The endpoint path. |
-| `tls` | `{ rejectUnauthorized?: boolean }` | none | TLS options for an HTTPS test server, passed to `fetch()` and, for subscriptions, to the `wss:` WebSocket. `rejectUnauthorized: false` accepts any certificate, such as a self-signed one: tests only, never in application code. |
+| `tls` | `{ rejectUnauthorized?: boolean }` | none | TLS options for an HTTPS test server, passed to `fetch()` and, for `graphqlSubscribe()`, to the `wss:` WebSocket. `rejectUnauthorized: false` accepts any certificate, such as a self-signed one: tests only, never in application code. |
 
 ### `GraphQLSubscribeOptions`
 
