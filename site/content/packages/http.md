@@ -52,7 +52,7 @@ module by the application context, from the `development` option. You never impo
 | Member | Description |
 | --- | --- |
 | `listen(options?)` | Compiles the routes, runs the lifecycle init hooks of middleware, guards and filters constructed for them, and binds the listener. Resolves to the Bun `Server`. Rejects with `HttpConfigError` for an invalid option or route definition, when called twice, or once `close()` has started. |
-| `close(signal?)` | Graceful, idempotent shutdown: stops accepting connections, waits up to `shutdownTimeout` for in-flight requests, closes WebSockets with `1001`, then runs the shutdown hooks of the context. |
+| `close(signal?)` | Graceful, idempotent shutdown: stops accepting connections, ends open streams that hold a connection slot (GraphQL SSE subscriptions), waits up to `shutdownTimeout` for in-flight requests, closes WebSockets with `1001`, then runs the shutdown hooks of the context. |
 | `enableShutdownHooks(signals?, options?)` | Calls `close(signal)` on the first of `signals` (default `['SIGTERM', 'SIGINT']`), then exits with code 0, or 1 if shutdown failed. `{ exit: false }` keeps the process alive. Throws after `close()`. |
 | `useGlobalMiddleware(middleware, priority = 0)` | Adds global middleware. Before `listen()` only: throws `HttpConfigError` once `listen()` has started (even while it is still initializing) or `close()` has. |
 | `useGlobalGuards(...guards)` | Adds guards to every route, after `APP_GUARD` guards. Before `listen()` only, like `useGlobalMiddleware()`. |
@@ -89,7 +89,7 @@ failed because a lifecycle hook threw has closed the application. See [the serve
 | `maxRequestBodySize` | `number` | `1048576` (1 MiB) | Largest request body in bytes; Bun answers larger ones with `413`. An integer of at least 1. |
 | `defaultCacheControl` | `string` | none | `Cache-Control` for every response that has none (including 404s, `421`s, rejected WebSocket upgrades, the `redirectHttp` listener's `421`s and the masked `500` of an error that reaches Bun), such as `'no-store'`. Must be a valid header value (no CR, LF or NUL, Latin-1 only). |
 | `validation` | `ValidationOptions` | `{}` | See [`ValidationOptions`](#validationoptions). |
-| `idleTimeout` | `number` | Bun's default (10 seconds) | Seconds a connection may be idle. An integer from 0 to 255. |
+| `idleTimeout` | `number` | Bun's default (10 seconds) | Seconds a connection may be idle. An integer from 0 to 255. GraphQL SSE keep-alives are checked against it ([`SseOptions`](/packages/graphql/#sseoptions)). |
 | `shutdownTimeout` | `number` | `10000` | Milliseconds `close()` waits for in-flight requests, and for a `listen()` still initializing. An integer from 0 to `2 ** 31 - 1`. |
 
 The numeric options must be numbers within those ranges: a string (such as an unparsed environment
@@ -432,9 +432,9 @@ when none is free.
 | `backpressureLimit` | `number` | `1048576` (1 MiB) | Bytes buffered for a slow reader before backpressure applies. |
 | `closeOnBackpressureLimit` | `boolean` | `true` | Close a socket over `backpressureLimit`. A non-boolean is an `HttpConfigError`. |
 | `idleTimeout` | `number` | `120` | Seconds without traffic before a socket is closed, 0 to 960. |
-| `maxConnectionsPerIp` | `number \| false` | `100` | Open sockets per client IP; more upgrades get `429`. |
+| `maxConnectionsPerIp` | `number \| false` | `100` | Open sockets (and GraphQL SSE subscription streams) per client IP; more get `429`. |
 | `ipv6Subnet` | `number` | `64` | IPv6 prefix length the per-IP limit groups by, 1 to 128. |
-| `maxConnections` | `number` | no limit | Open sockets in total; more upgrades get `503`. |
+| `maxConnections` | `number` | no limit | Open sockets and GraphQL SSE subscription streams in total; more get `503`. |
 | `messageRate` | `WsMessageRate \| false` | `{ limit: 100, windowMs: 10000 }` | Default per-socket message rate. |
 | `maxPendingRevocations` | `number` | `10000` | `closeWhere()` predicates kept for sockets still upgrading. |
 

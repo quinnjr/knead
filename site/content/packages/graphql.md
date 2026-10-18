@@ -8,11 +8,11 @@ bun add @knead-js/core @knead-js/http @knead-js/graphql graphql
 ```
 
 `@knead-js/core`, `@knead-js/http` and `graphql` (`^16.14.2`) are peer dependencies. The package
-runs on Bun 1.4.3 or later and depends on Leaven (`@leaven-graphql/core` and `@leaven-graphql/ws`
-0.2.3, `@leaven-graphql/playground` 0.2.2, `@leaven-graphql/errors` 0.2.1, pinned exactly),
-`dataloader` 2.2.3 and `@standard-schema/spec`.
+runs on Bun 1.4.3 or later and depends on Leaven (`@leaven-graphql/core` and `@leaven-graphql/sse`
+0.4.0, `@leaven-graphql/ws` 0.3.1, `@leaven-graphql/errors` 0.3.0, `@leaven-graphql/playground`
+0.2.2, pinned exactly), `dataloader` 2.2.3 and `@standard-schema/spec`.
 
-The package turns decorated classes into a GraphQL schema, serves it over HTTP and
+The package turns decorated classes into a GraphQL schema, serves it over HTTP, `graphql-sse` and
 `graphql-transport-ws`, and applies limits, error masking and guards with secure defaults. The
 [GraphQL guide](/guide/graphql/) walks through a complete API; [authorization](/guide/authorization/)
 and [`@knead-js/casl`](/packages/casl/) build permission checks on its guards.
@@ -66,7 +66,7 @@ Both register a controller with `POST` and `GET` routes at the path, and provide
 | `mapError` | `(error: unknown) => HttpException \| undefined` | none | Maps errors from resolver code, hooks, subscription filters and the WebSocket `context` factory before masking. |
 | `emitSchemaFile` | `string \| false` | `'schema.graphql'` in development, else `false` | Writes the sorted SDL at bootstrap. |
 | `orphanedTypes` | `readonly Class[]` | `[]` | Types to build although no field returns them (for example interface implementations). |
-| `subscriptions` | `GraphQLSubscriptionOptions \| false` | `{}` | Subscription transport options. The endpoint is registered only when the schema has subscriptions. |
+| `subscriptions` | `GraphQLSubscriptionOptions \| false` | `{}` | Subscription transport options. The WebSocket endpoint is registered only when the schema has subscriptions. `false` turns off WebSocket and SSE. |
 | `pubsub` | `PubSubEngine` | an in-memory `PubSub` logging through `LOGGER` | The engine behind `PUBSUB`. Its `close()` runs on shutdown. |
 | `guards` | `readonly GuardRef<ResolverCtx>[]` | `[]` | Guards run on every root field before its own guards, except `@Public()` ones. Not run for `@ResolveField`. |
 | `defaultDeny` | `boolean` | `false` | Deny every root field that is neither `@Public()` nor has a guard of its own (`@UseGuards()`, `guards` or `authorize`). Module `guards` do not count. |
@@ -80,15 +80,15 @@ The `subscriptions` option (exported under this name; it is `SubscriptionOptions
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `onConnect` | `(http: Ctx, params: ConnectionParams) => boolean \| ConnectContext \| Promise<...>` | none | Runs on `connection_init`, after the `context` factory (a factory that throws there closes the socket with `4403` and `onConnect` does not run). `false` (or a throw, which is logged) closes the socket with `4403`; an object is merged into every operation's context on the socket. |
+| `onConnect` | `(http: Ctx, params: ConnectionParams) => boolean \| ConnectContext \| Promise<...>` | none | Runs on `connection_init`, after the `context` factory (a factory that throws there closes the socket with `4403` and `onConnect` does not run). `false` (or a throw, which is logged) closes the socket with `4403`; an object is merged into every operation's context on the socket. Over SSE it runs once per subscription request with `params` `{}`, and a refusal answers `403`. |
 | `refreshContext` | `({ http, context }) => ConnectContext \| false \| Promise<...>` | none | Runs before every recheck of a `recheckGuards: true` subscription. An object is merged over the context; anything else (`false`, but also `undefined`, `null` or `true`) ends the subscription with `FORBIDDEN`. |
 | `connectionInitTimeout` | `number` (ms) | `3000` (Leaven) | Time allowed for `connection_init`, an integer from 1 to 2147483647. |
 | `keepAliveInterval` | `number` (ms) | `12000` (Leaven) | Server pings, an integer up to 2147483647; `0` disables them. |
 | `maxSubscriptionsPerConnection` | `number` | `100` (Leaven) | Concurrent subscriptions per socket, a positive integer. |
-| `allowedOrigins` | `readonly string[] \| '*'` | same origin only | Browser origins allowed to open a socket besides the server's own. Upgrades without `Origin` are allowed; others get `403`. |
+| `allowedOrigins` | `readonly string[] \| '*'` | same origin only | Browser origins allowed to open a socket or send an SSE request besides the server's own. Requests without `Origin` are allowed; others get `403`. |
 | `messageRate` | `WsMessageRate \| false` | the server's, 100 messages per 10 s | Per-socket token bucket; exceeding it closes the socket with `1008`. |
-| `maxConnectionLifetime` | `number` (ms) | no limit | Closes every socket with `4408` after this long, an integer from 1 to 2147483647. |
-| `sse` | `false \| SseOptions` | `{}` | GraphQL over SSE; `false` turns it off and keeps WebSockets. |
+| `maxConnectionLifetime` | `number` (ms) | no limit | Closes every socket with `4408` after this long, and ends every SSE subscription stream (without `complete`), an integer from 1 to 2147483647. |
+| `sse` | `false \| SseOptions` | `{}` | GraphQL over SSE on the GraphQL path, on by default; `false` turns it off and keeps WebSockets. |
 
 Other socket rules: the client must offer the `graphql-transport-ws` subprotocol (`400` otherwise),
 anywhere in its list, and the server answers with it; a second `connection_init` closes the socket
@@ -105,7 +105,31 @@ The `subscriptions.sse` option: `false` turns GraphQL over SSE off, an object co
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `keepAliveInterval` | `number` (ms) | `8000` | Time between keep-alive comments, an integer from 1 to 2147483647. |
+| `keepAliveInterval` | `number` (ms) | half the HTTP `idleTimeout`, at most `8000` | Time between keep-alive comments, an integer from 1 to 2147483647. |
+
+Without `keepAliveInterval`, each stream sends a keep-alive every `idleTimeout * 1000 / 2` ms of
+`listen({ idleTimeout })`, at most 8000 ms: 5000 ms with Bun's default of 10 seconds, and 8000 ms
+when `idleTimeout` is `0`. When the schema has a Subscription type, an explicit
+`keepAliveInterval` above half a non-zero `idleTimeout` makes `listen()` throw `HttpConfigError`
+(Bun checks idle connections on a coarse tick of about 4 seconds), and an `idleTimeout` of 1 to 4
+seconds logs one warning at `listen()`, since Bun may then close a quiet stream whatever its
+keep-alive.
+
+A request is answered over SSE (graphql-sse distinct connections mode) when its `Accept` header
+prefers `text/event-stream` strictly over `application/json` and
+`application/graphql-response+json`; `*/*` alone or a tie stays JSON. A subscription streams each
+result as a `next` event and then `complete`; a query or mutation answers one `next` and
+`complete`; a `GET` mutation is `405` with `Allow: POST`; a `GET` needs the `csrf` header. A request
+error (rejected before any resolver ran: syntax, parser and Knead limits, validation, complexity,
+operation selection, variable coercion, or a throwing `onParse`, `onParsed`, `onValidate` or
+`onValidated` hook) is answered as JSON (`application/json`, with `cacheControl`) at `400`, or `500`
+for an `INTERNAL_SERVER_ERROR`; anything after execution started is streamed. An open subscription
+stream holds one of the `listen({ websocket })` connection slots shared with sockets, taken before
+`onConnect` runs: past `maxConnectionsPerIp` it is `429`, past `maxConnections` `503`, both
+`application/problem+json`. `onConnect` refusing (or the `context` factory throwing) answers `403`
+with a `FORBIDDEN` JSON body. A stream revoked by `closeWhere`, past `maxConnectionLifetime` or at
+shutdown ends without `complete`. See
+[subscriptions over SSE](/guide/graphql/#subscriptions-over-sse).
 
 ### `PlaygroundOptions`
 
@@ -539,17 +563,20 @@ walked into.
 ### `GraphQLSubscriptions`
 
 An injectable service. `closeWhere(predicate: (connection: GraphQLConnection) => boolean, code = 1008, reason = 'Connection revoked'): number`
-closes every subscription socket whose connection matches and returns how many it closed. Sockets
+closes every subscription socket whose connection matches, ends every matching SSE subscription
+stream (without `complete`), and returns how many sockets and streams it ended. Sockets and streams
 whose `onConnect` is still pending are checked again when it completes (at most
-`listen({ websocket: { maxPendingRevocations } })` predicates per socket, default 10000; beyond that
-the socket is closed with `1008`). A predicate that throws for a socket is logged and that socket
-skipped. When nothing matched, a debug entry is logged.
+`listen({ websocket: { maxPendingRevocations } })` predicates each, default 10000; beyond that the
+socket is closed with `1008` and the stream ended). A pending stream that matches then answers
+`403`; one ended before its `onConnect` completed answers `503`. A predicate that throws for a
+socket or stream is logged and that one skipped. When nothing matched, a debug entry is logged.
 
 ### `GraphQLConnection`
 
 `{ readonly http: Ctx; readonly context: Readonly<Record<PropertyKey, unknown>> }`: the upgrade
-request and the connection's identity, the `context` factory result (computed once at connection
-init) with the `onConnect` result over it. Empty before `connection_init`.
+request (for an SSE stream, the subscription request) and the connection's identity, the `context`
+factory result (computed once at connection init) with the `onConnect` result over it. Empty
+before `connection_init` (for an SSE stream, until `onConnect` settles).
 
 Over WebSocket the `context` factory runs once at connection init, for this identity, and again
 for every `subscribe`, for the operation's resolvers. The two can drift: if the factory reads
@@ -616,7 +643,7 @@ The provider that owns the schema and the executor. Inject it to read the built 
 | Member | Description |
 | --- | --- |
 | `schema` | The `GraphQLSchema`. Throws `SchemaBuildError` before `onModuleInit`. |
-| `executor` | The Leaven executor. |
+| `executor` | The Leaven executor (a `LeavenExecutor` subclass). Its `isRequestError(response)` is `true` for a response its `execute()` or `subscribe()` returned when nothing ran (the SSE request errors above), decided by where the error arose, never by its code. |
 | `options` | The `ResolvedGraphQLOptions`. |
 | `development` | The application's development flag. |
 | `pubsub` | The `PUBSUB` engine. |

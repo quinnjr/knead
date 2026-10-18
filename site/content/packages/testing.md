@@ -98,10 +98,10 @@ interface OverrideBy<T> {
 | `subscribeSse<TData>(query: string, options?: GraphQLRequestOptions): Promise<GraphQLSubscription<TData>>` | method | Subscribes over graphql-sse: POSTs the operation as JSON with `Accept: text/event-stream` and resolves once the response starts. Any status but 200 rejects with `Error: GraphQL SSE request failed (status <status>): <body text>` (the text capped at 1024 characters). |
 | `close(): Promise<void>` | method | Closes the application, like `TestingModule.close()`. |
 
-`path` (for `graphql()`, `graphqlSubscribe()` and `subscribeSse()`, `options.path`) must start with `/`, or the
-call rejects with a `TypeError`: an absolute URL or a relative path is not accepted. It is appended
-to the test server's origin, so `'//other.example/x'` is sent to the test server, never to the
-host it seems to name.
+`path` (for `graphql()`, `graphqlSubscribe()` and `subscribeSse()`, `options.path`) must start
+with `/`, or the call rejects with a `TypeError`: an absolute URL or a relative path is not
+accepted. It is appended to the test server's origin, so `'//other.example/x'` is sent to the
+test server, never to the host it seems to name.
 
 ### `TestRequestInit`
 

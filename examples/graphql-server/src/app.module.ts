@@ -46,16 +46,20 @@ import { HealthController } from './health/health.controller.js';
           guards: [AbilityGuard],
           // A CASL ForbiddenError thrown by resolver code is FORBIDDEN, not a masked error.
           mapError: mapCaslError,
-          // HTTP: the bearer token. Over WebSocket this runs on the upgrade request, and the
-          // object onConnect returned is merged over it.
+          // HTTP: the bearer token. Over WebSocket this runs on the upgrade request (over SSE, on
+          // the subscription request), and the object onConnect returned is merged over it.
           context: (http) =>
             sessionContext(auth.fromAuthorization(http.req.headers.get('authorization'))),
           subscriptions: {
             // Browsers cannot set Authorization on a WebSocket: the token is a connectionParam.
-            onConnect: (_http, params) => {
-              const session = auth.verify(params.token);
+            // Over SSE, params is {} and the request carries an Authorization bearer token.
+            onConnect: (http, params) => {
+              const header = http.req.headers.get('authorization');
+              const token =
+                params.token ?? (header?.startsWith('Bearer ') ? header.slice(7) : undefined);
+              const session = auth.verify(token);
               return session
-                ? { ...sessionContext(session), sessionToken: params.token as string }
+                ? { ...sessionContext(session), sessionToken: token as string }
                 : false;
             },
             // Rechecked subscriptions (commentAdded) re-verify the token with a live lookup

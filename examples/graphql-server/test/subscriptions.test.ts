@@ -28,6 +28,25 @@ describe('subscriptions', () => {
     ).rejects.toThrow('4403');
   });
 
+  test('over SSE, onConnect authenticates the Authorization header (params is {})', async () => {
+    await expect(s.app.subscribeSse('subscription { postPublished { id } }')).rejects.toThrow(
+      'status 403',
+    );
+    type Event = { postPublished: { title: string } };
+    const sub = await s.app.subscribeSse<Event>(
+      'subscription($a: ID) { postPublished(authorId: $a) { title } }',
+      { variables: { a: 'a2' }, headers: ada },
+    );
+    let round = 0;
+    const event = await nextEvent(sub, async () => {
+      round++;
+      await publish(grace, `Grace over SSE ${round}`);
+    });
+    expect(event.errors).toBeUndefined();
+    expect(event.data?.postPublished.title).toMatch(/^Grace over SSE \d+$/);
+    await sub.close();
+  });
+
   test('postPublished(authorId) only delivers that author’s posts, with nested fields', async () => {
     type Event = { postPublished: { title: string; author: { id: string } } };
     const sub = await s.app.graphqlSubscribe<Event>(

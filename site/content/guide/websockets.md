@@ -152,6 +152,10 @@ as `WS_DEFAULTS`:
 Invalid values are an `HttpConfigError` at `listen()`, for example
 `WebSocket maxPayloadLength must be an integer >= 1, got 0.`
 
+Open [GraphQL SSE subscription streams](/guide/graphql/#subscriptions-over-sse) count against
+`maxConnectionsPerIp` and `maxConnections` too, sharing the slots with sockets (their refusals read
+`Too many streaming connections`).
+
 > [!WARNING]
 > Behind a reverse proxy without [`trustProxy`](/guide/server/#running-behind-a-proxy), every
 > client has the proxy's IP, so `maxConnectionsPerIp` caps all clients together at 100 sockets.

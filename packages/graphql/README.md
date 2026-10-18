@@ -113,10 +113,10 @@ the class and field.
   [Standard Schema](https://standardschema.dev) argument validation (`validate`).
 - **Fail-closed guards.** The `@knead-js/http` guard model on root fields, field guards on types,
   `@Public()` and `defaultDeny`. A guard passes only on exactly `true`.
-- **Subscriptions.** `graphql-transport-ws` on the same path, an in-memory or Redis engine with
-  signing and encryption, and three ways to revoke access.
-- **Limits on by default.** Query length, tokens, fields, depth, aliases and complexity, over HTTP
-  and WebSocket.
+- **Subscriptions.** `graphql-transport-ws` and `graphql-sse` on the same path, an in-memory or
+  Redis engine with signing and encryption, and three ways to revoke access.
+- **Limits on by default.** Query length, tokens, fields, depth, aliases and complexity, over HTTP,
+  SSE and WebSocket.
 - **Masked errors.** Unexpected errors reach the client as `Internal server error` with a
   correlation id; the log entry is redacted.
 - **Production-safe defaults.** Introspection, the playground and the schema file are on only in
@@ -229,6 +229,34 @@ later:
   for each `subscribe`, which can differ if the factory reads changing state. Key revocation on
   values fixed for the socket's life, such as a session id.
 
+### Subscriptions over SSE
+
+The GraphQL path also answers [graphql-sse](https://github.com/enisdenjo/graphql-sse) (distinct
+connections mode), on by default: a `POST` or `GET` whose `Accept` prefers `text/event-stream`
+strictly over JSON gets an event stream (`*/*` or a tie stays JSON). A subscription streams `next`
+events and then `complete`; a query or mutation streams one `next` and `complete`.
+`subscriptions.sse: false` keeps subscriptions on WebSocket only; `subscriptions: false` turns off
+both.
+
+- **Same checks as WebSocket.** The route's middleware and guards, the `context` factory, root,
+  `authorize` and field guards, `recheckGuards`, the `filter`, per-event state, topic rules,
+  masking, the origin check (`subscriptions.allowedOrigins`) and the CSRF header on `GET`. A bare
+  browser `EventSource` cannot send that header, so it needs `csrf: false`; the `graphql-sse`
+  client uses `POST`, which does not.
+- **`onConnect` gets `{}`.** It runs once per SSE subscription request with empty `params`, so
+  authenticate SSE clients from the `Authorization` header or a cookie on `http`. A refusal is
+  `403` JSON before any stream starts.
+- **Shared connection limits.** An open stream holds one of the `listen({ websocket })` slots:
+  `maxConnectionsPerIp` (`429`) and `maxConnections` (`503`). `closeWhere`,
+  `maxConnectionLifetime` and shutdown end streams without `complete`.
+- **Keep-alive.** Streams send a keep-alive comment at half of `listen({ idleTimeout })`, at most
+  8000 ms (`subscriptions.sse.keepAliveInterval` sets it; above half the idle timeout `listen()`
+  throws `HttpConfigError`). An `idleTimeout` of 1 to 4 s logs a warning at `listen()`.
+- **Request errors are JSON.** An operation rejected before any resolver ran (syntax, limits,
+  validation, variables) is `400` JSON (`500` for `INTERNAL_SERVER_ERROR`), which the
+  `graphql-sse` client retries up to `retryAttempts` times, harmlessly since nothing ran. Errors
+  after execution started are streamed, so a mutation never runs twice.
+
 ### Several instances: `RedisPubSub`
 
 The default engine is in-memory. Pass `pubsub: new RedisPubSub({ url })` (on `Bun.redis`) when
@@ -289,12 +317,13 @@ The application calls the engine's `close()` on shutdown, including one you pass
 - Responses carry `Cache-Control: no-store` (change it with `cacheControl`) and
   `X-Content-Type-Options: nosniff`.
 - Clients that accept `application/graphql-response+json` get GraphQL-over-HTTP status codes; all
-  others get `200`, errors included.
+  others get `200`, errors included. Clients that prefer `text/event-stream` get
+  [SSE](#subscriptions-over-sse).
 
 ## Limits
 
-Every operation, over HTTP and WebSocket, is checked before it executes. The defaults are exported
-as `GRAPHQL_LIMITS`.
+Every operation, over HTTP, SSE and WebSocket, is checked before it executes. The defaults are
+exported as `GRAPHQL_LIMITS`.
 
 | Option | Default | Rejected with |
 | --- | --- | --- |
@@ -338,9 +367,9 @@ production defaults even when `NODE_ENV=development`.
 ## Testing
 
 `@knead-js/testing` starts the app on a random port: `app.graphql(query, { variables, headers })`
-posts an operation and `app.graphqlSubscribe(query, { connectionParams })` yields subscription
-events. Their `path` option is resolved against the test server's URL, so pass paths, never URLs
-built from untrusted input.
+posts an operation, `app.graphqlSubscribe(query, { connectionParams })` yields subscription
+events and `app.subscribeSse(query, { headers })` does the same over SSE. Their `path` option is
+resolved against the test server's URL, so pass paths, never URLs built from untrusted input.
 
 ## Documentation
 

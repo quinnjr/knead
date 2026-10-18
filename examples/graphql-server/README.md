@@ -79,7 +79,7 @@ curl localhost:3000/graphql -H 'content-type: application/json' -H 'authorizatio
 
 ## Subscriptions
 
-`postPublished(authorId: ID)` and `commentAdded(postId: ID!)` run over a `graphql-transport-ws` WebSocket on `/graphql`. Browsers cannot send an `Authorization` header on a WebSocket, so the token goes in `connectionParams`; a missing or unknown token closes the socket with `4403`. `commentAdded` rechecks its guards before every comment, and `subscriptions.refreshContext` re-verifies the connection's token with a live `AuthService` lookup first, so revoking a token (`AuthService.revoke`) ends the subscription with `FORBIDDEN` at its next event.
+`postPublished(authorId: ID)` and `commentAdded(postId: ID!)` run over a `graphql-transport-ws` WebSocket on `/graphql`. Browsers cannot send an `Authorization` header on a WebSocket, so the token goes in `connectionParams`; a missing or unknown token closes the socket with `4403`. `commentAdded` rechecks its guards before every comment, and `subscriptions.refreshContext` re-verifies the connection's token with a live `AuthService` lookup first, so revoking a token (`AuthService.revoke`) ends the subscription with `FORBIDDEN` at its next event. The same subscriptions also stream over [graphql-sse](https://github.com/enisdenjo/graphql-sse) on `/graphql` (a request with `Accept: text/event-stream`); `onConnect` gets `{}` there, so an SSE client sends its token as `Authorization: Bearer <token>`, and a missing or unknown token is a `403`.
 
 In the playground (development), set the connection params to `{ "token": "grace-token" }` and run:
 
@@ -109,7 +109,7 @@ pnpm --filter @knead-js/example-graphql-server smoke   # starts the real server 
 REDIS_URL=redis://localhost:6379 pnpm --filter @knead-js/example-graphql-server smoke   # with RedisPubSub
 ```
 
-The smoke test (`scripts/smoke.ts`) spawns `bun src/main.ts` on a free port with `NODE_ENV=development` and `RATE_LIMIT=40`. It checks `/health` (which returns only `{ "status": "ok" }`) and the PubSub engine the server reports at startup, queries, authenticated mutations, the playground and its CSP, security headers, a CORS preflight, a subscription event triggered by a mutation over HTTP, the depth limit, a dropped connection for an oversized WebSocket message, a 429 after the rate limit, and a 403 for a cross-origin or `Origin: null` WebSocket upgrade. The server has no WebSocket endpoint besides `/graphql`, so the origin checks run there. It prints a `PASS`/`FAIL` line per check and exits nonzero on any failure.
+The smoke test (`scripts/smoke.ts`) spawns `bun src/main.ts` on a free port with `NODE_ENV=development` and `RATE_LIMIT=40`. It checks `/health` (which returns only `{ "status": "ok" }`) and the PubSub engine the server reports at startup, queries, authenticated mutations, the playground and its CSP, security headers, a CORS preflight, a subscription event triggered by a mutation over HTTP (over WebSocket and over SSE, plus a `403` for an SSE subscription without a token), the depth limit, a dropped connection for an oversized WebSocket message, a 429 after the rate limit, and a 403 for a cross-origin or `Origin: null` WebSocket upgrade. The server has no WebSocket endpoint besides `/graphql`, so the origin checks run there. It prints a `PASS`/`FAIL` line per check and exits nonzero on any failure.
 
 ## Notes
 
