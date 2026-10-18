@@ -509,3 +509,40 @@ describe('RegExp origins must be anchored', () => {
     }
   });
 });
+
+describe('methods, allowedHeaders and exposedHeaders must be arrays of HTTP tokens', () => {
+  const lists = ['methods', 'allowedHeaders', 'exposedHeaders'] as const;
+
+  test.each(lists)('a non-array %s is a configuration error', (name) => {
+    for (const value of ['GET', 42, null, {}, new Set(['GET'])]) {
+      const options = { origin: 'https://a.example', [name]: value } as unknown as CorsOptions;
+      expect(() => CorsModule.forRoot(options)).toThrow(CorsConfigError);
+      expect(() => CorsModule.forRoot(options)).toThrow(`CORS ${name} must be an array`);
+    }
+  });
+
+  test.each(lists)('an entry of %s that is not an HTTP token is a configuration error', (name) => {
+    for (const entry of ['X-A\r\nX-B: 1', 'X-\0', 'X-é', 'X-\u{1F600}', 'A, B', '', 'X A', 42]) {
+      const options = { origin: 'https://a.example', [name]: [entry] } as unknown as CorsOptions;
+      expect(() => CorsModule.forRoot(options)).toThrow(CorsConfigError);
+      expect(() => CorsModule.forRoot(options)).toThrow(`CORS ${name} entry`);
+    }
+  });
+
+  test.each(lists)('valid %s are accepted', (name) => {
+    for (const value of [[], ['GET'], ['X-Request-Id', 'x_custom', "a!#$%&'*+-.^_`|~9"]]) {
+      expect(() =>
+        CorsModule.forRoot({ origin: 'https://a.example', [name]: value }),
+      ).not.toThrow();
+    }
+  });
+
+  test('validation is linear on a long entry', () => {
+    const entry = `${'a'.repeat(200_000)},`;
+    const start = performance.now();
+    expect(() => CorsModule.forRoot({ origin: '*', allowedHeaders: [entry] })).toThrow(
+      CorsConfigError,
+    );
+    expect(performance.now() - start).toBeLessThan(100);
+  });
+});
