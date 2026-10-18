@@ -1,8 +1,20 @@
-import { Injectable, InjectionToken, inject } from '@knead-js/core';
 import {
+  getMetadata,
+  getMethodMetadata,
+  Injectable,
+  InjectionToken,
+  inject,
+  MODULES,
+  type ModuleRef,
+} from '@knead-js/core';
+import {
+  CONTROLLER,
   type Ctx,
   createRouteDecorator,
+  HttpConfigError,
   LOGGER,
+  ROUTE_META,
+  ROUTES,
   type Middleware,
   type Next,
   withHeaders,
@@ -64,6 +76,18 @@ export class SecurityHeadersMiddleware implements Middleware {
 
   constructor() {
     this.#checkHsts(this.#options);
+    // Each override was validated alone; validate (and compile) its merge with the module options
+    // now, so a combination such as a route `preload` over a short module maxAge fails startup.
+    for (const [label, routeOverride] of routeOverrides(inject(MODULES, { optional: true }))) {
+      try {
+        this.#entry(routeOverride);
+      } catch (error) {
+        if (!(error instanceof HttpConfigError)) throw error;
+        throw new HttpConfigError(
+          `@SecurityHeaders() on ${label}, merged with the module options: ${error.message}`,
+        );
+      }
+    }
   }
 
   /** Logs once when HSTS is on with a max-age shorter than 180 days (15552000 seconds). */
@@ -102,9 +126,19 @@ export class SecurityHeadersMiddleware implements Middleware {
       | SecurityHeadersOptions
       | undefined;
     if (!routeOverride) return this.#default;
+    return this.#entry(routeOverride);
+  }
+
+  /**
+   * The compiled merge of the module options and a route override, validated before it is cached.
+   * Overrides on controller routes are built at construction; any other is built on first use.
+   */
+  #entry(routeOverride: SecurityHeadersOptions): Compiled {
     let entry = this.#overrides.get(routeOverride);
     if (!entry) {
-      entry = compiled(mergeOptions(this.#options, routeOverride));
+      entry = compiled(
+        SecurityHeadersMiddleware.#validated(mergeOptions(this.#options, routeOverride)),
+      );
       this.#overrides.set(routeOverride, entry);
       this.#checkHsts(entry.options);
     }
@@ -114,4 +148,31 @@ export class SecurityHeadersMiddleware implements Middleware {
 
 function compiled(options: SecurityHeadersOptions): Compiled {
   return { options, nonce: nonceTargets(options.contentSecurityPolicy) !== undefined };
+}
+
+/**
+ * The `@SecurityHeaders()` override of every controller route, labelled `Controller.method`. The
+ * route metadata is merged as the HTTP compiler merges it: controller `meta`, controller
+ * decorators, route `meta`, then method decorators.
+ */
+function* routeOverrides(
+  modules: readonly ModuleRef[] | undefined,
+): Generator<[string, SecurityHeadersOptions]> {
+  for (const mod of modules ?? []) {
+    for (const controller of mod.controllers) {
+      const ctrlMeta = {
+        ...(getMetadata(controller, CONTROLLER)?.options.meta ?? {}),
+        ...(getMetadata(controller, ROUTE_META) ?? {}),
+      };
+      for (const route of getMetadata(controller, ROUTES) ?? []) {
+        const meta = {
+          ...ctrlMeta,
+          ...(route.options.meta ?? {}),
+          ...(getMethodMetadata(controller, route.handler, ROUTE_META) ?? {}),
+        };
+        const value = meta[SECURITY_HEADERS_META] as SecurityHeadersOptions | undefined;
+        if (value) yield [`${controller.name}.${String(route.handler)}`, value];
+      }
+    }
+  }
 }
