@@ -14,6 +14,7 @@ import type { GraphQLRequest } from '@leaven-graphql/core';
 import type { OperationKind } from './context.js';
 import { queryTooLongMessage } from './options.js';
 import { GraphQLRuntime, rejectionMessage } from './runtime.js';
+import { handleSse, wantsEventStream } from './sse.js';
 
 export const GRAPHQL_RESPONSE_JSON = 'application/graphql-response+json';
 
@@ -157,6 +158,11 @@ async function execute(
   return new Response(JSON.stringify(response), { status, headers });
 }
 
+/** Whether SSE is on and the request's Accept header prefers text/event-stream. */
+function sseRequested(runtime: GraphQLRuntime, ctx: Ctx): boolean {
+  return runtime.options.sse !== false && wantsEventStream(ctx.req.headers.get('accept'));
+}
+
 export async function handlePost(runtime: GraphQLRuntime, ctx: Ctx): Promise<Response> {
   if (mediaType(ctx.req.headers.get('content-type')) !== 'application/json') {
     throw new UnsupportedMediaTypeException(
@@ -164,6 +170,7 @@ export async function handlePost(runtime: GraphQLRuntime, ctx: Ctx): Promise<Res
     );
   }
   const request = parseGraphQLParams(await ctx.json(), runtime.options.maxQueryLength);
+  if (sseRequested(runtime, ctx)) return handleSse(runtime, ctx, request, 'POST');
   return execute(runtime, ctx, request, ['query', 'mutation']);
 }
 
@@ -193,6 +200,7 @@ export async function handleGet(runtime: GraphQLRuntime, ctx: Ctx): Promise<Resp
     },
     options.maxQueryLength,
   );
+  if (sseRequested(runtime, ctx)) return handleSse(runtime, ctx, request, 'GET');
   return execute(runtime, ctx, request, ['query']);
 }
 

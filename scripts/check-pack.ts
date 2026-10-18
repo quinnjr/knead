@@ -164,6 +164,7 @@ function smokeTest(dir: string, names: string[], source: string): void {
     ['@leaven-graphql/errors', 'packages/graphql/node_modules/@leaven-graphql/errors'],
     ['@leaven-graphql/playground', 'packages/graphql/node_modules/@leaven-graphql/playground'],
     ['@leaven-graphql/ws', 'packages/graphql/node_modules/@leaven-graphql/ws'],
+    ['@leaven-graphql/sse', 'packages/graphql/node_modules/@leaven-graphql/sse'],
     ['@casl/ability', 'packages/casl/node_modules/@casl/ability'],
     ['croner', 'packages/schedule/node_modules/croner'],
     ['@types/bun', 'node_modules/@types/bun'],

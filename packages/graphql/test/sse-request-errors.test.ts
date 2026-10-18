@@ -163,6 +163,27 @@ describe('GraphQLExecutor.isRequestError', () => {
       });
       expect((await classify(runtime, '{ n }')).requestError).toBe(true);
     });
+    test('a document cache that throws (Leaven fails before execution)', async () => {
+      const failing = () => {
+        throw new Error('cache down');
+      };
+      const runtime = await start({
+        cache: {
+          get: failing,
+          set: () => {},
+          getWithValidation: failing,
+          setValidation: () => {},
+          setWithValidation: () => {},
+          has: () => false,
+          delete: () => false,
+          clear: () => {},
+          getStats: () => ({ size: 0, maxSize: 0, hits: 0, misses: 0, hitRate: 0 }),
+        } as never,
+      });
+      const { response, requestError } = await classify(runtime, '{ n }');
+      expect(response.errors?.[0]?.extensions?.code).toBe('INTERNAL_SERVER_ERROR');
+      expect(requestError).toBe(true);
+    });
   });
 
   describe('false once execution started', () => {
@@ -201,6 +222,19 @@ describe('GraphQLExecutor.isRequestError', () => {
       expect(response.data).toBeUndefined();
       expect(response.errors?.[0]?.extensions?.code).toBe('BAD_USER_INPUT');
       expect(changes).toBe(1);
+      expect(requestError).toBe(false);
+    });
+
+    test('an onExecute hook that throws (execution had started)', async () => {
+      const runtime = await start({
+        hooks: {
+          onExecute: () => {
+            throw new BadRequestException('refused late');
+          },
+        },
+      });
+      const { response, requestError } = await classify(runtime, '{ n }');
+      expect(response.data).toBeUndefined();
       expect(requestError).toBe(false);
     });
 

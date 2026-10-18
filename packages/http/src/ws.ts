@@ -314,6 +314,8 @@ export class WsRegistry {
   #reservedTotal = 0;
   /** Open streams holding a connection slot, keyed by their data, with the end() for shutdown. */
   readonly #streams = new Map<object, () => void>();
+  /** Set by endStreams() (shutdown): later streams are refused, until the next configure(). */
+  #streamsEnded = false;
   /** Keep-alive intervals checked against the HTTP idle timeout at the next configure(). */
   readonly #keepAlives: { label: string; intervalMs: number }[] = [];
   readonly #log = {
@@ -416,6 +418,7 @@ export class WsRegistry {
       }
     }
     this.#server = resolveServerOptions(options);
+    this.#streamsEnded = false;
   }
 
   /**
@@ -429,9 +432,11 @@ export class WsRegistry {
   /**
    * @internal Takes a connection slot for a streaming response, shared with WebSocket
    * connections, or throws 429 (per-IP limit) / 503 (total limit). `end` is called by
-   * `endStreams()` at shutdown; `closeStream()` returns the slot.
+   * `endStreams()` at shutdown; `closeStream()` returns the slot. After `endStreams()` (a stream
+   * set up while the server shuts down) it throws 503, so no stream outlives shutdown.
    */
   openStream(data: object, ip: string | undefined, end: () => void): void {
+    if (this.#streamsEnded) throw new ServiceUnavailableException('The server is shutting down.');
     this.#take(data, this.#ipKey(ip), 'streaming');
     this.#streams.set(data, end);
   }
@@ -444,6 +449,7 @@ export class WsRegistry {
 
   /** @internal Calls `end` of every open stream once (at shutdown); a throw is logged. */
   endStreams(): void {
+    this.#streamsEnded = true;
     const streams = [...this.#streams];
     this.#streams.clear();
     for (const [data, end] of streams) {

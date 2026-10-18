@@ -1,0 +1,558 @@
+import { afterEach, describe, expect, test } from 'bun:test';
+import { Module, type Provider } from '@knead-js/core';
+import { APP_GUARD, type Ctx, type ListenOptions } from '@knead-js/http';
+import { Test } from '@knead-js/testing';
+import type { SubscriptionIterator } from '@leaven-graphql/core';
+import {
+  GraphQLModule,
+  type GraphQLModuleOptions,
+  GraphQLRuntime,
+  Int,
+  Mutation,
+  PUBSUB,
+  type PubSub,
+  Query,
+  Resolver,
+  type ResolverCtx,
+  Subscription,
+} from '../src/index.js';
+import { wantsEventStream } from '../src/sse.js';
+import {
+  readSse,
+  type SseEvent,
+  type Started,
+  startGraphQL,
+  until,
+  upgradeStatus,
+} from './helpers.js';
+
+declare module '../src/index.js' {
+  interface GraphQLContext {
+    sseTenant?: string;
+  }
+}
+
+const roles = new Map<string, string>();
+let bumps = 0;
+const filterSaw: unknown[] = [];
+const Admin = (ctx: ResolverCtx) => {
+  ctx.state.role ??= roles.get('u');
+  return ctx.state.role === 'admin';
+};
+
+@Resolver()
+class R {
+  @Query(() => Int) n() {
+    return 1;
+  }
+  @Mutation(() => Int) bump() {
+    return ++bumps;
+  }
+  @Subscription(() => Int, { topic: 't' }) t() {}
+  @Subscription(() => String, { topic: 'tenant', resolve: () => '' })
+  whoami(ctx: ResolverCtx) {
+    return String(ctx.sseTenant);
+  }
+  @Subscription(() => Int, { topic: 'denied', authorize: [() => false] }) denied() {}
+  @Subscription(() => Int, { topic: 'role', guards: [Admin], recheckGuards: true }) byRole() {}
+  @Subscription(() => Int, { topic: 'odd', filter: ({ payload }) => (payload as number) % 2 === 1 })
+  odd() {}
+  @Subscription(() => Int, {
+    topic: 'filtered',
+    guards: [
+      (ctx: ResolverCtx) => {
+        ctx.state.mark = 'subscribe';
+        return true;
+      },
+    ],
+    filter: ({ payload, ctx }) => {
+      filterSaw.push(ctx.state.mark);
+      ctx.state.mark = `filter ${payload}`;
+      return true;
+    },
+  })
+  filtered(ctx: ResolverCtx<{}, number>) {
+    return ctx.state.mark === `filter ${ctx.parent}` ? ctx.parent : -1;
+  }
+}
+
+@Module({ providers: [R] })
+class M {}
+
+let s: Started | undefined;
+afterEach(async () => {
+  await s?.mod.close();
+  s = undefined;
+  roles.clear();
+  bumps = 0;
+  filterSaw.length = 0;
+});
+
+async function start(
+  options: GraphQLModuleOptions = {},
+  providers: Provider[] = [],
+  listen: ListenOptions = {},
+): Promise<Started> {
+  s = await startGraphQL([M], options, providers, listen);
+  return s;
+}
+
+interface SseInit {
+  method?: 'GET' | 'POST';
+  accept?: string;
+  headers?: Record<string, string>;
+  /** GET only: leave out the CSRF header. */
+  noCsrf?: boolean;
+  signal?: AbortSignal;
+}
+
+/** Sends `query` to the GraphQL endpoint, asking for an event stream by default. */
+function send(query: string, init: SseInit = {}): Promise<Response> {
+  const url = new URL('/graphql', s!.app.url);
+  const headers: Record<string, string> = {
+    accept: init.accept ?? 'text/event-stream',
+    ...init.headers,
+  };
+  if (init.method === 'GET') {
+    url.searchParams.set('query', query);
+    if (!init.noCsrf) headers['x-graphql-request'] = '1';
+    return fetch(url, { headers, signal: init.signal });
+  }
+  headers['content-type'] = 'application/json';
+  return fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ query }),
+    signal: init.signal,
+  });
+}
+
+async function all(res: Response): Promise<SseEvent[]> {
+  const out: SseEvent[] = [];
+  for await (const event of readSse(res)) out.push(event);
+  return out;
+}
+
+const next = (payload: unknown): SseEvent => ({ event: 'next', data: JSON.stringify(payload) });
+const COMPLETE: SseEvent = { event: 'complete', data: '' };
+
+const subscribers = (topic: string) => (s!.mod.get(PUBSUB) as PubSub).getSubscriberCount(topic);
+const publish = (topic: string, payload: unknown) => s!.mod.get(PUBSUB).publish(topic, payload);
+
+/** Opens an SSE subscription and waits until it listens to `topic`. */
+async function open(query: string, topic: string, init: SseInit = {}) {
+  const res = await send(query, init);
+  expect(res.status).toBe(200);
+  expect(res.headers.get('content-type')).toBe('text/event-stream; charset=utf-8');
+  const events = readSse(res);
+  await until(() => subscribers(topic) === 1);
+  return events;
+}
+
+/** The `detail` of an application/problem+json error response. */
+const detail = async (res: Response) => ((await res.json()) as { detail: string }).detail;
+
+async function expectJson(res: Response, status: number): Promise<any> {
+  expect(res.status).toBe(status);
+  expect(res.headers.get('content-type')).toBe('application/json; charset=utf-8');
+  return res.json();
+}
+
+describe('wantsEventStream', () => {
+  test('text/event-stream wins only when it is strictly preferred over JSON', () => {
+    expect(wantsEventStream('text/event-stream')).toBe(true);
+    expect(wantsEventStream('text/event-stream;q=1, application/json;q=0.5')).toBe(true);
+    expect(wantsEventStream(null)).toBe(false);
+    expect(wantsEventStream('*/*')).toBe(false);
+    expect(wantsEventStream('text/*')).toBe(false);
+    expect(wantsEventStream('application/json, text/event-stream')).toBe(false);
+    expect(wantsEventStream('text/event-stream, */*')).toBe(false);
+    expect(wantsEventStream('text/event-stream, application/graphql-response+json')).toBe(false);
+    expect(wantsEventStream('text/event-stream;q=0, application/json;q=0')).toBe(false);
+  });
+});
+
+describe('GraphQL over SSE', () => {
+  test('a subscription streams each event as next, then complete', async () => {
+    await start();
+    // A source that ends after two events, so the stream's completion is observable.
+    const executor = s!.mod.get(GraphQLRuntime).executor;
+    const real = executor.subscribe.bind(executor);
+    executor.subscribe = (async (request: never, context: never) => {
+      const result = await real(request, context);
+      if (!(Symbol.asyncIterator in result)) return result;
+      const it = result as SubscriptionIterator<unknown>;
+      let left = 2;
+      return {
+        [Symbol.asyncIterator]() {
+          return this;
+        },
+        async next() {
+          if (left-- <= 0) {
+            await it.return?.();
+            return { value: undefined, done: true };
+          }
+          return it.next();
+        },
+        return: () => it.return!(),
+      };
+    }) as typeof executor.subscribe;
+    const events = await open('subscription { t }', 't');
+    publish('t', 1);
+    publish('t', 2);
+    const received: SseEvent[] = [];
+    for await (const event of events) received.push(event);
+    expect(received).toEqual([next({ data: { t: 1 } }), next({ data: { t: 2 } }), COMPLETE]);
+    expect(subscribers('t')).toBe(0);
+  });
+
+  test('a subscription over GET streams too', async () => {
+    await start();
+    const events = await open('subscription { t }', 't', { method: 'GET' });
+    publish('t', 7);
+    expect((await events.next()).value).toEqual(next({ data: { t: 7 } }));
+    await events.return!();
+  });
+
+  test('a query answers one next and complete', async () => {
+    await start();
+    for (const method of ['POST', 'GET'] as const) {
+      const res = await send('{ n }', { method });
+      expect(res.headers.get('content-type')).toBe('text/event-stream; charset=utf-8');
+      expect(await all(res)).toEqual([next({ data: { n: 1 } }), COMPLETE]);
+    }
+  });
+
+  test('a POST mutation answers one next and complete', async () => {
+    await start();
+    expect(await all(await send('mutation { bump }'))).toEqual([
+      next({ data: { bump: 1 } }),
+      COMPLETE,
+    ]);
+  });
+
+  test('a GET mutation is 405 with Allow: POST', async () => {
+    await start();
+    const res = await send('mutation { bump }', { method: 'GET' });
+    expect(res.status).toBe(405);
+    expect(res.headers.get('allow')).toBe('POST');
+    expect(bumps).toBe(0);
+  });
+
+  test('Accept: */* and equal q-values stay JSON', async () => {
+    await start();
+    for (const accept of ['*/*', 'application/json, text/event-stream']) {
+      const res = await send('{ n }', { accept });
+      expect(res.headers.get('content-type')).toBe('application/json; charset=utf-8');
+      expect(await res.json()).toEqual({ data: { n: 1 } });
+    }
+    const res = await send('{ n }', { accept: 'text/event-stream;q=1, application/json;q=0.5' });
+    expect(res.headers.get('content-type')).toBe('text/event-stream; charset=utf-8');
+    expect(await all(res)).toEqual([next({ data: { n: 1 } }), COMPLETE]);
+  });
+
+  test('a syntax error over SSE is 400 JSON', async () => {
+    await start();
+    for (const query of ['{ n', 'subscription { t', 'subscription { nope }']) {
+      const body = await expectJson(await send(query), 400);
+      expect(body.data).toBeUndefined();
+      expect(body.errors).toHaveLength(1);
+    }
+    // The subscription request errors gave their slot back.
+    expect(await upgradeStatus(s!.app)).toBe(101);
+  });
+
+  test('an internal error before execution is 500 JSON', async () => {
+    const SECRET = 'redis://admin:pw@cache ECONNREFUSED';
+    const brokenCache = {
+      get: () => {
+        throw new Error(SECRET);
+      },
+      set: () => {},
+      getWithValidation: () => {
+        throw new Error(SECRET);
+      },
+      setValidation: () => {},
+      setWithValidation: () => {},
+      has: () => false,
+      delete: () => false,
+      clear: () => {},
+      getStats: () => ({ size: 0, maxSize: 0, hits: 0, misses: 0, hitRate: 0 }),
+    } as never;
+    await start({ cache: brokenCache });
+    for (const query of ['{ n }', 'subscription { t }']) {
+      const res = await send(query);
+      const text = await res.clone().text();
+      expect(text).not.toContain('admin:pw');
+      const body = await expectJson(res, 500);
+      expect(body.errors[0]).toMatchObject({
+        message: 'Internal server error',
+        extensions: { code: 'INTERNAL_SERVER_ERROR' },
+      });
+    }
+  });
+
+  test('subscriptions.sse: false keeps JSON for text/event-stream requests', async () => {
+    await start({ subscriptions: { sse: false } });
+    const res = await send('{ n }');
+    expect(res.headers.get('content-type')).toBe('application/json; charset=utf-8');
+    expect(await res.json()).toEqual({ data: { n: 1 } });
+  });
+
+  test('subscriptions: false keeps JSON too', async () => {
+    await start({ subscriptions: false });
+    const res = await send('{ n }');
+    expect(res.headers.get('content-type')).toBe('application/json; charset=utf-8');
+  });
+
+  test('a cross-origin Origin is 403; allowedOrigins admits it; no Origin is allowed', async () => {
+    await start();
+    const port = s!.app.url.port;
+    const cross = await send('{ n }', { headers: { origin: 'https://evil.example' } });
+    expect(cross.status).toBe(403);
+    expect(await detail(cross)).toBe('Cross-origin GraphQL SSE requests are not allowed.');
+    const sub = await send('subscription { t }', { headers: { origin: 'https://evil.example' } });
+    expect(sub.status).toBe(403);
+    expect(subscribers('t')).toBe(0);
+    const same = await send('{ n }', { headers: { origin: `http://127.0.0.1:${port}` } });
+    expect(await all(same)).toEqual([next({ data: { n: 1 } }), COMPLETE]);
+    expect(await all(await send('{ n }'))).toEqual([next({ data: { n: 1 } }), COMPLETE]);
+    await s!.mod.close();
+    await start({ subscriptions: { allowedOrigins: ['https://app.example'] } });
+    const listed = await send('{ n }', { headers: { origin: 'https://app.example' } });
+    expect(await all(listed)).toEqual([next({ data: { n: 1 } }), COMPLETE]);
+  });
+
+  test('GET without the CSRF header is 400', async () => {
+    await start();
+    const res = await send('{ n }', { method: 'GET', noCsrf: true });
+    expect(res.status).toBe(400);
+    expect(await detail(res)).toBe(
+      'GraphQL GET requests must include one of these headers: x-graphql-request.',
+    );
+  });
+
+  test('onConnect false is 403 and nothing subscribes', async () => {
+    let calls = 0;
+    await start({
+      subscriptions: {
+        onConnect: () => {
+          calls++;
+          return false;
+        },
+      },
+    });
+    const body = await expectJson(await send('subscription { t }'), 403);
+    expect(body).toEqual({ errors: [{ message: 'Forbidden', extensions: { code: 'FORBIDDEN' } }] });
+    expect(calls).toBe(1);
+    expect(subscribers('t')).toBe(0);
+    // Queries do not run onConnect.
+    expect(await all(await send('{ n }'))).toEqual([next({ data: { n: 1 } }), COMPLETE]);
+    expect(calls).toBe(1);
+  });
+
+  test('a throwing onConnect or context factory is 403 and is logged', async () => {
+    await start({
+      subscriptions: {
+        onConnect: () => {
+          throw new Error('onConnect secret');
+        },
+      },
+    });
+    const res = await send('subscription { t }');
+    const text = await res.clone().text();
+    expect(text).not.toContain('secret');
+    await expectJson(res, 403);
+    expect(s!.mod.logs.some((e) => e.level === 'error' && e.message.includes('onConnect'))).toBe(
+      true,
+    );
+    await s!.mod.close();
+    await start({
+      context: () => {
+        throw new Error('context secret');
+      },
+    });
+    const denied = await send('subscription { t }');
+    expect(await denied.clone().text()).not.toContain('secret');
+    await expectJson(denied, 403);
+    expect(subscribers('t')).toBe(0);
+  });
+
+  test('onConnect receives {} and its object reaches the context', async () => {
+    const seen: unknown[] = [];
+    await start({
+      context: () => ({ sseTenant: 'from-context' }),
+      subscriptions: {
+        onConnect: (http: Ctx, params) => {
+          seen.push(params, http.req.headers.get('x-who'));
+          return { sseTenant: 'from-connect' };
+        },
+      },
+    });
+    const events = await open('subscription { whoami }', 'tenant', { headers: { 'x-who': 'me' } });
+    expect(seen).toEqual([{}, 'me']);
+    publish('tenant', 1);
+    expect((await events.next()).value).toEqual(next({ data: { whoami: 'from-connect' } }));
+    await events.return!();
+  });
+
+  test('the endpoint guards and authorize guards run', async () => {
+    await start({}, [
+      { provide: APP_GUARD, multi: true, useValue: (ctx: Ctx) => ctx.req.headers.has('x-ok') },
+    ]);
+    expect((await send('subscription { t }')).status).toBe(403);
+    expect(subscribers('t')).toBe(0);
+    const res = await send('subscription { denied }', { headers: { 'x-ok': '1' } });
+    expect(res.status).toBe(200);
+    const events = await all(res);
+    expect(events).toHaveLength(2);
+    expect(JSON.parse(events[0]!.data).errors[0].extensions.code).toBe('FORBIDDEN');
+    expect(events[1]).toEqual(COMPLETE);
+    expect(subscribers('denied')).toBe(0);
+    // The denied subscription released its slot.
+    await s!.mod.close();
+    await start({}, [], { websocket: { maxConnectionsPerIp: 1 } });
+    expect((await all(await send('subscription { denied }'))).at(-1)).toEqual(COMPLETE);
+    const again = await open('subscription { t }', 't');
+    await again.return!();
+  });
+
+  test('recheckGuards with a revoked role ends the stream with FORBIDDEN', async () => {
+    roles.set('u', 'admin');
+    await start();
+    const events = await open('subscription { byRole }', 'role');
+    publish('role', 1);
+    expect((await events.next()).value).toEqual(next({ data: { byRole: 1 } }));
+    roles.set('u', 'user');
+    publish('role', 2);
+    const revoked = (await events.next()).value!;
+    expect(JSON.parse(revoked.data).errors[0].extensions.code).toBe('FORBIDDEN');
+    expect((await events.next()).value).toEqual(COMPLETE);
+    expect((await events.next()).done).toBe(true);
+    await until(() => subscribers('role') === 0);
+  });
+
+  test('filter and per-event fresh state behave as over WebSocket', async () => {
+    await start();
+    const odd = await open('subscription { odd }', 'odd');
+    for (const n of [1, 2, 3]) publish('odd', n);
+    expect((await odd.next()).value).toEqual(next({ data: { odd: 1 } }));
+    expect((await odd.next()).value).toEqual(next({ data: { odd: 3 } }));
+    await odd.return!();
+
+    const filtered = await open('subscription { filtered }', 'filtered');
+    publish('filtered', 1);
+    expect((await filtered.next()).value).toEqual(next({ data: { filtered: 1 } }));
+    publish('filtered', 2);
+    expect((await filtered.next()).value).toEqual(next({ data: { filtered: 2 } }));
+    expect(filterSaw).toEqual([undefined, undefined]);
+    await filtered.return!();
+  });
+
+  test('a throwing iterator is masked under maskErrors', async () => {
+    let fail: ((error: Error) => void) | undefined;
+    let unsubscribed = 0;
+    const engine = {
+      subscribe: (_topic: string, _cb: unknown, onError?: (error: Error) => void) => {
+        fail = onError;
+        return () => {
+          unsubscribed++;
+        };
+      },
+      publish: () => {},
+    };
+    await start({ pubsub: engine as never });
+    const res = await send('subscription { t }');
+    expect(res.status).toBe(200);
+    const events = readSse(res);
+    await until(() => fail !== undefined);
+    fail!(new Error('redis://admin:pw@cache down'));
+    const errored = (await events.next()).value!;
+    expect(errored.event).toBe('next');
+    expect(errored.data).not.toContain('admin:pw');
+    expect(JSON.parse(errored.data).errors[0]).toMatchObject({
+      message: 'Internal server error',
+      extensions: { code: 'INTERNAL_SERVER_ERROR' },
+    });
+    expect((await events.next()).value).toEqual(COMPLETE);
+    expect((await events.next()).done).toBe(true);
+    await until(() => unsubscribed === 1);
+  });
+
+  test('the stream counts against maxConnectionsPerIp', async () => {
+    await start({}, [], { websocket: { maxConnectionsPerIp: 1 } });
+    const first = await open('subscription { t }', 't');
+    const limited = await send('subscription { t }');
+    expect(limited.status).toBe(429);
+    expect(await detail(limited)).toBe('Too many streaming connections from this address.');
+    // Queries and mutations hold no slot.
+    expect(await all(await send('{ n }'))).toEqual([next({ data: { n: 1 } }), COMPLETE]);
+    expect(await upgradeStatus(s!.app)).toBe(429);
+    await first.return!();
+    await until(async () => (await upgradeStatus(s!.app)) === 101);
+  });
+
+  test('the stream counts against maxConnections (503)', async () => {
+    await start({}, [], { websocket: { maxConnections: 1 } });
+    const first = await open('subscription { t }', 't');
+    expect((await send('subscription { t }')).status).toBe(503);
+    await first.return!();
+  });
+
+  test('a client abort returns the iterator and frees the slot', async () => {
+    await start({}, [], { websocket: { maxConnectionsPerIp: 1 } });
+    const abort = new AbortController();
+    const res = await send('subscription { t }', { signal: abort.signal });
+    expect(res.status).toBe(200);
+    await until(() => subscribers('t') === 1);
+    abort.abort();
+    const aborted = Date.now();
+    await until(() => subscribers('t') === 0, 100);
+    expect(Date.now() - aborted).toBeLessThan(100);
+    const again = await open('subscription { t }', 't');
+    publish('t', 1);
+    expect((await again.next()).value).toEqual(next({ data: { t: 1 } }));
+    await again.return!();
+  });
+
+  test('listen() rejects keepAliveInterval >= idleTimeout', async () => {
+    const mod = await Test.createModule({
+      imports: [
+        GraphQLModule.forRoot({ subscriptions: { sse: { keepAliveInterval: 10_000 } } }),
+        M,
+      ],
+    }).compile({ development: false });
+    try {
+      await expect(mod.createApp()).rejects.toThrow(
+        'GraphQL SSE (subscriptions.sse.keepAliveInterval) keep-alive interval (10000 ms) must be ' +
+          'below the HTTP idleTimeout (10 s)',
+      );
+      await expect(mod.createApp({ idleTimeout: 11 })).resolves.toBeDefined();
+    } finally {
+      await mod.close();
+    }
+    await start({ subscriptions: { sse: { keepAliveInterval: 9_999 } } });
+    await s!.mod.close();
+    await start({ subscriptions: { sse: { keepAliveInterval: 10_000 } } }, [], { idleTimeout: 0 });
+  });
+
+  test('keep-alive comments are sent at keepAliveInterval', async () => {
+    await start({ subscriptions: { sse: { keepAliveInterval: 20 } } });
+    const res = await send('subscription { t }');
+    const reader = res.body!.pipeThrough(new TextDecoderStream()).getReader();
+    let text = '';
+    while (!text.includes(':\n\n')) text += (await reader.read()).value ?? '';
+    await reader.cancel();
+  });
+
+  test('close() with an open SSE stream resolves quickly', async () => {
+    await start();
+    const events = await open('subscription { t }', 't');
+    const started = Date.now();
+    await s!.mod.close();
+    expect(Date.now() - started).toBeLessThan(1000);
+    // The stream ended without complete.
+    expect((await events.next()).done).toBe(true);
+    s = undefined;
+  });
+});

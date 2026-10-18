@@ -1,4 +1,5 @@
 import type { ModuleImport, Provider } from '@knead-js/core';
+import type { ListenOptions } from '@knead-js/http';
 import { Test, type TestApp, type TestingModule } from '@knead-js/testing';
 import {
   GraphQLModule,
@@ -12,18 +13,76 @@ export interface Started {
   app: TestApp;
 }
 
-/** Boots an app with GraphQLModule.forRoot(options) plus `imports`, listening on a random port. */
+/**
+ * Boots an app with GraphQLModule.forRoot(options) plus `imports`, listening on a random port
+ * with `listen` (for example `{ websocket: { maxConnectionsPerIp: 1 } }`).
+ */
 export async function startGraphQL(
   imports: ModuleImport[],
   options: GraphQLModuleOptions = {},
   providers: Provider[] = [],
+  listen: ListenOptions = {},
 ): Promise<Started> {
   const mod = await Test.createModule({
     imports: [GraphQLModule.forRoot(options), ...imports],
     providers,
   }).compile({ development: false });
-  const app = await mod.createApp();
+  const app = await mod.createApp(listen);
   return { mod, app };
+}
+
+/** One server-sent event: its `event` name and its `data` lines joined with newlines. */
+export interface SseEvent {
+  event: string;
+  data: string;
+}
+
+/** Parses one event block; undefined for a block of comments only (a keep-alive). */
+function sseEvent(block: string): SseEvent | undefined {
+  let event = 'message';
+  const data: string[] = [];
+  let fields = 0;
+  for (const line of block.split('\n')) {
+    if (line === '' || line.startsWith(':')) continue;
+    fields++;
+    if (line.startsWith('event:')) event = line.slice(6).trim();
+    else if (line.startsWith('data:')) data.push(line.slice(5).replace(/^ /, ''));
+  }
+  return fields === 0 ? undefined : { event, data: data.join('\n') };
+}
+
+/**
+ * The events of a `text/event-stream` response body, skipping keep-alive comments. `return()`
+ * cancels the body (closing the stream), also before the first `next()`.
+ */
+export function readSse(res: Response): AsyncIterableIterator<SseEvent> {
+  const reader = res.body?.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = '';
+  const finish = async (): Promise<IteratorResult<SseEvent>> => {
+    await reader?.cancel().catch(() => {});
+    return { value: undefined, done: true };
+  };
+  return {
+    [Symbol.asyncIterator]() {
+      return this;
+    },
+    async next() {
+      if (!reader) return { value: undefined, done: true };
+      for (;;) {
+        const end = buffer.indexOf('\n\n');
+        if (end !== -1) {
+          const parsed = sseEvent(buffer.slice(0, end));
+          buffer = buffer.slice(end + 2);
+          if (parsed) return { value: parsed, done: false };
+          continue;
+        }
+        const { value, done } = await reader.read();
+        if (done) return { value: undefined, done: true };
+        buffer += value.replaceAll('\r\n', '\n');
+      }
+    },
+    return: finish,
+  };
 }
 
 /** Bootstraps without listening and returns the sorted SDL. */

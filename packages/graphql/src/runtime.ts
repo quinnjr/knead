@@ -86,6 +86,7 @@ import { PlaygroundGate } from './playground.js';
 import { eventIterator, PUBSUB } from './pubsub.js';
 import { IS_PUBLIC } from './resolvers.js';
 import { argNames, type FieldSpec, printSortedSchema, SchemaBuilder } from './schema.js';
+import { SseConnections } from './sse.js';
 import {
   createSubscriptionEndpoint,
   type GraphQLConnection,
@@ -612,19 +613,27 @@ export function normalizeResponse<T>(
 /** The hooks Leaven runs before it selects and executes the operation. */
 const PRE_EXECUTION_HOOKS = ['onParse', 'onParsed', 'onValidate', 'onValidated'] as const;
 
+/** What GraphQLExecutor records about one execute() or subscribe() call. */
+interface CallState {
+  /** A pre-execution hook threw. */
+  rejected: boolean;
+  /** Leaven reached onExecute: its pipeline (parse, cache, validation, compile) completed. */
+  executing: boolean;
+}
+
 /**
  * Wraps the pre-execution hooks so a throw from one (Knead's document limits run in `onParsed`)
  * flags the current call: Leaven reports those throws without marking them as request
- * rejections.
+ * rejections. `onExecute` (always set, so a call that never reaches it is known) records that
+ * Leaven's pipeline completed.
  */
 function trackPreExecution(
   hooks: ExecutionHooks | undefined,
-  calls: AsyncLocalStorage<{ rejected: boolean }>,
-): ExecutionHooks | undefined {
-  if (!hooks) return hooks;
+  calls: AsyncLocalStorage<CallState>,
+): ExecutionHooks {
   const tracked: Record<string, unknown> = { ...hooks };
   for (const name of PRE_EXECUTION_HOOKS) {
-    const hook = hooks[name] as ((...args: unknown[]) => unknown) | undefined;
+    const hook = hooks?.[name] as ((...args: unknown[]) => unknown) | undefined;
     if (!hook) continue;
     tracked[name] = async (...args: unknown[]) => {
       try {
@@ -636,6 +645,12 @@ function trackPreExecution(
       }
     };
   }
+  const onExecute = hooks?.onExecute;
+  tracked.onExecute = async (context: unknown, document: DocumentNode) => {
+    const call = calls.getStore();
+    if (call) call.executing = true;
+    await onExecute?.(context, document);
+  };
   return tracked as ExecutionHooks;
 }
 
@@ -645,11 +660,11 @@ function trackPreExecution(
  */
 export class GraphQLExecutor extends LeavenExecutor {
   readonly #masking: ErrorMaskingOptions;
-  readonly #calls: AsyncLocalStorage<{ rejected: boolean }>;
+  readonly #calls: AsyncLocalStorage<CallState>;
   readonly #rejected = new WeakSet<object>();
 
   constructor(config: ExecutorConfig, masking: ErrorMaskingOptions) {
-    const calls = new AsyncLocalStorage<{ rejected: boolean }>();
+    const calls = new AsyncLocalStorage<CallState>();
     super({ ...config, hooks: trackPreExecution(config.hooks, calls) });
     this.#masking = masking;
     this.#calls = calls;
@@ -659,22 +674,22 @@ export class GraphQLExecutor extends LeavenExecutor {
     request: GraphQLRequest,
     context?: TContext,
   ): Promise<ExecutionResult<TData>> {
-    const call = { rejected: false };
+    const call: CallState = { rejected: false, executing: false };
     const result = await this.#calls.run(call, () =>
       super.execute<TData, TContext>(request, context),
     );
-    return { ...result, response: this.#normalize(result.response, call.rejected) };
+    return { ...result, response: this.#normalize(result.response, call) };
   }
 
   override async subscribe<TData = Record<string, unknown>, TContext = unknown>(
     request: GraphQLRequest,
     context?: TContext,
   ): Promise<SubscriptionIterator<TData> | GraphQLResponse<TData>> {
-    const call = { rejected: false };
+    const call: CallState = { rejected: false, executing: false };
     const result = await this.#calls.run(call, () =>
       super.subscribe<TData, TContext>(request, context),
     );
-    return Symbol.asyncIterator in result ? result : this.#normalize(result, call.rejected);
+    return Symbol.asyncIterator in result ? result : this.#normalize(result, call);
   }
 
   /**
@@ -683,7 +698,8 @@ export class GraphQLExecutor extends LeavenExecutor {
    * parser limits, validation, operation selection, complexity, variable coercion) or a
    * pre-execution hook threw (Knead's `maxFields`, `maxAliases`, `maxDepth` and
    * `maxIntrospectionDepth` checks, or the application's `onParse`/`onParsed`/`onValidate`/
-   * `onValidated`). Identity-based: pass the response object as returned. Classified by where
+   * `onValidated`), or Leaven's pipeline failed before execution (a document cache that throws:
+   * INTERNAL_SERVER_ERROR). Identity-based: pass the response object as returned. Classified by where
    * the error arose, never by its code, so an error raised after execution started (a resolver,
    * `onExecute`, `onExecuted`) is never a request error.
    */
@@ -692,10 +708,8 @@ export class GraphQLExecutor extends LeavenExecutor {
   }
 
   /** Normalizes a response, keeping the request-error mark on the copy normalizeResponse may make. */
-  #normalize<TData>(
-    response: GraphQLResponse<TData>,
-    preExecution: boolean,
-  ): GraphQLResponse<TData> {
+  #normalize<TData>(response: GraphQLResponse<TData>, call: CallState): GraphQLResponse<TData> {
+    const preExecution = call.rejected || !call.executing;
     const rejected = isRequestError(response) || (preExecution && response.data === undefined);
     const normalized = normalizeResponse(response, this.#masking);
     if (rejected) this.#rejected.add(normalized);
@@ -718,6 +732,8 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
   readonly logger = inject(LOGGER);
   readonly #modules = inject(MODULES);
   readonly #ws = inject(WsRegistry);
+  /** @internal The open SSE subscription streams. */
+  readonly sse = new SseConnections();
   #schema: GraphQLSchema | undefined;
   #executor: GraphQLExecutor | undefined;
   #playground: PlaygroundGate | undefined;
@@ -749,6 +765,11 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
       development: this.development,
       mapError: this.options.mapError,
     };
+  }
+
+  /** @internal The registry SSE streams take their connection slots from (shared with WebSocket). */
+  get ws(): WsRegistry {
+    return this.#ws;
   }
 
   /** `listen({ websocket: { maxPendingRevocations } })`, also the per-socket deferral cap. */
@@ -812,6 +833,14 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
     }
     if (this.options.emitSchemaFile !== false) {
       await Bun.write(this.options.emitSchemaFile, printSortedSchema(this.#schema));
+    }
+    const sse = this.options.sse;
+    if (sse !== false) {
+      // Checked at listen(): Bun closes a stream quiet for longer than its idleTimeout.
+      this.#ws.requireKeepAliveBelowIdle(
+        'GraphQL SSE (subscriptions.sse.keepAliveInterval)',
+        sse.keepAliveInterval,
+      );
     }
     const subscriptions = this.options.subscriptions;
     if (subscriptions !== false && this.#schema.getSubscriptionType()) {

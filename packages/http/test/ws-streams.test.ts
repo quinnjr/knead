@@ -93,6 +93,29 @@ describe('WsRegistry stream slots', () => {
     expect(calls).toEqual(['a', 'b']);
     expect(logger.entries.some((e) => e.level === 'error')).toBe(true);
   });
+
+  test('openStream after endStreams is refused with 503, until the next configure', async () => {
+    const ws = await registry();
+    ws.endStreams();
+    let ended = false;
+    let message = '';
+    try {
+      ws.openStream({}, '1.2.3.4', () => {
+        ended = true;
+      });
+    } catch (error) {
+      expect((error as HttpException).status).toBe(503);
+      message = (error as Error).message;
+    }
+    expect(message).toBe('The server is shutting down.');
+    expect(ended).toBe(false);
+    ws.configure({ maxConnectionsPerIp: 1 });
+    const data = {};
+    ws.openStream(data, '1.2.3.4', () => {});
+    // The refused stream took no slot.
+    ws.closeStream(data);
+    expect(statusOf(() => ws.openStream({}, '1.2.3.4', () => {}))).toBeUndefined();
+  });
 });
 
 describe('WsRegistry keep-alive check', () => {
