@@ -78,19 +78,19 @@ failed because a lifecycle hook threw has closed the application. See [the serve
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `port` | `number` | `3000` | TCP port; `0` picks a free one. |
+| `port` | `number` | `3000` | TCP port; `0` picks a free one. An integer from 0 to 65535. |
 | `hostname` | `string` | `'0.0.0.0'` | Interface to bind. |
 | `tls` | `TLSOptions \| TLSOptions[]` | none | Bun TLS options; serves HTTPS. |
-| `redirectHttp` | `{ port: number; hostname?: string; host?: string }` | none | A second, plain-HTTP listener that answers `308` to the HTTPS URL. Requires `tls`. `host` is the canonical `host[:port]` for the `Location` header. |
-| `trustProxy` | `TrustProxy` | `false` | Which proxies' `X-Forwarded-For` and `X-Forwarded-Proto` to believe for `ctx.ip` and `ctx.secure`. |
-| `allowedHosts` | `readonly string[] \| false` | development: `localhost`, `127.0.0.1`, `[::1]` and the bound hostname (unless it is `0.0.0.0` or `::`); production: no check | Host names the server answers to; other `Host` headers get `421`. `false` disables the check. |
+| `redirectHttp` | `{ port: number; hostname?: string; host?: string }` | none | A second, plain-HTTP listener that answers `308` to the HTTPS URL. Requires `tls`. `port` is an integer from 0 to 65535. `host` is the canonical `host[:port]` for the `Location` header. |
+| `trustProxy` | `TrustProxy` | `false` | Which proxies' `X-Forwarded-For` and `X-Forwarded-Proto` to believe for `ctx.ip` and `ctx.secure`. Anything but `false`, a non-negative integer or an array of CIDRs (such as `true` or a single CIDR string) is an `HttpConfigError` at `listen()`. |
+| `allowedHosts` | `readonly string[] \| false` | development: `localhost`, `127.0.0.1`, `[::1]` and the bound hostname (unless it is `0.0.0.0` or `::`); production: no check | Host names the server answers to; other `Host` headers get `421`. `false` disables the check. Anything but an array or `false` (such as a single string) is an `HttpConfigError` at `listen()`. |
 | `websocket` | `WsServerOptions` | see [`WsServerOptions`](#wsserveroptions) | Server-wide WebSocket limits. |
 | `maxParams` | `number` | `1000` | Most query parameters (more is `400`) or urlencoded or multipart fields (more is `413`) per request. An integer of at least 1. |
 | `maxRequestBodySize` | `number` | `1048576` (1 MiB) | Largest request body in bytes; Bun answers larger ones with `413`. An integer of at least 1. |
-| `defaultCacheControl` | `string` | none | `Cache-Control` for every response that has none (including 404s, `421`s and rejected WebSocket upgrades), such as `'no-store'`. Must be a valid header value (no CR, LF or NUL, Latin-1 only). |
+| `defaultCacheControl` | `string` | none | `Cache-Control` for every response that has none (including 404s, `421`s, rejected WebSocket upgrades, the `redirectHttp` listener's `421`s and the masked `500` of an error that reaches Bun), such as `'no-store'`. Must be a valid header value (no CR, LF or NUL, Latin-1 only). |
 | `validation` | `ValidationOptions` | `{}` | See [`ValidationOptions`](#validationoptions). |
 | `idleTimeout` | `number` | Bun's default (10 seconds) | Seconds a connection may be idle. An integer from 0 to 255. |
-| `shutdownTimeout` | `number` | `10000` | Milliseconds `close()` waits for in-flight requests, and for a `listen()` still initializing. An integer of at least 0. |
+| `shutdownTimeout` | `number` | `10000` | Milliseconds `close()` waits for in-flight requests, and for a `listen()` still initializing. An integer from 0 to `2 ** 31 - 1`. |
 
 The numeric options must be numbers within those ranges: a string (such as an unparsed environment
 variable), `NaN` or `Infinity` is an `HttpConfigError` at `listen()`, before anything binds.
@@ -403,7 +403,7 @@ modules register endpoints here). Inject it with `inject(WsRegistry)`.
 
 | Type | Definition |
 | --- | --- |
-| `WsEndpoint<D = unknown>` | `{ upgrade(ctx: Ctx): D \| false \| Promise<D \| false>; open?(ws); message?(ws, message: string \| Buffer); close?(ws, code, reason); drain?(ws) }`. `upgrade()` returns the socket data to accept, or `false` to answer `403`; throw an `HttpException` for another status. Errors thrown by the event hooks are logged; one thrown by `open` also closes the socket with `1011`. `message`, `close` and `drain` run only for sockets whose `open` ran. |
+| `WsEndpoint<D = unknown>` | `{ upgrade(ctx: Ctx): D \| false \| Promise<D \| false>; open?(ws); message?(ws, message: string \| Buffer); close?(ws, code, reason); drain?(ws) }`. `upgrade()` returns the socket data to accept, or `false` to answer `403`; `undefined` (a missing return) is also a `403`, so return `null` or `{}` to accept without data. Throw an `HttpException` for another status. Errors thrown by the event hooks are logged; one thrown by `open` also closes the socket with `1011`. `message`, `close` and `drain` run only for sockets whose `open` ran. |
 | `WsSocket` | `ServerWebSocket<WsData>`, the socket the hooks receive. |
 | `WsData` | `{ readonly endpoint: string; readonly data: unknown; readonly ip?: string \| undefined }`: `data` is what `upgrade()` returned, `ip` the upgrade's `ctx.ip`. |
 | `WsMessageRate` | `{ limit: number; windowMs: number }`: a token bucket of `limit` messages refilled over `windowMs`. |
@@ -414,7 +414,7 @@ modules register endpoints here). Inject it with `inject(WsRegistry)`.
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `allowedOrigins` | `readonly string[] \| '*'` | same origin only | Origins allowed besides the request's own, each exactly `scheme://host[:port]` (no path, default port or wildcard); `'*'` disables the check. Upgrades without an `Origin` header are allowed. |
+| `allowedOrigins` | `readonly string[] \| '*'` | same origin only | Origins allowed besides the request's own, each exactly `scheme://host[:port]` (no path, default port or wildcard); `'*'` disables the check. Upgrades without an `Origin` header are allowed. Copied at `register()`: changing the array later has no effect. |
 | `messageRate` | `WsMessageRate \| false` | the server's `messageRate` | Per-socket rate; exceeding it closes the socket with `1008`. |
 | `maxConnectionLifetime` | `number` | no limit | Milliseconds after which a socket is closed with `4408`, at most `2 ** 31 - 1`. |
 | `meta` | `Readonly<Record<PropertyKey, unknown>>` | none | Route-style metadata for the upgrade's `ctx.meta`, copied and frozen at `register()`. |
@@ -442,7 +442,8 @@ when none is free.
 
 `originAllowed(origin, host, secure, allowed?)` returns whether a WebSocket upgrade's `Origin` may
 connect: when `origin` is `null` (no header, not a browser), when `allowed` is `'*'` or lists the
-origin, or when it is the request's own origin (scheme from `secure`, host and port from `host`,
+origin (`allowed` is an array of origins, or a `ReadonlySet` of normalized origins, as
+`new URL(entry).origin` writes them), or when it is the request's own origin (scheme from `secure`, host and port from `host`,
 default ports normalized). `Origin: null` is rejected. Exported for transports that check origins
 themselves.
 

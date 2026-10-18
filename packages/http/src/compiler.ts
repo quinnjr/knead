@@ -31,7 +31,14 @@ import {
 import { requestPathname } from './request.js';
 import { resolveFilter, resolveGuard, resolveMiddleware } from './resolve.js';
 import { toResponse, withHeaders } from './response.js';
-import type { ExceptionFilter, Guard, HttpMethod, Middleware, RouteInfo } from './types.js';
+import type {
+  ExceptionFilter,
+  Guard,
+  HttpMethod,
+  Middleware,
+  RouteInfo,
+  UpgradeInfo,
+} from './types.js';
 import { type ValidationOptions, validateRequest } from './validation.js';
 import type { WsData, WsEndpoint, WsRegistry } from './ws.js';
 
@@ -92,7 +99,10 @@ function upgradeChain(
       // Guards protect upgrades like any route; ctx.route is the GET route sharing the path, if any.
       await runGuards(guards, ctx);
       const data = await endpoint.upgrade(ctx);
-      if (data === false) throw new ForbiddenException('WebSocket upgrade rejected');
+      // Fail closed: a missing return (undefined) rejects like false. `null` or `{}` is "no data".
+      if (data === false || data === undefined) {
+        throw new ForbiddenException('WebSocket upgrade rejected');
+      }
       const socketData: WsData = { endpoint: path, data, ip: ctx.ip };
       // Synchronous from here to upgrade(): the connection limits cannot be raced.
       registry.reserve(socketData, ctx.ip, ctx);
@@ -118,18 +128,47 @@ function upgradeChain(
   return composeMiddleware(middleware, terminal, onError);
 }
 
-async function runUpgrade(
+/**
+ * The `ctx.meta` of an upgrade to `path`: the endpoint's meta merged over `route`'s, or undefined
+ * when the endpoint has none (ctx.meta is then the route's). Computed once per (path, route).
+ */
+function upgradeMeta(
+  registry: WsRegistry,
+  path: string,
+  route: RouteInfo | null,
+): Readonly<Record<PropertyKey, unknown>> | undefined {
+  const endpointMeta = registry.meta(path);
+  return endpointMeta && Object.freeze({ ...route?.meta, ...endpointMeta });
+}
+
+/** What runUpgrade() needs about one endpoint, as reached through one route (or none). */
+interface UpgradeTarget {
+  readonly path: string;
+  readonly handler: Handler;
+  readonly route: RouteInfo | null;
+  readonly info: UpgradeInfo;
+  readonly meta: Readonly<Record<PropertyKey, unknown>> | undefined;
+}
+
+function upgradeTarget(
   registry: WsRegistry,
   path: string,
   handler: Handler,
+  route: RouteInfo | null,
+): UpgradeTarget {
+  const meta = upgradeMeta(registry, path, route);
+  return { path, handler, route, info: Object.freeze({ path }), meta };
+}
+
+async function runUpgrade(
+  registry: WsRegistry,
+  target: UpgradeTarget,
   req: Request,
   server: Server<any>,
   net: NetConfig,
-  route: RouteInfo | null = null,
 ): Promise<Response | undefined> {
-  const endpointMeta = registry.meta(path);
-  const meta = endpointMeta && Object.freeze({ ...route?.meta, ...endpointMeta });
-  const ctx = new RequestContext(req, server, route, net, Object.freeze({ path }), meta);
+  const { handler, route, info, meta } = target;
+  const ctx = new RequestContext(req, server, route, net, info, meta);
   registry.beginUpgrade(ctx);
   try {
     const res = await handler(ctx);
@@ -166,6 +205,20 @@ export function misdirectedResponse(): Response {
   });
 }
 
+/**
+ * `res` with `cacheControl` as its Cache-Control when it has none and `cacheControl` is set. The
+ * header is set in place; a response whose headers cannot be changed is re-wrapped.
+ */
+export function withCacheControl(res: Response, cacheControl: string | undefined): Response {
+  if (cacheControl === undefined || res.headers.has('cache-control')) return res;
+  try {
+    res.headers.set('cache-control', cacheControl);
+    return res;
+  } catch {
+    return withHeaders(res, { 'cache-control': cacheControl });
+  }
+}
+
 export function compileApplication(input: CompileInput): CompiledApp {
   const { logger, development, net, hosts } = input;
   const warnedHosts = new Set<string>();
@@ -191,9 +244,7 @@ export function compileApplication(input: CompileInput): CompiledApp {
       ? handler
       : async (req, server) => {
           const res = await handler(req, server);
-          return res === undefined || res.headers.has('cache-control')
-            ? res
-            : withHeaders(res, { 'cache-control': cacheControl });
+          return res === undefined ? res : withCacheControl(res, cacheControl);
         };
   const checkForwarded = forwardedWarning(net, logger);
   const globalOnError = createErrorHandler(input.globalFilters, logger, development);
@@ -207,25 +258,22 @@ export function compileApplication(input: CompileInput): CompiledApp {
   // header.
   let rootWildcard: BunHandler | undefined;
 
-  const wsHandlers = new Map<string, Handler>();
+  const wsTargets = new Map<string, UpgradeTarget>();
   /** Upgrades a handshake to the endpoint on its exact path; null when that path has none. */
   const upgradeEndpoint = async (req: Request, server: Server<any>) => {
-    const pathname = requestPathname(req);
-    const ws = wsHandlers.get(pathname);
-    return ws ? runUpgrade(input.ws, pathname, ws, req, server, net) : null;
+    const target = wsTargets.get(requestPathname(req));
+    return target ? runUpgrade(input.ws, target, req, server, net) : null;
   };
   for (const [path, endpoint] of input.ws.entries()) {
-    wsHandlers.set(
+    const handler = upgradeChain(
       path,
-      upgradeChain(
-        path,
-        endpoint,
-        input.ws,
-        input.globalMiddleware,
-        input.globalGuards,
-        globalOnError,
-      ),
+      endpoint,
+      input.ws,
+      input.globalMiddleware,
+      input.globalGuards,
+      globalOnError,
     );
+    wsTargets.set(path, upgradeTarget(input.ws, path, handler, null));
   }
 
   for (const mod of input.modules) {
@@ -342,7 +390,12 @@ export function compileApplication(input: CompileInput): CompiledApp {
           const endpoint = method === 'GET' ? input.ws.get(path) : undefined;
           // Upgrades are not validated, so the route's authorize guards see the raw ctx there.
           const ws = endpoint
-            ? upgradeChain(path, endpoint, input.ws, chain, [...guards, ...authorize], onError)
+            ? upgradeTarget(
+                input.ws,
+                path,
+                upgradeChain(path, endpoint, input.ws, chain, [...guards, ...authorize], onError),
+                info,
+              )
             : undefined;
           // A parametric or wildcard GET route can cover the exact path of an endpoint: its
           // upgrades go to that endpoint (global middleware and guards, ctx.route null), as if no
@@ -356,7 +409,7 @@ export function compileApplication(input: CompileInput): CompiledApp {
           const dispatch: BunHandler = async (req, server) => {
             if (misdirected(req)) return misdirectedResponse();
             checkForwarded(req);
-            if (ws && isUpgrade(req)) return runUpgrade(input.ws, path, ws, req, server, net, info);
+            if (ws && isUpgrade(req)) return runUpgrade(input.ws, ws, req, server, net);
             if (covers && isUpgrade(req)) {
               const upgraded = await upgradeEndpoint(req, server);
               if (upgraded !== null) return upgraded;

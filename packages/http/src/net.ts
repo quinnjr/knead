@@ -90,6 +90,12 @@ export function cidrMatcher(list: readonly string[]): (ip: string) => boolean {
 
 export function compileTrust(trust: TrustProxy): CompiledTrust {
   if (trust === false) return { kind: 'none' };
+  if (typeof trust !== 'number' && !Array.isArray(trust)) {
+    const got = typeof trust === 'string' ? JSON.stringify(trust) : String(trust);
+    throw new HttpConfigError(
+      `trustProxy must be false, a hop count or an array of CIDRs (such as ['10.0.0.0/8']), got ${got}.`,
+    );
+  }
   if (typeof trust === 'number') {
     if (!Number.isInteger(trust) || trust < 0) {
       throw new HttpConfigError(
@@ -109,6 +115,23 @@ function splitList(value: string | null): string[] {
     .reverse();
 }
 
+/**
+ * An `X-Forwarded-For` value as `resolveClientIp()` and `resolveSecure()` read it: the entries,
+ * nearest proxy first. Parse it once to pass the result to both.
+ */
+export function forwardedChain(forwardedFor: string | null): readonly string[] {
+  return splitList(forwardedFor);
+}
+
+/** A raw `X-Forwarded-For` value, or one already parsed by forwardedChain(). */
+export type ForwardedFor = string | null | readonly string[];
+
+function hopsOf(forwardedFor: ForwardedFor): readonly string[] {
+  return typeof forwardedFor === 'string' || forwardedFor === null
+    ? splitList(forwardedFor)
+    : forwardedFor;
+}
+
 /** Nearest valid IP at or to the right of `index` (towards the socket peer); the peer itself is the last resort. */
 function validAtOrBefore(chain: readonly string[], index: number): string {
   for (let i = index; i > 0; i--) if (parseIp(chain[i]!)) return chain[i]!;
@@ -117,12 +140,12 @@ function validAtOrBefore(chain: readonly string[], index: number): string {
 
 export function resolveClientIp(
   remote: string | undefined,
-  forwardedFor: string | null,
+  forwardedFor: ForwardedFor,
   trust: CompiledTrust,
 ): string | undefined {
   if (remote === undefined) return undefined;
   if (trust.kind === 'none' || !forwardedFor) return normalizeIp(remote);
-  const chain = [remote, ...splitList(forwardedFor)];
+  const chain = [remote, ...hopsOf(forwardedFor)];
   // Hop-count mode: the peer is trusted by definition (the operator declared N proxies in front).
   // A header with fewer entries than hops did not pass through every proxy: ignore it.
   if (trust.kind === 'hops') {
@@ -142,7 +165,7 @@ export function resolveClientIp(
 export function resolveSecure(
   tls: boolean,
   remote: string | undefined,
-  forwardedFor: string | null,
+  forwardedFor: ForwardedFor,
   forwardedProto: string | null,
   trust: CompiledTrust,
 ): boolean {
@@ -156,7 +179,7 @@ export function resolveSecure(
     index = trust.hops - 1;
   } else {
     if (!trust.isTrusted(remote)) return false;
-    const chain = [remote, ...splitList(forwardedFor)];
+    const chain = [remote, ...hopsOf(forwardedFor)];
     let trusted = 0;
     while (trusted < chain.length && trust.isTrusted(chain[trusted]!)) trusted++;
     index = trusted - 1;
@@ -208,6 +231,12 @@ export type HostMatcher = (host: string | null) => boolean;
  * brackets), matched case-insensitively against the Host header's hostname, ports ignored.
  */
 export function compileAllowedHosts(list: readonly string[]): HostMatcher {
+  if (!Array.isArray(list)) {
+    const got = typeof list === 'string' ? JSON.stringify(list) : String(list);
+    throw new HttpConfigError(
+      `allowedHosts must be an array of host names or false (such as ['example.com']), got ${got}.`,
+    );
+  }
   const allowed = new Set<string>();
   for (const entry of list) {
     const bracketed =

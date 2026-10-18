@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { Injectable, inject, Module } from '@knead-js/core';
-import type { HttpApplication } from '../src/application.js';
+import type { HttpApplication, ListenOptions } from '../src/application.js';
 import { KneadFactory } from '../src/application.js';
 import {
   Controller,
@@ -169,6 +169,20 @@ describe('forwarded headers without trustProxy', () => {
     const warnings = logger.entries.filter((e) => e.level === 'warn');
     expect(warnings).toHaveLength(1);
     expect(warnings[0]!.message).toContain('trustProxy');
+  });
+
+  test('X-Forwarded-Host alone also logs the single warning', async () => {
+    app = await start(EchoModule);
+    const logger = app.logger as MemoryLogger;
+    for (let i = 0; i < 3; i++) {
+      await fetch(new URL('/echo', app.url), {
+        method: 'POST',
+        headers: { 'x-forwarded-host': 'public.example' },
+      });
+    }
+    const warnings = logger.entries.filter((e) => e.level === 'warn');
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]!.message).toContain('X-Forwarded-*');
   });
 
   test('no warning when trustProxy is configured', async () => {
@@ -587,6 +601,23 @@ describe('errors that escape the pipeline', () => {
     expect(logger.entries.some((e) => e.level === 'error')).toBe(true);
   });
 
+  test('the masked 500 gets defaultCacheControl', async () => {
+    const logger = new ThrowingWarnLogger();
+    app = await start(
+      XModule,
+      { allowedHosts: ['good.example'], defaultCacheControl: 'no-store' },
+      { logger },
+    );
+    const res = await fetch(new URL('/x', app.url), { headers: { host: 'evil.example' } });
+    expect(res.status).toBe(500);
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    await app.close();
+    app = await start(XModule, { allowedHosts: ['good.example'] }, { logger });
+    const plain = await fetch(new URL('/x', app.url), { headers: { host: 'evil.example' } });
+    expect(plain.status).toBe(500);
+    expect(plain.headers.get('cache-control')).toBeNull();
+  });
+
   test('an HttpException whose extensions do not serialize answers without them', async () => {
     @Controller('/big')
     class Big {
@@ -626,9 +657,16 @@ describe('server limits are validated at listen()', () => {
   class Empty {}
   const bad: [string, unknown[]][] = [
     ['maxRequestBodySize', ['2048', 'abc', Number.POSITIVE_INFINITY, 0, -1, 1.5, Number.NaN]],
-    ['shutdownTimeout', [Number.NaN, -1, Number.POSITIVE_INFINITY, '10', 1.5]],
+    ['shutdownTimeout', [Number.NaN, -1, Number.POSITIVE_INFINITY, '10', 1.5, 2 ** 31]],
     ['idleTimeout', [-1, 256, 1.5, Number.NaN, '10']],
+    ['port', ['3000', Number.NaN, Number.POSITIVE_INFINITY, -1, 65536, 1.5]],
+    ['redirectHttp.port', ['80', Number.NaN, Number.POSITIVE_INFINITY, -1, 65536, 1.5]],
   ];
+  /** The listen() options that set `option` to `value` (redirectHttp needs tls). */
+  const optionsWith = (option: string, value: unknown): ListenOptions =>
+    option === 'redirectHttp.port'
+      ? { port: 0, tls: {}, redirectHttp: { port: value as number } }
+      : { port: 0, [option]: value };
   for (const [option, values] of bad) {
     test(`an invalid ${option} is an HttpConfigError and binds nothing`, async () => {
       for (const value of values) {
@@ -636,9 +674,12 @@ describe('server limits are validated at listen()', () => {
           logger: new MemoryLogger(),
           development: false,
         });
+        const serve = spyOn(Bun, 'serve');
         const failure = await created
-          .listen({ port: 0, hostname: '127.0.0.1', [option]: value })
-          .catch((e) => e);
+          .listen({ hostname: '127.0.0.1', ...optionsWith(option, value) })
+          .catch((e) => e)
+          .finally(() => serve.mockRestore());
+        expect(serve).not.toHaveBeenCalled();
         expect(failure).toBeInstanceOf(HttpConfigError);
         expect((failure as Error).message).toContain(option);
         expect(() => created.server).toThrow(HttpConfigError);
@@ -650,7 +691,51 @@ describe('server limits are validated at listen()', () => {
   test('boundary values are accepted', async () => {
     app = await start(Empty, { maxRequestBodySize: 1, idleTimeout: 255, shutdownTimeout: 0 });
     await app.close();
-    app = await start(Empty, { idleTimeout: 0 });
+    app = await start(Empty, { idleTimeout: 0, shutdownTimeout: 2 ** 31 - 1 });
+  });
+});
+
+describe('trustProxy and allowedHosts types are validated at listen()', () => {
+  @Module({})
+  class Empty {}
+  const cases: [string, unknown, RegExp][] = [
+    ['trustProxy', true, /trustProxy must be false, a hop count or an array of CIDRs/],
+    ['trustProxy', '10.0.0.0/8', /trustProxy must be false, a hop count or an array of CIDRs/],
+    ['trustProxy', { cidr: '10.0.0.0/8' }, /trustProxy must be/],
+    ['trustProxy', -1, /trustProxy hop count must be a non-negative integer/],
+    ['allowedHosts', 'localhost', /allowedHosts must be an array of host names or false/],
+    ['allowedHosts', true, /allowedHosts must be an array of host names or false/],
+    ['allowedHosts', new Set(['localhost']), /allowedHosts must be an array/],
+  ];
+  for (const [option, value, message] of cases) {
+    test(`${option}: ${String(value)} is an HttpConfigError and binds nothing`, async () => {
+      const created = await KneadFactory.create(Empty, {
+        logger: new MemoryLogger(),
+        development: false,
+      });
+      const serve = spyOn(Bun, 'serve');
+      const failure = await created
+        .listen({ port: 0, hostname: '127.0.0.1', [option]: value })
+        .catch((e) => e)
+        .finally(() => serve.mockRestore());
+      expect(serve).not.toHaveBeenCalled();
+      expect(failure).toBeInstanceOf(HttpConfigError);
+      expect((failure as Error).message).toMatch(message);
+      await created.close();
+    });
+  }
+
+  test('false, hop counts, CIDR arrays and host arrays are accepted', async () => {
+    for (const listen of [
+      { trustProxy: false, allowedHosts: false },
+      { trustProxy: 0 },
+      { trustProxy: 2, allowedHosts: ['localhost'] },
+      { trustProxy: ['10.0.0.0/8'], allowedHosts: [] },
+    ] satisfies ListenOptions[]) {
+      app = await start(Empty, listen);
+      await app.close();
+      app = undefined;
+    }
   });
 });
 

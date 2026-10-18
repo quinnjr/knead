@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { withCacheControl } from '../src/compiler.js';
 import { toResponse, withHeaders } from '../src/response.js';
 
 const draft = (init?: Bun.HeadersInit) => new Headers(init);
@@ -173,5 +174,34 @@ describe('withHeaders', () => {
       false,
     );
     expect(res.headers.get('x-a')).toBe('old');
+  });
+});
+
+describe('withCacheControl', () => {
+  test('sets Cache-Control in place, keeps an existing one, and is a no-op when unset', () => {
+    const res = new Response('x');
+    expect(withCacheControl(res, 'no-store')).toBe(res);
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    const own = new Response('x', { headers: { 'cache-control': 'max-age=5' } });
+    expect(withCacheControl(own, 'no-store').headers.get('cache-control')).toBe('max-age=5');
+    const plain = new Response('x');
+    expect(withCacheControl(plain, undefined).headers.has('cache-control')).toBe(false);
+  });
+
+  test('re-wraps a response whose headers are immutable', async () => {
+    const res = new Response('body', { status: 202, headers: { 'x-a': '1' } });
+    const headers = new Headers(res.headers);
+    Object.defineProperty(headers, 'set', {
+      value: () => {
+        throw new TypeError('immutable');
+      },
+    });
+    Object.defineProperty(res, 'headers', { value: headers });
+    const out = withCacheControl(res, 'no-store');
+    expect(out).not.toBe(res);
+    expect(out.status).toBe(202);
+    expect(out.headers.get('cache-control')).toBe('no-store');
+    expect(out.headers.get('x-a')).toBe('1');
+    expect(await out.text()).toBe('body');
   });
 });
