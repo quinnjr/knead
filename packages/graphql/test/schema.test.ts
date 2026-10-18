@@ -280,6 +280,22 @@ describe('schema build', () => {
     expect(await sdlOf([M], { orphanedTypes: [Extra] })).toContain('type Extra {');
   });
 
+  test('a @Resolver(() => T) target is built with only @Query methods and no field returning it', async () => {
+    @ObjectType()
+    class Target {
+      @Field(() => Int) n!: number;
+    }
+    @Resolver(() => Target)
+    class R {
+      @Query(() => Int) n() {
+        return 1;
+      }
+    }
+    @Module({ providers: [R] })
+    class M {}
+    expect(await sdlOf([M])).toContain('type Target {\n  n: Int!\n}');
+  });
+
   test('graphql-js validation errors are reported together', async () => {
     @ObjectType()
     class Empty {}

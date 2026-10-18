@@ -147,6 +147,31 @@ describe('mapError', () => {
     ).toBe(true);
   });
 
+  test('a throwing hooks.onError is only logged: the response keeps the formatted error', async () => {
+    let calls = 0;
+    s = await startGraphQL([M], {
+      hooks: {
+        // Leaven calls onError for an error thrown before execution, such as by another hook.
+        onExecute: () => {
+          if (calls === 0) throw new ForbiddenException('denied');
+        },
+        onError: () => {
+          calls++;
+          throw new Error('onError hook broke');
+        },
+      },
+    });
+    const res = await s.app.graphql('{ n }');
+    expect(calls).toBe(1);
+    expect(res.errors).toHaveLength(1);
+    expect(res.errors?.[0]).toMatchObject({ message: 'denied', extensions: { code: 'FORBIDDEN' } });
+    expect(JSON.stringify(res)).not.toContain('onError hook broke');
+    const logged = s.mod.logs.filter((e) => e.level === 'error' || e.level === 'warn');
+    expect(logged).toHaveLength(1);
+    expect(logged[0]!.message).toContain('hooks.onError threw');
+    expect((await s.app.graphql('{ n }')).data).toEqual({ n: 1 });
+  });
+
   test('a non-function mapError is rejected at bootstrap', async () => {
     await expect(startGraphQL([M], { mapError: 'x' as never })).rejects.toThrow(/mapError/);
   });
