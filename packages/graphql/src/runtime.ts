@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import {
   getMetadata,
   getMethodMetadata,
@@ -36,6 +37,7 @@ import {
   type SubscriptionIterator,
 } from '@leaven-graphql/core';
 import { DepthLimitError, type ErrorCode, LeavenError } from '@leaven-graphql/errors';
+import { isRequestError } from '@leaven-graphql/sse';
 import type { StandardSchemaV1 } from '@standard-schema/spec';
 import {
   type DocumentNode,
@@ -607,29 +609,97 @@ export function normalizeResponse<T>(
   return { ...response, errors };
 }
 
-/** LeavenExecutor whose request-level errors are normalized (used for HTTP and WebSocket). */
+/** The hooks Leaven runs before it selects and executes the operation. */
+const PRE_EXECUTION_HOOKS = ['onParse', 'onParsed', 'onValidate', 'onValidated'] as const;
+
+/**
+ * Wraps the pre-execution hooks so a throw from one (Knead's document limits run in `onParsed`)
+ * flags the current call: Leaven reports those throws without marking them as request
+ * rejections.
+ */
+function trackPreExecution(
+  hooks: ExecutionHooks | undefined,
+  calls: AsyncLocalStorage<{ rejected: boolean }>,
+): ExecutionHooks | undefined {
+  if (!hooks) return hooks;
+  const tracked: Record<string, unknown> = { ...hooks };
+  for (const name of PRE_EXECUTION_HOOKS) {
+    const hook = hooks[name] as ((...args: unknown[]) => unknown) | undefined;
+    if (!hook) continue;
+    tracked[name] = async (...args: unknown[]) => {
+      try {
+        await hook(...args);
+      } catch (error) {
+        const call = calls.getStore();
+        if (call) call.rejected = true;
+        throw error;
+      }
+    };
+  }
+  return tracked as ExecutionHooks;
+}
+
+/**
+ * LeavenExecutor whose request-level errors are normalized (used for HTTP, WebSocket and SSE),
+ * and which remembers which of its responses are request errors.
+ */
 export class GraphQLExecutor extends LeavenExecutor {
   readonly #masking: ErrorMaskingOptions;
+  readonly #calls: AsyncLocalStorage<{ rejected: boolean }>;
+  readonly #rejected = new WeakSet<object>();
 
   constructor(config: ExecutorConfig, masking: ErrorMaskingOptions) {
-    super(config);
+    const calls = new AsyncLocalStorage<{ rejected: boolean }>();
+    super({ ...config, hooks: trackPreExecution(config.hooks, calls) });
     this.#masking = masking;
+    this.#calls = calls;
   }
 
   override async execute<TData = Record<string, unknown>, TContext = unknown>(
     request: GraphQLRequest,
     context?: TContext,
   ): Promise<ExecutionResult<TData>> {
-    const result = await super.execute<TData, TContext>(request, context);
-    return { ...result, response: normalizeResponse(result.response, this.#masking) };
+    const call = { rejected: false };
+    const result = await this.#calls.run(call, () =>
+      super.execute<TData, TContext>(request, context),
+    );
+    return { ...result, response: this.#normalize(result.response, call.rejected) };
   }
 
   override async subscribe<TData = Record<string, unknown>, TContext = unknown>(
     request: GraphQLRequest,
     context?: TContext,
   ): Promise<SubscriptionIterator<TData> | GraphQLResponse<TData>> {
-    const result = await super.subscribe<TData, TContext>(request, context);
-    return Symbol.asyncIterator in result ? result : normalizeResponse(result, this.#masking);
+    const call = { rejected: false };
+    const result = await this.#calls.run(call, () =>
+      super.subscribe<TData, TContext>(request, context),
+    );
+    return Symbol.asyncIterator in result ? result : this.#normalize(result, call.rejected);
+  }
+
+  /**
+   * True for a response this executor's `execute` or `subscribe` returned when nothing ran: Leaven
+   * rejected the request before execution (`isRequestError` from `@leaven-graphql/sse`: syntax,
+   * parser limits, validation, operation selection, complexity, variable coercion) or a
+   * pre-execution hook threw (Knead's `maxFields`, `maxAliases`, `maxDepth` and
+   * `maxIntrospectionDepth` checks, or the application's `onParse`/`onParsed`/`onValidate`/
+   * `onValidated`). Identity-based: pass the response object as returned. Classified by where
+   * the error arose, never by its code, so an error raised after execution started (a resolver,
+   * `onExecute`, `onExecuted`) is never a request error.
+   */
+  isRequestError(response: GraphQLResponse<unknown>): boolean {
+    return this.#rejected.has(response);
+  }
+
+  /** Normalizes a response, keeping the request-error mark on the copy normalizeResponse may make. */
+  #normalize<TData>(
+    response: GraphQLResponse<TData>,
+    preExecution: boolean,
+  ): GraphQLResponse<TData> {
+    const rejected = isRequestError(response) || (preExecution && response.data === undefined);
+    const normalized = normalizeResponse(response, this.#masking);
+    if (rejected) this.#rejected.add(normalized);
+    return normalized;
   }
 }
 
@@ -649,7 +719,7 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
   readonly #modules = inject(MODULES);
   readonly #ws = inject(WsRegistry);
   #schema: GraphQLSchema | undefined;
-  #executor: LeavenExecutor | undefined;
+  #executor: GraphQLExecutor | undefined;
   #playground: PlaygroundGate | undefined;
   #endpoint: SubscriptionEndpoint | undefined;
   readonly #fieldGuards = new Map<Class, FieldGuardSet | undefined>();
@@ -660,7 +730,7 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
     return this.#schema;
   }
 
-  get executor(): LeavenExecutor {
+  get executor(): GraphQLExecutor {
     if (!this.#executor)
       throw new SchemaBuildError('The GraphQL executor is built during onModuleInit.');
     return this.#executor;
