@@ -209,8 +209,12 @@ export interface ResolvedGraphQLOptions {
   readonly csrf: { readonly requiredHeaders: readonly string[] } | false;
   readonly cacheControl: string | false;
   readonly subscriptions: SubscriptionOptions | false;
-  /** `false` when `subscriptions` or `subscriptions.sse` is `false`. */
-  readonly sse: { readonly keepAliveInterval: number } | false;
+  /**
+   * `false` when `subscriptions` or `subscriptions.sse` is `false`. `explicit` is whether the
+   * application set `keepAliveInterval`; otherwise each stream derives its interval from the
+   * HTTP idle timeout (see sse.ts).
+   */
+  readonly sse: { readonly keepAliveInterval: number; readonly explicit: boolean } | false;
   readonly orphanedTypes: readonly Class[];
   readonly guards: readonly GuardRef<ResolverCtx<any, any>>[];
   readonly defaultDeny: boolean;
@@ -406,7 +410,10 @@ export function resolveOptions(
     sse:
       options.subscriptions === false || options.subscriptions?.sse === false
         ? false
-        : { keepAliveInterval: options.subscriptions?.sse?.keepAliveInterval ?? 8000 },
+        : {
+            keepAliveInterval: options.subscriptions?.sse?.keepAliveInterval ?? 8000,
+            explicit: options.subscriptions?.sse?.keepAliveInterval !== undefined,
+          },
     orphanedTypes: options.orphanedTypes ?? [],
     guards: options.guards ?? [],
     defaultDeny: options.defaultDeny ?? false,

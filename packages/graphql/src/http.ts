@@ -10,7 +10,7 @@ import {
   requestUrl,
   UnsupportedMediaTypeException,
 } from '@knead-js/http';
-import type { GraphQLRequest } from '@leaven-graphql/core';
+import type { GraphQLRequest, GraphQLResponse } from '@leaven-graphql/core';
 import type { OperationKind } from './context.js';
 import { queryTooLongMessage } from './options.js';
 import { GraphQLRuntime, rejectionMessage } from './runtime.js';
@@ -122,6 +122,26 @@ function jsonParam(params: URLSearchParams, name: string): unknown {
   }
 }
 
+/**
+ * The status of a GraphQL response with no `data` under the graphql-response+json mapping: 500
+ * when any error is INTERNAL_SERVER_ERROR (a server failure), otherwise 400.
+ */
+export function noDataStatus(response: GraphQLResponse<unknown>): 400 | 500 {
+  const internal = response.errors?.some((e) => e.extensions?.code === 'INTERNAL_SERVER_ERROR');
+  return internal ? 500 : 400;
+}
+
+/** Headers of a JSON GraphQL response: `contentType`, nosniff and `options.cacheControl`. */
+export function jsonHeaders(runtime: GraphQLRuntime, contentType: string): Record<string, string> {
+  const headers: Record<string, string> = {
+    'content-type': `${contentType}; charset=utf-8`,
+    'x-content-type-options': 'nosniff',
+  };
+  const cacheControl = runtime.options.cacheControl;
+  if (cacheControl !== false) headers['cache-control'] = cacheControl;
+  return headers;
+}
+
 async function execute(
   runtime: GraphQLRuntime,
   ctx: Ctx,
@@ -144,17 +164,8 @@ async function execute(
   // a request error and 500 only for a server failure (INTERNAL_SERVER_ERROR). normalizeResponse
   // has already rewritten Leaven's codes: BAD_REQUEST is BAD_USER_INPUT (400), INTERNAL_ERROR is
   // INTERNAL_SERVER_ERROR (500).
-  let status = 200;
-  if (graphqlJson && response.data === undefined) {
-    const internal = response.errors?.some((e) => e.extensions?.code === 'INTERNAL_SERVER_ERROR');
-    status = internal ? 500 : 400;
-  }
-  const headers: Record<string, string> = {
-    'content-type': `${graphqlJson ? GRAPHQL_RESPONSE_JSON : 'application/json'}; charset=utf-8`,
-    'x-content-type-options': 'nosniff',
-  };
-  const cacheControl = runtime.options.cacheControl;
-  if (cacheControl !== false) headers['cache-control'] = cacheControl;
+  const status = graphqlJson && response.data === undefined ? noDataStatus(response) : 200;
+  const headers = jsonHeaders(runtime, graphqlJson ? GRAPHQL_RESPONSE_JSON : 'application/json');
   return new Response(JSON.stringify(response), { status, headers });
 }
 

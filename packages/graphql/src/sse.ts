@@ -4,13 +4,14 @@ import {
   ForbiddenException,
   MethodNotAllowedException,
   originAllowed,
+  ServiceUnavailableException,
 } from '@knead-js/http';
 import type { GraphQLRequest, GraphQLResponse } from '@leaven-graphql/core';
 import { createEventStreamResponse, isSubscriptionIterator } from '@leaven-graphql/sse';
 import { getOperationAST } from 'graphql';
 import type { OperationContext, OperationKind } from './context.js';
 import { logInternalError, toSafeError } from './errors.js';
-import { acceptQuality, GRAPHQL_RESPONSE_JSON } from './http.js';
+import { acceptQuality, GRAPHQL_RESPONSE_JSON, jsonHeaders, noDataStatus } from './http.js';
 import type { ConnectionParams } from './options.js';
 import { type GraphQLRuntime, rejectionMessage } from './runtime.js';
 
@@ -32,11 +33,14 @@ export function wantsEventStream(accept: string | null): boolean {
 export interface SseConnection {
   /** The subscription request's Ctx. */
   readonly http: Ctx;
-  /** The `context(http)` factory result with the object `onConnect` returned merged over it. */
-  readonly context: Readonly<Record<PropertyKey, unknown>>;
+  /**
+   * The `context(http)` factory result with the object `onConnect` returned merged over it.
+   * Empty until `onConnect` has settled.
+   */
+  context: Readonly<Record<PropertyKey, unknown>>;
   /** Ends the stream without `complete`: returns the iterator and closes the response body. */
   end(): void;
-  /** Whether `onConnect` has settled. */
+  /** Whether `onConnect` has settled (the connection is registered, with its slot, before). */
   initDone: boolean;
 }
 
@@ -53,19 +57,32 @@ export class SseConnections {
   }
 }
 
-const JSON_HEADERS = {
-  'content-type': 'application/json; charset=utf-8',
-  'x-content-type-options': 'nosniff',
-};
-
 /** A request error, answered as JSON (never a 200 stream, which the client would read as one). */
-function requestError(response: GraphQLResponse<unknown>): Response {
-  const internal = response.errors?.some((e) => e.extensions?.code === 'INTERNAL_SERVER_ERROR');
+function requestError(runtime: GraphQLRuntime, response: GraphQLResponse<unknown>): Response {
   return new Response(JSON.stringify(response), {
-    status: internal ? 500 : 400,
-    headers: JSON_HEADERS,
+    status: noDataStatus(response),
+    headers: jsonHeaders(runtime, 'application/json'),
   });
 }
+
+/** Leaven's default keep-alive interval, the most a derived interval uses. */
+const DEFAULT_KEEP_ALIVE = 8000;
+
+/**
+ * The keep-alive interval of a stream: the explicit `subscriptions.sse.keepAliveInterval` (checked
+ * against the idle timeout at listen()), or else half the HTTP idleTimeout, at most 8000 ms
+ * (8000 when there is no idle timeout), so Bun never closes a quiet stream.
+ */
+function keepAliveOf(
+  runtime: GraphQLRuntime,
+  sse: { keepAliveInterval: number; explicit: boolean },
+) {
+  if (sse.explicit) return sse.keepAliveInterval;
+  const idle = runtime.ws.httpIdleTimeout;
+  return idle === 0 ? DEFAULT_KEEP_ALIVE : Math.min(DEFAULT_KEEP_ALIVE, (idle * 1000) / 2);
+}
+
+const EMPTY_CONTEXT: Readonly<Record<PropertyKey, unknown>> = Object.freeze({});
 
 const FORBIDDEN = JSON.stringify({
   errors: [{ message: 'Forbidden', extensions: { code: 'FORBIDDEN' } }],
@@ -114,7 +131,7 @@ export async function handleSse(
 ): Promise<Response> {
   const { sse, subscriptions } = runtime.options;
   if (sse === false) throw new Error('GraphQL SSE is disabled; handleSse must not be called.');
-  const { keepAliveInterval } = sse;
+  const keepAliveInterval = keepAliveOf(runtime, sse);
   const headers = ctx.req.headers;
   const allowedOrigins = subscriptions === false ? undefined : subscriptions.allowedOrigins;
   if (!originAllowed(headers.get('origin'), headers.get('host'), ctx.secure, allowedOrigins)) {
@@ -132,7 +149,7 @@ export async function handleSse(
   op.operationName = request.operationName;
   const { response } = await runtime.executor.execute(request, op);
   assertNotRejected(op, allowed);
-  if (runtime.executor.isRequestError(response)) return requestError(response);
+  if (runtime.executor.isRequestError(response)) return requestError(runtime, response);
   return createEventStreamResponse(response, { keepAliveInterval });
 }
 
@@ -184,18 +201,11 @@ async function subscribe(
   request: GraphQLRequest,
   keepAliveInterval: number,
 ): Promise<Response> {
-  const accepted = await connect(runtime, ctx);
-  if (!accepted) return new Response(FORBIDDEN, { status: 403, headers: JSON_HEADERS });
-  const { base, extra } = accepted;
   const abort = new AbortController();
   const end = () => abort.abort();
-  const connection: SseConnection = {
-    http: ctx,
-    context: Object.freeze({ ...base, ...extra }),
-    end,
-    initDone: true,
-  };
-  // Throws 429 / 503 past the connection limits shared with WebSocket.
+  const connection: SseConnection = { http: ctx, context: EMPTY_CONTEXT, end, initDone: false };
+  // The slot is taken before onConnect, as a WebSocket upgrade reserves one, so pending onConnect
+  // calls are bounded by the connection limits. Throws 429 / 503 past them.
   runtime.ws.openStream(connection, ctx.ip, end);
   runtime.sse.add(connection);
   const signal = ctx.req.signal;
@@ -210,6 +220,27 @@ async function subscribe(
   // The client going away ends the stream, also while the subscription is being set up.
   signal.addEventListener('abort', end, { once: true });
   if (signal.aborted) end();
+  // connect() never throws: a refusing or throwing factory or onConnect is `false`. A pending
+  // onConnect does not hold the request once the stream is ended (shutdown, client gone).
+  const ended = new Promise<'ended'>((resolve) => {
+    if (abort.signal.aborted) resolve('ended');
+    else abort.signal.addEventListener('abort', () => resolve('ended'), { once: true });
+  });
+  const accepted = await Promise.race([connect(runtime, ctx), ended]);
+  if (accepted === 'ended') {
+    release();
+    throw new ServiceUnavailableException('The subscription ended before it started.');
+  }
+  if (accepted) connection.context = Object.freeze({ ...accepted.base, ...accepted.extra });
+  connection.initDone = true;
+  if (!accepted) {
+    release();
+    return new Response(FORBIDDEN, {
+      status: 403,
+      headers: jsonHeaders(runtime, 'application/json'),
+    });
+  }
+  const { extra } = accepted;
   let result: Awaited<ReturnType<GraphQLRuntime['executor']['subscribe']>>;
   try {
     const op = await runtime.createOperationContext(ctx, ['subscription'], extra);
@@ -222,7 +253,7 @@ async function subscribe(
   if (!isSubscriptionIterator(result)) {
     // Nothing streams: the slot is not needed.
     release();
-    if (runtime.executor.isRequestError(result)) return requestError(result);
+    if (runtime.executor.isRequestError(result)) return requestError(runtime, result);
     return createEventStreamResponse(result, { keepAliveInterval });
   }
   // An already aborted signal (the client left, or end() ran) makes the stream return the

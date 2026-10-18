@@ -152,6 +152,26 @@ async function open(query: string, topic: string, init: SseInit = {}) {
 /** The `detail` of an application/problem+json error response. */
 const detail = async (res: Response) => ((await res.json()) as { detail: string }).detail;
 
+/** Reads `res` until it has carried `count` `:` comment blocks or `ms` passed; returns the count. */
+async function commentsWithin(res: Response, count: number, ms: number): Promise<number> {
+  const reader = res.body!.pipeThrough(new TextDecoderStream()).getReader();
+  const deadline = Date.now() + ms;
+  let text = '';
+  const seen = () => text.split(':\n\n').length - 1;
+  try {
+    while (seen() < count && Date.now() < deadline) {
+      const chunk = await Promise.race([reader.read(), Bun.sleep(deadline - Date.now())]);
+      if (chunk && typeof chunk === 'object') {
+        if (chunk.done) break;
+        text += chunk.value;
+      }
+    }
+    return seen();
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+}
+
 async function expectJson(res: Response, status: number): Promise<any> {
   expect(res.status).toBe(status);
   expect(res.headers.get('content-type')).toBe('application/json; charset=utf-8');
@@ -539,10 +559,83 @@ describe('GraphQL over SSE', () => {
   test('keep-alive comments are sent at keepAliveInterval', async () => {
     await start({ subscriptions: { sse: { keepAliveInterval: 20 } } });
     const res = await send('subscription { t }');
-    const reader = res.body!.pipeThrough(new TextDecoderStream()).getReader();
-    let text = '';
-    while (!text.includes(':\n\n')) text += (await reader.read()).value ?? '';
-    await reader.cancel();
+    // The opening comment, then at least two keep-alives.
+    expect(await commentsWithin(res, 3, 2000)).toBe(3);
+  });
+
+  test('without keepAliveInterval, a stream keeps alive at half the idleTimeout', async () => {
+    // idleTimeout 6, not 4: Bun checks idle connections on a 4 s tick, and a connection with an
+    // idleTimeout of 4 s or less is closed at the next tick whatever it sends (measured on Bun
+    // 1.4.3), so no keep-alive can hold it open.
+    await start({}, [], { idleTimeout: 6 });
+    const res = await send('subscription { t }');
+    const opened = Date.now();
+    // The opening comment, then a keep-alive after about 3000 ms (not Leaven's default 8000).
+    expect(await commentsWithin(res, 2, 3800)).toBe(2);
+    expect(Date.now() - opened).toBeGreaterThanOrEqual(2900);
+    expect(Date.now() - opened).toBeLessThan(3800);
+  }, 10_000);
+
+  test('a query-only app listens with a short idleTimeout', async () => {
+    @Resolver()
+    class QueryOnly {
+      @Query(() => Int) n() {
+        return 1;
+      }
+    }
+    @Module({ providers: [QueryOnly] })
+    class Q {}
+    s = await startGraphQL([Q], {}, [], { idleTimeout: 5 });
+    expect(await all(await send('{ n }'))).toEqual([next({ data: { n: 1 } }), COMPLETE]);
+    // An app with subscriptions and no explicit keepAliveInterval listens too.
+    await s.mod.close();
+    await start({}, [], { idleTimeout: 1 });
+  });
+
+  test('the slot is taken before onConnect: pending onConnect calls are bounded', async () => {
+    let calls = 0;
+    await start(
+      {
+        subscriptions: {
+          onConnect: () => {
+            calls++;
+            return new Promise<boolean>(() => {});
+          },
+        },
+      },
+      [],
+      { websocket: { maxConnectionsPerIp: 1 } },
+    );
+    const first = send('subscription { t }');
+    await until(() => calls === 1);
+    const second = await send('subscription { t }');
+    expect(second.status).toBe(429);
+    expect(calls).toBe(1);
+    // close() does not wait for the pending onConnect.
+    const started = Date.now();
+    await s!.mod.close();
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect((await first).status).toBe(503);
+    s = undefined;
+  });
+
+  test('onConnect false gives the slot back', async () => {
+    let allow = false;
+    await start({ subscriptions: { onConnect: () => allow } }, [], {
+      websocket: { maxConnectionsPerIp: 1 },
+    });
+    expect((await send('subscription { t }')).status).toBe(403);
+    expect((await send('subscription { t }')).status).toBe(403);
+    allow = true;
+    const events = await open('subscription { t }', 't');
+    await events.return!();
+  });
+
+  test('request-error JSON carries cacheControl', async () => {
+    await start({ cacheControl: 'no-store' });
+    const res = await send('{ n');
+    expect(res.status).toBe(400);
+    expect(res.headers.get('cache-control')).toBe('no-store');
   });
 
   test('close() with an open SSE stream resolves quickly', async () => {

@@ -53,6 +53,9 @@ function open(started: Started, params: Record<string, unknown> = {}) {
   ws.onopen = () => ws.send(JSON.stringify({ type: 'connection_init', payload: params }));
   ws.onmessage = (e) => messages.push(JSON.parse(String(e.data)));
   const acked = until(() => messages.some((m) => m.type === 'connection_ack'));
+  // Tests that expect a refusal never await it: its timeout must not surface as an unhandled
+  // rejection in whichever test runs 2 s later.
+  acked.catch(() => {});
   return { ws, messages, closed, acked };
 }
 

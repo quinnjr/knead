@@ -116,6 +116,17 @@ describe('WsRegistry stream slots', () => {
     ws.closeStream(data);
     expect(statusOf(() => ws.openStream({}, '1.2.3.4', () => {}))).toBeUndefined();
   });
+
+  test('httpIdleTimeout records the idleTimeout of the last configure (default 10)', async () => {
+    const ws = await registry();
+    expect(ws.httpIdleTimeout).toBe(10);
+    ws.configure({}, { idleTimeout: 4 });
+    expect(ws.httpIdleTimeout).toBe(4);
+    ws.configure({}, { idleTimeout: 0 });
+    expect(ws.httpIdleTimeout).toBe(0);
+    ws.configure({});
+    expect(ws.httpIdleTimeout).toBe(10);
+  });
 });
 
 describe('WsRegistry keep-alive check', () => {

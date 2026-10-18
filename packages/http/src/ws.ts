@@ -316,6 +316,8 @@ export class WsRegistry {
   readonly #streams = new Map<object, () => void>();
   /** Set by endStreams() (shutdown): later streams are refused, until the next configure(). */
   #streamsEnded = false;
+  /** The HTTP idleTimeout (seconds) recorded by the last configure(); Bun's default is 10. */
+  #httpIdleTimeout = 10;
   /** Keep-alive intervals checked against the HTTP idle timeout at the next configure(). */
   readonly #keepAlives: { label: string; intervalMs: number }[] = [];
   readonly #log = {
@@ -419,6 +421,12 @@ export class WsRegistry {
     }
     this.#server = resolveServerOptions(options);
     this.#streamsEnded = false;
+    this.#httpIdleTimeout = idleTimeout;
+  }
+
+  /** @internal The HTTP idleTimeout in seconds recorded by `configure()` (0: none; default 10). */
+  get httpIdleTimeout(): number {
+    return this.#httpIdleTimeout;
   }
 
   /**
