@@ -1,5 +1,36 @@
 # @knead-js/graphql
 
+## 0.6.0
+
+### Patch Changes
+
+- 1175350: Fix GraphQL subscription and engine findings from the v0.4.0 conformance audit:
+  
+  - Each subscription event now resets `ctx.state` and its DataLoaders before its `filter` and its
+    `recheckGuards` recheck run, not only before its resolver. A rechecked guard that memoises roles in
+    `ctx.state` or loads them through `ctx.loader()` no longer passes on what subscribe time or the
+    previous event cached, and the event's resolvers see what its filter and recheck set.
+  - A throwing subscription `filter` is delivered in place of the event through the error formatter,
+    so a client `HttpException` (or one returned by `mapError`) keeps its `extensions.code`;
+    unexpected errors are still logged and masked. The subscription then ends, as before.
+  - `RedisPubSub` no longer subscribes a channel for a listener set that was ended (connection lost,
+    or its last listener left) while its SUBSCRIBE was queued, which leaked the channel and delivered
+    every later message twice.
+  - `RedisPubSub` rejects a `publishTimeout` above `2 ** 31 - 1` with an `HttpConfigError`.
+  - `@Resolver(() => T)` builds `T` even when the resolver has no `@ResolveField()` methods.
+  - A `PubSub` built by hand and passed as `pubsub` logs through `LOGGER` (redacted) instead of
+    `console`, unless it was given its own `logger`.
+  - The WebSocket handler no longer parses ping and pong frames twice.
+- f2537a3: Upgrade Leaven to 0.3.0 (`@leaven-graphql/core`, `errors` and `ws`).
+  
+  - Errors in the document itself now carry an `extensions.code`: a syntax error or too many tokens is `PARSE_ERROR`, and an unknown field, an invalid literal argument or a disabled introspection field is `VALIDATION_ERROR`. Their graphql-js messages are kept under `maskErrors`, and `application/graphql-response+json` still answers 400.
+  - A missing or unknown operation name, or a variable that does not coerce, is still `BAD_USER_INPUT` (Leaven now codes these `BAD_REQUEST`, which Knead maps).
+  - A repeated `connection_init` is still closed with 4429. Leaven does this itself now, so Knead's own guard is removed.
+- Updated dependencies [1175350]
+- Updated dependencies [1175350]
+  - @knead-js/core@0.6.0
+  - @knead-js/http@0.6.0
+
 ## 0.5.0
 
 ### Minor Changes

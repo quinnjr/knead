@@ -1,6 +1,6 @@
 {
   "name": "@knead-js/http",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Bun.serve HTTP(S) server: REST controllers, routing, guards, middleware and WebSockets for Knead, the NestJS-style web framework for Bun",
   "keywords": [
     "bun",

@@ -1,5 +1,14 @@
 # @knead-js/testing
 
+## 0.6.0
+
+### Patch Changes
+
+- Updated dependencies [1175350]
+- Updated dependencies [1175350]
+  - @knead-js/core@0.6.0
+  - @knead-js/http@0.6.0
+
 ## 0.5.0
 
 ### Minor Changes
