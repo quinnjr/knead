@@ -49,9 +49,13 @@ export function publishablePackages(root: string): PublishablePackage[] {
   return found.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-// SemVer 2.0 core plus an optional prerelease; no build metadata (npm ignores it).
-const RELEASE_TAG =
-  /^v((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)$/;
+// SemVer 2.0 core plus an optional prerelease; no build metadata (npm ignores it). A numeric
+// prerelease identifier has no leading zero (`-0` and `-0a` are valid, `-01` is not).
+const NUMBER = String.raw`(?:0|[1-9]\d*)`;
+const PRERELEASE_ID = String.raw`(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)`;
+const RELEASE_TAG = new RegExp(
+  String.raw`^v(${NUMBER}\.${NUMBER}\.${NUMBER}(?:-${PRERELEASE_ID}(?:\.${PRERELEASE_ID})*)?)$`,
+);
 
 /** Problems that block publishing `tag`; empty when the release may proceed. */
 export function checkReleaseTag(

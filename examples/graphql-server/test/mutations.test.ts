@@ -65,6 +65,21 @@ describe('mutations', () => {
     ]);
   });
 
+  test('a title needs at least 3 characters (after trimming), as the README says', async () => {
+    const short = await s.app.graphql(createPost, {
+      variables: { input: { title: ' ab ', body: 'hi' } },
+      headers: grace,
+    });
+    expect(short.errors?.[0]?.extensions?.code).toBe('BAD_USER_INPUT');
+    const ok = await s.app.graphql<{ createPost: { id: string; title: string } }>(createPost, {
+      variables: { input: { title: 'abc', body: 'hi' } },
+      headers: grace,
+    });
+    expect(ok.errors).toBeUndefined();
+    expect(ok.data?.createPost.title).toBe('abc');
+    await s.app.graphql(deletePost, { variables: { id: ok.data!.createPost.id }, headers: grace });
+  });
+
   test('publishPost: only the author or an admin', async () => {
     // Someone else's draft is invisible to Grace, so it is reported as not found.
     const hidden = await s.app.graphql('mutation { publishPost(id: "p4") { status } }', {

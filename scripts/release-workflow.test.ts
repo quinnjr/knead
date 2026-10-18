@@ -14,6 +14,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { listTarball, loadPublishRules, publishProblems } from './publish-rules.js';
 
 // Every test here runs the real publish step: bash, GNU tar over every allowed tarball and a node
 // process loading pacote. That normally takes 0.3-1 s, but under load (for example `pnpm test`
@@ -1051,6 +1052,77 @@ describe('release.yml publish step', () => {
   });
 });
 
+// check-pack.ts applies the publish step's rules to the real tarballs (through publish-rules.ts),
+// so CI fails on a tarball the release would refuse. Both must decide the same way.
+describe('publish-rules.ts agrees with the publish step', () => {
+  const rules = loadPublishRules(join(import.meta.dir, '../.github/workflows/release.yml'));
+  const casl = '@knead-js/casl';
+  test.each<[string, FakePackage, boolean]>([
+    [
+      'a clean package',
+      { name: casl, version: '1.2.3', manifest: { scripts: { test: 'x' } } },
+      false,
+    ],
+    [
+      'an unexpected entry',
+      { name: casl, version: '1.2.3', files: ['package/src/index.ts'] },
+      true,
+    ],
+    [
+      'a symlink',
+      { name: casl, version: '1.2.3', symlinks: [['package/dist/x.js', '/etc/passwd']] },
+      true,
+    ],
+    [
+      'a lifecycle script',
+      { name: casl, version: '1.2.3', manifest: { scripts: { install: 'x' } } },
+      true,
+    ],
+    ['a bin', { name: casl, version: '1.2.3', manifest: { bin: { x: 'dist/index.js' } } }, true],
+    [
+      'a registry override',
+      { name: casl, version: '1.2.3', manifest: { publishConfig: { registry: 'https://x/' } } },
+      true,
+    ],
+    [
+      'an unlisted dependency',
+      { name: casl, version: '1.2.3', manifest: { dependencies: { 'left-pad': '1.0.0' } } },
+      true,
+    ],
+    [
+      'a git specifier',
+      {
+        name: casl,
+        version: '1.2.3',
+        manifest: { dependencies: { '@casl/ability': 'github:evil/casl' } },
+      },
+      true,
+    ],
+    [
+      'allowed registry dependencies',
+      {
+        name: casl,
+        version: '1.2.3',
+        manifest: {
+          dependencies: { '@casl/ability': '6.7.3' },
+          peerDependencies: { '@knead-js/core': '^1.2.3' },
+        },
+      },
+      false,
+    ],
+  ])('%s (refused: %p)', (_, pkg, refused) => {
+    const r = publish('v1.2.3', [pkg]);
+    const tarball = join(r.tarballs, tarballName(pkg.name, pkg.version));
+    const manifest = JSON.parse(sh(['tar', '-xzOf', tarball, 'package/package.json'])) as Record<
+      string,
+      unknown
+    >;
+    const problems = publishProblems(manifest, listTarball(tarball), rules);
+    expect(r.exitCode !== 0).toBe(refused);
+    expect(problems.length > 0).toBe(refused);
+  });
+});
+
 /** Like publish(), but SUMS_SHA256 is the digest of the rewritten SHA256SUMS. */
 function publishWithConsistentDigest(
   tag: string,
@@ -1121,5 +1193,121 @@ describe('toolchain pins', () => {
       .map((s) => s.name);
     for (const check of ['Check pnpm version', 'Check Node version', 'Check Bun revision'])
       expect(steps).toContain(check);
+  });
+});
+
+describe('workflow invariants', () => {
+  const dir = join(import.meta.dir, '../.github/workflows');
+  const files = readdirSync(dir).filter((f) => /\.ya?ml$/.test(f));
+  interface Job {
+    uses?: string;
+    permissions?: Record<string, string> | string;
+    services?: Record<string, { image?: string }>;
+    steps?: Step[];
+  }
+  const parsed = new Map(
+    files.map((f) => {
+      const source = readFileSync(join(dir, f), 'utf8');
+      return [
+        f,
+        {
+          source,
+          wf: Bun.YAML.parse(source) as {
+            permissions?: Record<string, string> | string;
+            jobs: Record<string, Job>;
+          },
+        },
+      ] as const;
+    }),
+  );
+
+  test('finds every workflow', () => {
+    expect(files.sort()).toEqual(['ci.yml', 'codeql.yml', 'docs.yml', 'release.yml']);
+  });
+
+  test.each(files)('%s pins every action to a full commit SHA', (file) => {
+    const { source, wf } = parsed.get(file)!;
+    // Every `uses:` line in the source, comments allowed only as a trailing `# vX` version note.
+    const lines = source.split('\n').filter((l) => /^\s*(?:-\s+)?uses:/.test(l));
+    expect(lines.length).toBeGreaterThan(0);
+    const unpinned = lines.filter(
+      (l) =>
+        !/^\s*(?:-\s+)?uses:\s*[\w.-]+\/[\w./-]+@[0-9a-f]{40}(?:\s+#\s*v\d[\w.-]*)?\s*$/.test(l),
+    );
+    expect(unpinned).toEqual([]);
+    // And the parsed values (so a flow-style or quoted `uses` cannot slip past the line scan).
+    const uses = Object.values(wf.jobs).flatMap((job) => [
+      ...(job.uses ? [job.uses] : []),
+      ...(job.steps ?? []).flatMap((s) => (s.uses ? [s.uses] : [])),
+    ]);
+    expect(uses.length).toBe(lines.length);
+    for (const u of uses) expect(u).toMatch(/^[\w.-]+\/[\w./-]+@[0-9a-f]{40}$/);
+  });
+
+  test('id-token: write is granted only to the publish job and the Pages deploy job', () => {
+    const granted: string[] = [];
+    const grants = (p: Job['permissions']) =>
+      p === 'write-all' || (typeof p === 'object' && p['id-token'] === 'write');
+    for (const [file, { wf }] of parsed) {
+      if (grants(wf.permissions)) granted.push(file);
+      for (const [name, job] of Object.entries(wf.jobs)) {
+        if (grants(job.permissions)) granted.push(`${file}#${name}`);
+      }
+    }
+    // actions/deploy-pages needs an OIDC token; that job runs only the two Pages actions.
+    expect(granted.sort()).toEqual(['docs.yml#deploy', 'release.yml#publish']);
+    const deploy = parsed.get('docs.yml')!.wf.jobs.deploy!;
+    expect(deploy.steps?.map((s) => s.uses?.split('@')[0])).toEqual([
+      'actions/configure-pages',
+      'actions/deploy-pages',
+    ]);
+    expect(deploy.steps?.some((s) => s.run)).toBe(false);
+  });
+
+  test('the publish job uses only setup-node and download-artifact, and runs no repo code', () => {
+    const steps = workflow.jobs.publish?.steps ?? [];
+    const actions = new Set(steps.flatMap((s) => (s.uses ? [s.uses.split('@')[0]] : [])));
+    expect([...actions].sort()).toEqual(['actions/download-artifact', 'actions/setup-node']);
+    const code = steps
+      .map((s) => s.run ?? '')
+      .join('\n')
+      .split('\n')
+      .filter((l) => !/^\s*(?:#|\/\/)/.test(l))
+      .join('\n');
+    expect(code.length).toBeGreaterThan(0);
+    // In command position: error messages may mention `pnpm trust:npm`, which is run by hand.
+    const runsTool =
+      /(?:^|[;&|(`]|\b(?:then|do|else|exec|xargs))\s*(?:pnpm|bunx?|npx|yarn|corepack|git)\b/m;
+    for (const cmd of ['pnpm install', 'x && bun scripts/a.ts', 'v="$(git rev-parse HEAD)"'])
+      expect(cmd).toMatch(runsTool);
+    expect('fail "register it with pnpm trust:npm"').not.toMatch(runsTool);
+    expect(code).not.toMatch(runsTool);
+    expect(code).not.toMatch(/scripts\/|\.github\/|\bcheckout\b/);
+  });
+
+  test('ci.yml and release.yml run the same digest-pinned Redis', () => {
+    const image = (file: string) => {
+      const jobs = Object.values(parsed.get(file)!.wf.jobs);
+      const images = jobs.flatMap((j) =>
+        j.services?.redis?.image ? [j.services.redis.image] : [],
+      );
+      expect(images).toHaveLength(1);
+      return images[0]!;
+    };
+    expect(image('ci.yml')).toMatch(/^redis@sha256:[0-9a-f]{64}$/);
+    expect(image('release.yml')).toBe(image('ci.yml'));
+  });
+
+  test('every package declares engines.bun >= the pinned BUN_VERSION', () => {
+    const pinned = (parsed.get('ci.yml')!.wf as unknown as { env: Record<string, string> }).env
+      .BUN_VERSION;
+    expect(pinned).toMatch(/^\d+\.\d+\.\d+$/);
+    const root = join(import.meta.dir, '../packages');
+    const floors = readdirSync(root).map((pkg) => {
+      const manifest = JSON.parse(readFileSync(join(root, pkg, 'package.json'), 'utf8'));
+      return [pkg, manifest.engines?.bun];
+    });
+    expect(floors.length).toBeGreaterThan(10);
+    for (const [pkg, floor] of floors) expect([pkg, floor]).toEqual([pkg, `>=${pinned}`]);
   });
 });
