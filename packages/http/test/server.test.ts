@@ -373,6 +373,46 @@ describe('redirectToHttps hardening', () => {
     },
   );
 
+  test.skipIf(!hasOpenssl)(
+    "the redirect listener's 421 and masked 500 get defaultCacheControl",
+    async () => {
+      @Module({ controllers: [InfoController] })
+      class M {}
+      const serve = spyOn(Bun, 'serve');
+      let app: Awaited<ReturnType<typeof start>> | undefined;
+      try {
+        app = await start(M, {
+          tls: makeCert('redirect-cache'),
+          redirectHttp: { port: 0 },
+          allowedHosts: ['app.example'],
+          defaultCacheControl: 'private, max-age=0',
+        });
+        const evil = await fetch(new URL('/secure', app.redirectUrl), {
+          redirect: 'manual',
+          headers: { host: 'evil.example' },
+        });
+        expect(evil.status).toBe(421);
+        expect(evil.headers.get('cache-control')).toBe('private, max-age=0');
+        // The redirects keep their own no-store.
+        const good = await fetch(new URL('/secure', app.redirectUrl), {
+          redirect: 'manual',
+          headers: { host: 'app.example' },
+        });
+        expect(good.status).toBe(308);
+        expect(good.headers.get('cache-control')).toBe('no-store');
+        for (const [options] of serve.mock.calls) {
+          const { error } = options as { error: (e: Error) => Response };
+          const res = error(new Error('boom'));
+          expect(res.status).toBe(500);
+          expect(res.headers.get('cache-control')).toBe('private, max-age=0');
+        }
+      } finally {
+        serve.mockRestore();
+        await app?.close();
+      }
+    },
+  );
+
   test.skipIf(!hasOpenssl)('redirectHttp.host is used by the redirect listener', async () => {
     @Module({ controllers: [InfoController] })
     class M {}

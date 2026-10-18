@@ -254,17 +254,22 @@ function assertOrigin(path: string, entry: unknown): void {
  * Whether a WebSocket upgrade's Origin may connect: no Origin header (not a browser), `allowed`
  * is `'*'`, the origin is in `allowed`, or it is the same origin as the request (scheme from
  * `secure`, host and port from `host`, default ports 80/443 normalized). `"null"` is rejected.
+ * A set in `allowed` must hold normalized origins (as `new URL(entry).origin` gives them).
  */
 export function originAllowed(
   origin: string | null,
   host: string | null,
   secure: boolean,
-  allowed?: readonly string[] | '*',
+  allowed?: readonly string[] | ReadonlySet<string> | '*',
 ): boolean {
   if (origin === null || allowed === '*') return true;
   const normalized = originOf(origin);
   if (normalized === undefined) return false;
-  if (allowed?.some((entry) => originOf(entry) === normalized)) return true;
+  if (Array.isArray(allowed)) {
+    if (allowed.some((entry) => originOf(entry) === normalized)) return true;
+  } else if ((allowed as ReadonlySet<string> | undefined)?.has(normalized)) {
+    return true;
+  }
   if (host === null || !HOST_HEADER.test(host)) return false;
   return originOf(`${secure ? 'https' : 'http'}://${host}`) === normalized;
 }
@@ -298,6 +303,8 @@ function copyOwn(meta: object): Record<PropertyKey, unknown> {
 export class WsRegistry {
   readonly #endpoints = new Map<string, WsEndpoint<any>>();
   readonly #options = new Map<string, WsEndpointOptions>();
+  /** Each endpoint's allowedOrigins, normalized and copied at register(). */
+  readonly #origins = new Map<string, ReadonlySet<string> | '*'>();
   readonly #sockets = new Map<WsSocket, SocketState>();
   /** Sockets whose endpoint saw open: only those get message, drain and close. */
   readonly #opened = new WeakSet<WsSocket>();
@@ -369,6 +376,13 @@ export class WsRegistry {
       throw new HttpConfigError(`meta of ${normalized} must be an object`);
     }
     this.#endpoints.set(normalized, endpoint);
+    if (origins !== undefined) {
+      // A copy: changing the caller's array after register() cannot widen the check.
+      this.#origins.set(
+        normalized,
+        origins === '*' ? '*' : new Set(origins.map((entry) => originOf(entry)!)),
+      );
+    }
     this.#options.set(normalized, {
       ...options,
       meta: meta === undefined ? undefined : Object.freeze(copyOwn(meta)),
@@ -391,7 +405,7 @@ export class WsRegistry {
    */
   checkOrigin(path: string, ctx: Ctx): void {
     const headers = ctx.req.headers;
-    const allowed = this.#options.get(path)?.allowedOrigins;
+    const allowed = this.#origins.get(path);
     if (!originAllowed(headers.get('origin'), headers.get('host'), ctx.secure, allowed)) {
       throw new ForbiddenException('Cross-origin WebSocket connections are not allowed.');
     }

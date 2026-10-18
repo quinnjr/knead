@@ -11,6 +11,7 @@ import {
   compileApplication,
   misdirectedResponse,
   type RouteTableEntry,
+  withCacheControl,
 } from './compiler.js';
 import { ErrorLog, logError } from './error-log.js';
 import { HttpConfigError } from './exceptions.js';
@@ -31,6 +32,9 @@ import { APP_FILTER, APP_GUARD, APP_MIDDLEWARE } from './tokens.js';
 import type { FilterRef, GlobalMiddleware, GuardRef, MiddlewareRef } from './types.js';
 import type { ValidationOptions } from './validation.js';
 import { type WsData, WsRegistry, type WsServerOptions } from './ws.js';
+
+/** The longest delay setTimeout() honours: 2^31 - 1 ms. */
+const MAX_TIMEOUT = 2 ** 31 - 1;
 
 /** Default `maxRequestBodySize`: 1 MiB. */
 export const DEFAULT_MAX_REQUEST_BODY_SIZE = 1024 * 1024;
@@ -269,6 +273,8 @@ export class HttpApplication {
   #pendingListen: Promise<unknown> | undefined;
   readonly #signalHandlers: [NodeJS.Signals, () => void][] = [];
   #compiled: CompiledApp | undefined;
+  /** `listen({ defaultCacheControl })`, for the answers made outside the compiled routes. */
+  #defaultCacheControl: string | undefined;
   readonly #extraMiddleware: GlobalMiddleware[] = [];
   readonly #extraGuards: GuardRef<any>[] = [];
   readonly #extraFilters: FilterRef[] = [];
@@ -467,9 +473,12 @@ export class HttpApplication {
 
   async #listen(options: ListenOptions): Promise<Server<WsData>> {
     const { maxRequestBodySize, idleTimeout, shutdownTimeout } = options;
-    assertIntegerOption('shutdownTimeout', shutdownTimeout, 0);
+    // setTimeout() fires after ~1 ms for a delay of 2^31 ms or more.
+    assertIntegerOption('shutdownTimeout', shutdownTimeout, 0, MAX_TIMEOUT);
     // Set first: a close() during the late-init await bounds its wait with this timeout.
     this.shutdownTimeout = shutdownTimeout ?? 10_000;
+    assertIntegerOption('port', options.port, 0, 65535);
+    assertIntegerOption('redirectHttp.port', options.redirectHttp?.port, 0, 65535);
     assertIntegerOption('maxRequestBodySize', maxRequestBodySize, 1);
     assertIntegerOption('idleTimeout', idleTimeout, 0, 255);
     if (options.redirectHttp && options.tls === undefined) {
@@ -482,6 +491,8 @@ export class HttpApplication {
         `defaultCacheControl must be a header value, got ${JSON.stringify(cc)}.`,
       );
     }
+    // Before anything binds: Bun's error handler (#serverError) reads it.
+    this.#defaultCacheControl = cc;
     assertIntegerOption('maxParams', options.maxParams, 1);
     const canonicalHost = options.redirectHttp?.host;
     // Validated before anything binds; the origin is computed once the HTTPS port is known.
@@ -631,7 +642,9 @@ export class HttpApplication {
       error: this.#serverError,
       fetch: (req) => {
         if (origin !== undefined) return redirectTo(req, origin);
-        if (hosts !== undefined && !hosts(req.headers.get('host'))) return misdirectedResponse();
+        if (hosts !== undefined && !hosts(req.headers.get('host'))) {
+          return withCacheControl(misdirectedResponse(), this.#defaultCacheControl);
+        }
         return redirectToHttps(req, httpsPort);
       },
     });
@@ -639,7 +652,10 @@ export class HttpApplication {
 
   /** Bun's `error` handler: a rejection that escaped every handler, answered as a masked 500. */
   readonly #serverError = (error: Error): Response =>
-    internalErrorResponse(error, this, 'Unhandled error reached the server');
+    withCacheControl(
+      internalErrorResponse(error, this, 'Unhandled error reached the server'),
+      this.#defaultCacheControl,
+    );
 
   /** Global middleware, guards and filters are compiled by listen(): later calls would be lost. */
   #assertNotListening(method: string): void {

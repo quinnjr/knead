@@ -19,6 +19,7 @@ function upgradeStatus(
   app: HttpApplication,
   path: string,
   headers: string[] = [],
+  { key = true }: { key?: boolean } = {},
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     let buf = '';
@@ -33,7 +34,7 @@ function upgradeStatus(
               `Host: 127.0.0.1:${app.port}`,
               'Upgrade: websocket',
               'Connection: Upgrade',
-              'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
+              ...(key ? ['Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ=='] : []),
               'Sec-WebSocket-Version: 13',
               ...headers,
               '',
@@ -125,6 +126,13 @@ describe('originAllowed', () => {
     expect(originAllowed('null', 'api.example', true, allowed)).toBe(false);
     expect(originAllowed('https://evil.example', 'api.example', true, '*')).toBe(true);
   });
+
+  test('allowed may be a Set of normalized origins', () => {
+    const allowed = new Set(['https://app.example']);
+    expect(originAllowed('https://APP.example:443', 'api.example', true, allowed)).toBe(true);
+    expect(originAllowed('http://app.example', 'api.example', true, allowed)).toBe(false);
+    expect(originAllowed('https://api.example', 'api.example', true, allowed)).toBe(true);
+  });
 });
 
 describe('WebSocket origin check', () => {
@@ -165,6 +173,16 @@ describe('WebSocket origin check', () => {
     expect(await upgradeStatus(app, '/listed', ['Origin: https://evil.example'])).toContain('403');
     expect(await upgradeStatus(app, '/any', ['Origin: https://evil.example'])).toContain('101');
     expect(await upgradeStatus(app, '/strict', origin)).toContain('403');
+  });
+
+  test('allowedOrigins is copied at register(): later changes to the array have no effect', async () => {
+    const allowedOrigins = ['https://app.example'];
+    app = await startWith({ '/live': { options: { allowedOrigins } } });
+    allowedOrigins.push('https://evil.example');
+    allowedOrigins[0] = 'https://other.example';
+    expect(await upgradeStatus(app, '/live', ['Origin: https://evil.example'])).toContain('403');
+    expect(await upgradeStatus(app, '/live', ['Origin: https://other.example'])).toContain('403');
+    expect(await upgradeStatus(app, '/live', ['Origin: https://APP.example'])).toContain('101');
   });
 
   test('invalid allowedOrigins entries are configuration errors', async () => {
@@ -231,6 +249,67 @@ const closed = (socket: WebSocket) =>
   new Promise<number>((resolve) => {
     socket.onclose = (e) => resolve(e.code);
   });
+
+describe('the upgrade() result', () => {
+  test('undefined rejects the upgrade with 403 (fail closed), like false', async () => {
+    const opened: string[] = [];
+    app = await startWith({
+      '/undefined': {
+        endpoint: { upgrade: () => undefined, open: () => void opened.push('undefined') },
+      },
+      '/async-undefined': {
+        endpoint: { upgrade: async () => undefined, open: () => void opened.push('async') },
+      },
+      '/false': { endpoint: { upgrade: () => false } },
+    });
+    for (const path of ['/undefined', '/async-undefined', '/false']) {
+      expect(await upgradeStatus(app, path)).toContain('403');
+    }
+    const res = await fetch(new URL('/undefined', app.url), {
+      headers: {
+        upgrade: 'websocket',
+        connection: 'Upgrade',
+        'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==',
+        'sec-websocket-version': '13',
+      },
+    });
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { detail: string }).detail).toBe('WebSocket upgrade rejected');
+    expect(opened).toEqual([]);
+    expect(app.get(WsRegistry).openSockets).toBe(0);
+  });
+
+  test('null and {} are socket data: the upgrade is accepted', async () => {
+    const seen: unknown[] = [];
+    const open = (ws: WsSocket) => void seen.push(ws.data.data);
+    app = await startWith({
+      '/null': { endpoint: { upgrade: () => null, open } },
+      '/empty': { endpoint: { upgrade: () => ({}), open } },
+    });
+    for (const path of ['/null', '/empty']) {
+      const socket = await connect(app, path);
+      socket.close();
+    }
+    for (let i = 0; i < 50 && seen.length < 2; i++) await Bun.sleep(5);
+    expect(seen).toEqual([null, {}]);
+  });
+});
+
+describe('a handshake Bun cannot upgrade', () => {
+  test('is a 400 and releases its connection slot', async () => {
+    app = await startWith({ '/live': {} }, { websocket: { maxConnections: 1 } });
+    // No Sec-WebSocket-Key: server.upgrade() returns false after the slot was reserved.
+    expect(await upgradeStatus(app, '/live', [], { key: false })).toContain('400');
+    const res = await fetch(new URL('/live', app.url), {
+      headers: { upgrade: 'websocket', connection: 'Upgrade', 'sec-websocket-version': '13' },
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { detail: string }).detail).toBe('WebSocket upgrade failed');
+    const socket = await connect(app, '/live');
+    expect(socket.readyState).toBe(WebSocket.OPEN);
+    socket.close();
+  });
+});
 
 describe('Bun WebSocket limits', () => {
   test('defaults: 256 KiB payloads, 1 MiB backpressure (closing), 120s idle timeout', async () => {

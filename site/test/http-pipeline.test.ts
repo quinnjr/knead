@@ -2,7 +2,7 @@
 // guide/server and guide/websockets.
 import { afterEach, describe, expect, test } from 'bun:test';
 import { createConnection } from 'node:net';
-import { Module } from '@knead-js/core';
+import { Injectable, inject, Module } from '@knead-js/core';
 import {
   APP_GUARD,
   APP_MIDDLEWARE,
@@ -779,6 +779,27 @@ describe('websockets', () => {
       ...UPGRADE,
     ]);
     expect(same.split('\r\n')[0]).toBe('HTTP/1.1 101 Switching Protocols');
+  });
+
+  test('upgrade() returning undefined is a 403; null or {} accepts', async () => {
+    @Injectable()
+    class Gateway {
+      readonly #ws = inject(WsRegistry);
+      onModuleInit() {
+        this.#ws.register('/nothing', { upgrade: () => undefined });
+        this.#ws.register('/null', { upgrade: () => null });
+        this.#ws.register('/empty', { upgrade: () => ({}) });
+      }
+    }
+    @Module({ providers: [Gateway] })
+    class M {}
+    const app = await serve({ imports: [M] });
+    const port = Number(app.url.port);
+    const status = async (path: string) =>
+      (await raw(port, path, [`Host: 127.0.0.1:${port}`, ...UPGRADE])).split('\r\n')[0];
+    expect(await status('/nothing')).toBe('HTTP/1.1 403 Forbidden');
+    expect(await status('/null')).toBe('HTTP/1.1 101 Switching Protocols');
+    expect(await status('/empty')).toBe('HTTP/1.1 101 Switching Protocols');
   });
 
   test('the message rate closes a socket with 1008', async () => {
