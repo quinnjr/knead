@@ -1,4 +1,5 @@
 import type { ModuleImport } from './decorators.js';
+import { KneadError } from './errors.js';
 import { ContainerState, ModuleInjector } from './injector.js';
 import { ConsoleLogger, LOGGER, type Logger } from './logger.js';
 import { buildModuleGraph, MODULES, type ModuleRef } from './modules.js';
@@ -35,18 +36,24 @@ export class ApplicationContext {
     root: ModuleImport,
     options: CreateContextOptions = {},
   ): Promise<ApplicationContext> {
+    if (options.development !== undefined && typeof options.development !== 'boolean') {
+      throw new KneadError(
+        `The development option must be a boolean, got ${typeof options.development}.`,
+      );
+    }
     const state = new ContainerState(options.overrides);
     const graph = buildModuleGraph(root, options.globalModules ?? [], state);
     // MODULES is visible from every module: a synthetic global injector owns and exports it.
     const own = new ModuleInjector('ApplicationContext', state);
+    const modules = Object.freeze([...graph.modules]);
     own.addProvider({
       kind: 'value',
       token: MODULES,
-      value: Object.freeze([...graph.modules]),
+      value: modules,
       scope: 'singleton',
       multi: false,
     });
-    own.exported.set(MODULES, own);
+    own.exported.set(MODULES, [own]);
     // Defaults for LOGGER and DEVELOPMENT. `own` comes last in the globals, so a global module's
     // own registration (e.g. the HTTP core module) wins.
     own.addProvider({
@@ -56,7 +63,7 @@ export class ApplicationContext {
       scope: 'singleton',
       multi: false,
     });
-    own.exported.set(LOGGER, own);
+    own.exported.set(LOGGER, [own]);
     own.addProvider({
       kind: 'value',
       token: DEVELOPMENT,
@@ -64,7 +71,7 @@ export class ApplicationContext {
       scope: 'singleton',
       multi: false,
     });
-    own.exported.set(DEVELOPMENT, own);
+    own.exported.set(DEVELOPMENT, [own]);
     state.globals = [...state.globals, own];
 
     // Phase A: settle every singleton factory (async ones are awaited, dependents retried),
@@ -82,7 +89,7 @@ export class ApplicationContext {
         if (record.provider.scope === 'singleton') state.resolve(record);
       }
     }
-    const context = new ApplicationContext(graph.modules, graph.root, state);
+    const context = new ApplicationContext(modules, graph.root, state);
     await context.#initializePending();
     state.endBootstrap();
     return context;

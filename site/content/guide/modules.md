@@ -55,6 +55,13 @@ An entry in `exports` is one of:
 - an imported module (its class, or the dynamic module object), which re-exports everything that
   module exports.
 
+When two re-exported modules export the same ordinary token, the first in import order wins, as
+it does for the module's own lookups. For a
+[multi provider](/guide/dependency-injection/#multi-providers) token, exports add up instead: a
+module exports its own contributions (when it lists the token) and those of every module it
+re-exports the token from, own contributions first, then imports in import order. Listing a multi
+token re-exports it from every import that exports it.
+
 Anything else is a `ModuleDefinitionError` at startup, for example
 `UsersModule exports Database, which it neither provides nor imports.`
 

@@ -32,3 +32,11 @@ describe('MODULES token', () => {
     expect(ctx.get(MODULES)).toEqual([]);
   });
 });
+
+test('ApplicationContext.modules is the same frozen array as MODULES', async () => {
+  @Module({})
+  class Root {}
+  const ctx = await ApplicationContext.create(Root);
+  expect(ctx.modules).toBe(ctx.get(MODULES));
+  expect(Object.isFrozen(ctx.modules)).toBe(true);
+});

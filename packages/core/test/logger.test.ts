@@ -11,6 +11,16 @@ describe('logging in core', () => {
     expect(JSON.stringify(logger.entries[0])).toContain('Error: x');
   });
 
+  test('logError writes only the summary unless development is exactly true', () => {
+    for (const development of ['false', 1, 'yes']) {
+      const logger = new MemoryLogger();
+      const error = Object.assign(new Error('x'), { detail: 'request data' });
+      logError({ logger, development: development as never }, 'boom', error);
+      expect(logger.entries[0]?.meta).toEqual([]);
+      expect(logger.entries[0]?.message).toEndWith(': Error: x');
+    }
+  });
+
   test('logError in development still logs an Error whose message getter throws', () => {
     const logger = new MemoryLogger();
     const error = new Error('x');

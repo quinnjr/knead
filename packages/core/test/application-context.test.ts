@@ -8,6 +8,7 @@ import {
   InjectionContextError,
   InjectionToken,
   inject,
+  KneadError,
   LOGGER,
   MemoryLogger,
   Module,
@@ -394,6 +395,16 @@ describe('default LOGGER and DEVELOPMENT', () => {
     expect((await ApplicationContext.create(Root, { development: true })).get(DEVELOPMENT)).toBe(
       true,
     );
+  });
+
+  test('a development option that is not a boolean is a KneadError', async () => {
+    for (const development of ['false', 1, 'true', {}]) {
+      const create = ApplicationContext.create(Root, { development: development as never });
+      await expect(create).rejects.toThrow(KneadError);
+      await expect(
+        ApplicationContext.create(Root, { development: development as never }),
+      ).rejects.toThrow(/development option must be a boolean/);
+    }
   });
 
   test("a global module's LOGGER wins over the default", async () => {
