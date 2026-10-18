@@ -141,6 +141,21 @@ describe('Test.createModule', () => {
     expect(a).toBe(b);
   });
 
+  test('a failed createApp() is not cached, so a retry can start a new TestApp', async () => {
+    const blocker = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response() });
+    try {
+      mod = await Test.createModule({ imports: [GreetModule] }).compile();
+      await expect(mod.createApp({ port: blocker.port })).rejects.toThrow();
+    } finally {
+      blocker.stop(true);
+    }
+    const app = await mod.createApp();
+    expect(app).toBeInstanceOf(TestApp);
+    expect(app.url.port).not.toBe('0');
+    expect((await app.request('GET', '/greet')).status).toBe(200);
+    expect(await mod.createApp()).toBe(app);
+  });
+
   test('development defaults to true and errors are captured in logs', async () => {
     mod = await Test.createModule({ imports: [GreetModule] }).compile();
     const app = await mod.createApp();
@@ -215,6 +230,21 @@ describe('Test.createModule', () => {
     expect(mod.logger).toBe(custom);
     await (await mod.createApp()).request('GET', '/greet/boom');
     expect(custom.entries.some((e) => e.level === 'error')).toBe(true);
+  });
+
+  test('logs is empty with a logger that is not a MemoryLogger', async () => {
+    const calls: string[] = [];
+    const plain = {
+      debug: (m: string) => calls.push(m),
+      info: (m: string) => calls.push(m),
+      warn: (m: string) => calls.push(m),
+      error: (m: string) => calls.push(m),
+    };
+    mod = await Test.createModule({ imports: [GreetModule] }).compile({ logger: plain });
+    expect(mod.logger).toBe(plain);
+    await (await mod.createApp()).request('GET', '/greet/boom');
+    expect(calls.length).toBeGreaterThan(0);
+    expect(mod.logs).toEqual([]);
   });
 });
 

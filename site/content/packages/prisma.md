@@ -278,7 +278,8 @@ Runs `fn` through `TransactionHost.run()` with `propagation: 'requiresNew'` and
 `timeout: options.timeout ?? 30_000`, then forces a rollback, and resolves with `fn`'s value.
 `ctx` is a `TestingModule`, an `ApplicationContext` or anything else with `get(token)`. Errors
 thrown by `fn` propagate unchanged. Inner `@Transactional()` calls and `TransactionHost.run()`s
-join the test's transaction, so, as with any owning run, a rejection in one of them marks it
+join the test's transaction (runs with `propagation: 'requiresNew'` open their own transaction,
+which commits for real and is not undone by the rollback), so, as with any owning run, a rejection in one of them marks it
 rollback-only: even if `fn` catches it and resolves, `withRollback()` rejects with the
 `KneadError` `TransactionHost: transaction marked rollback-only by an inner failure`, whose
 `cause` is the inner rejection. If the client never ran `fn`, or the transaction did not end
