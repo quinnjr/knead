@@ -466,8 +466,11 @@ socket limits.
 
 ### Events
 
-- Each event gets fresh `ctx.loader()` DataLoaders and an empty `ctx.state`. `ctx.meta` and the
-  connection's context are the same for every event.
+- Each event gets fresh `ctx.loader()` DataLoaders and an empty `ctx.state`, before its `filter`
+  and its `recheckGuards` recheck run, so a guard that memoises roles in `ctx.state` or loads them
+  through `ctx.loader()` never reuses what subscribe time or an earlier event cached. The event's
+  resolvers see what its filter and recheck set. `ctx.meta` and the connection's context are the
+  same for every event.
 - One payload is shared by every subscriber, so its plain objects and arrays are deep-frozen when it
   arrives (`deepFreeze`); the in-memory `PubSub` freezes it in `publish()`, even with no
   subscriber. Class instances, `Date`s and `Map`s are not frozen or walked into. Publish

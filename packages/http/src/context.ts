@@ -1,5 +1,5 @@
 import type { BunRequest, Server } from 'bun';
-import { type CompiledTrust, resolveClientIp, resolveSecure } from './net.js';
+import { type CompiledTrust, forwardedChain, resolveClientIp, resolveSecure } from './net.js';
 import { headersToObject, parseBody, parseQuery, requestUrl } from './request.js';
 import type { Ctx, ResponseDraft, RouteInfo, UpgradeInfo } from './types.js';
 
@@ -23,6 +23,9 @@ export class RequestContext implements Ctx<any> {
   #ip: string | undefined;
   #ipResolved = false;
   #secure: boolean | undefined;
+  #remoteAddress: string | undefined;
+  #remoteResolved = false;
+  #chain: readonly string[] | undefined;
   #body: Promise<unknown> | undefined;
 
   constructor(
@@ -59,11 +62,7 @@ export class RequestContext implements Ctx<any> {
 
   get ip(): string | undefined {
     if (!this.#ipResolved) {
-      this.#ip = resolveClientIp(
-        this.#remote(),
-        this.req.headers.get('x-forwarded-for'),
-        this.net.trust,
-      );
+      this.#ip = resolveClientIp(this.#remote(), this.#forwardedFor(), this.net.trust);
       this.#ipResolved = true;
     }
     return this.#ip;
@@ -73,7 +72,7 @@ export class RequestContext implements Ctx<any> {
     this.#secure ??= resolveSecure(
       this.net.tls,
       this.#remote(),
-      this.req.headers.get('x-forwarded-for'),
+      this.#forwardedFor(),
       this.req.headers.get('x-forwarded-proto'),
       this.net.trust,
     );
@@ -90,7 +89,19 @@ export class RequestContext implements Ctx<any> {
     return this.#body as Promise<T>;
   }
 
+  /** The socket peer's address, looked up once (ip and secure both need it). */
   #remote(): string | undefined {
-    return this.server.requestIP(this.req)?.address;
+    if (!this.#remoteResolved) {
+      this.#remoteAddress = this.server.requestIP(this.req)?.address;
+      this.#remoteResolved = true;
+    }
+    return this.#remoteAddress;
+  }
+
+  /** X-Forwarded-For, parsed once; never read while trustProxy is off. */
+  #forwardedFor(): readonly string[] | null {
+    if (this.net.trust.kind === 'none') return null;
+    this.#chain ??= forwardedChain(this.req.headers.get('x-forwarded-for'));
+    return this.#chain;
   }
 }

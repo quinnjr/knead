@@ -1,22 +1,28 @@
 const INSPECT = Symbol.for('nodejs.util.inspect.custom');
 
 /**
- * Freezes `value` and, recursively, the values of its own enumerable properties (cycles are
- * handled). Plain objects, arrays and class instances end up immutable; the internal contents of
- * a Map, Set or Date (for example from a schema transform) are not properties, so they stay
- * mutable through the object's own methods.
+ * Freezes `value` and, recursively, the values of its own data properties, string and symbol keys
+ * alike (cycles are handled). Plain objects, arrays and class instances end up immutable; the
+ * internal contents of a Map, Set or Date (for example from a schema transform) are not
+ * properties, so they stay mutable through the object's own methods. Typed arrays, Buffers,
+ * DataViews and ArrayBuffers are left as they are (a typed array with elements cannot be
+ * frozen), so their bytes stay mutable too.
  */
 function deepFreeze<V>(value: V, seen = new WeakSet<object>()): V {
-  if (value !== null && typeof value === 'object' && !seen.has(value)) {
-    seen.add(value);
-    Object.freeze(value);
-    for (const child of Object.values(value)) deepFreeze(child, seen);
+  if (value === null || typeof value !== 'object' || seen.has(value)) return value;
+  if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer) return value;
+  seen.add(value);
+  Object.freeze(value);
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (descriptor && 'value' in descriptor) deepFreeze(descriptor.value, seen);
   }
   return value;
 }
 
 /**
- * Validated configuration, deep-frozen (see deepFreeze: Map, Set and Date contents are not frozen).
+ * Validated configuration, deep-frozen (see deepFreeze: Map, Set and Date contents and binary
+ * data are not frozen).
  * Never reveals values through JSON or inspection.
  */
 export class Config<T> {

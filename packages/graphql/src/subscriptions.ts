@@ -67,10 +67,21 @@ interface PeekedMessage {
   payload?: { query?: unknown } | null;
 }
 
+/**
+ * Whether `text` may be a frame whose type is one the message handler checks before Leaven
+ * (connection_init, subscribe or complete). Without a backslash, a JSON string holds its
+ * characters literally, so such a type must appear as is; any frame with an escape is parsed.
+ */
+const mayNeedPeek = (text: string): boolean =>
+  text.includes('\\') ||
+  text.includes('subscribe') ||
+  text.includes('complete') ||
+  text.includes('connection_init');
+
 /** The message as JSON, or undefined when it is not a JSON object (Leaven then rejects it). */
-function peek(message: string | Buffer): PeekedMessage | undefined {
+function peek(text: string): PeekedMessage | undefined {
   try {
-    const parsed: unknown = JSON.parse(typeof message === 'string' ? message : message.toString());
+    const parsed: unknown = JSON.parse(text);
     return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
       ? (parsed as PeekedMessage)
       : undefined;
@@ -429,7 +440,10 @@ export function createSubscriptionEndpoint(
       const facade = facades.get(ws);
       if (!facade) return;
       const state = stateOf(facade);
-      const parsed = peek(message);
+      // Leaven parses the frame again: skip the first parse for frames (pings, pongs) whose
+      // type cannot be one checked here.
+      const text = typeof message === 'string' ? message : message.toString();
+      const parsed = mayNeedPeek(text) ? peek(text) : undefined;
       if (parsed?.type === 'connection_init') {
         // Leaven marks the socket initialized only after awaiting onConnect, so two quick
         // connection_init messages would both be acknowledged.
@@ -484,7 +498,7 @@ export function createSubscriptionEndpoint(
         );
         return;
       }
-      await handler.handleMessage(asLeavenSocket(facade), message);
+      await handler.handleMessage(asLeavenSocket(facade), text);
     },
     async close(ws) {
       const facade = facades.get(ws);

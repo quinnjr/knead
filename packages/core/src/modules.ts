@@ -91,35 +91,77 @@ function unresolvedExport(node: Node, entry: ModuleExport): ModuleDefinitionErro
   );
 }
 
+/** Whether `token` is a multi token where `injector` holds its records. */
+function isMulti(injector: ModuleInjector, token: Token): boolean {
+  return injector.records.get(token)?.[0]?.provider.multi === true;
+}
+
+/**
+ * Fills `node.injector.exported`: for every exported token, the injectors whose own records hold
+ * it. An ordinary token has one owner: the module itself when it provides the token, otherwise the
+ * first import (in import order) it is re-exported from. A multi token collects every owner: the
+ * module itself first when it exports its own contributions, then those of each import it is
+ * re-exported from, in import order. Exporting a multi token by name re-exports it from every
+ * import that exports it.
+ */
 function computeExports(node: Node): void {
   const { injector, def } = node;
+  /** Tokens the module exports from its own providers. */
+  const own = new Set<Token>();
+  /** token → the imports it is re-exported from. */
+  const via = new Map<Token, Set<Node>>();
+  const reExport = (token: Token, child: Node) => {
+    const children = via.get(token);
+    if (children) children.add(child);
+    else via.set(token, new Set([child]));
+  };
   for (const entry of def.options.exports ?? []) {
     let matched = node.children.filter((c) => c.key === entry);
     if (matched.length === 0 || !isDynamicModule(entry)) {
       matched = node.children.filter((c) => matchesImport(c, entry));
     }
     if (matched.length > 0) {
-      for (const child of matched) {
-        for (const [token, owner] of child.injector.exported) {
-          // The module's own export of a token wins, whatever the order of its exports.
-          if (injector.exported.get(token) !== injector) injector.exported.set(token, owner);
-        }
-      }
+      for (const child of matched)
+        for (const token of child.injector.exported.keys()) reExport(token, child);
       continue;
     }
     if (isDynamicModule(entry)) throw unresolvedExport(node, entry);
     const token = entry as Token;
+    const from = node.children.filter((c) => c.injector.exported.has(token));
     if (injector.records.has(token)) {
-      injector.exported.set(token, injector);
+      own.add(token);
+      if (isMulti(injector, token)) for (const child of from) reExport(token, child);
       continue;
     }
-    const via = node.children.find((c) => c.injector.exported.has(token));
-    if (via) {
-      injector.exported.set(token, via.injector.exported.get(token)!);
-      continue;
-    }
-    throw unresolvedExport(node, entry);
+    if (from.length === 0) throw unresolvedExport(node, entry);
+    for (const child of from) reExport(token, child);
   }
+  for (const token of own) {
+    // The module's own export of an ordinary token wins, whatever the order of its exports.
+    if (!isMulti(injector, token)) {
+      injector.exported.set(token, [injector]);
+      via.delete(token);
+    }
+  }
+  for (const [token, children] of via) {
+    // Import order, not export order: the order lookups of the module itself use.
+    const ordered = node.children.filter(
+      (c, i) => children.has(c) && node.children.indexOf(c) === i,
+    );
+    const first = ordered[0]!.injector.exported.get(token)!;
+    if (!own.has(token) && !first.some((o) => isMulti(o, token))) {
+      injector.exported.set(token, first);
+      continue;
+    }
+    const owners: ModuleInjector[] = own.has(token) ? [injector] : [];
+    for (const child of ordered) {
+      for (const owner of child.injector.exported.get(token)!)
+        if (!owners.includes(owner)) owners.push(owner);
+    }
+    injector.exported.set(token, owners);
+  }
+  for (const token of own)
+    if (!injector.exported.has(token)) injector.exported.set(token, [injector]);
 }
 
 export function buildModuleGraph(

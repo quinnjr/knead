@@ -18,6 +18,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
+import { exportTargets, listTarball, loadPublishRules, publishProblems } from './publish-rules.js';
 
 const root = join(import.meta.dir, '..');
 const run = (cmd: string[], cwd: string) => {
@@ -27,16 +28,11 @@ const run = (cmd: string[], cwd: string) => {
   return { stdout: r.stdout.toString(), stderr: r.stderr.toString() };
 };
 
-const required = ['LICENSE-MIT', 'LICENSE-APACHE', 'README.md', 'dist/index.js', 'dist/index.d.ts'];
-// Subpath entry points shipped by individual packages.
-const requiredByPackage: Record<string, string[]> = {
-  '@knead-js/prisma': [
-    'dist/http/index.js',
-    'dist/http/index.d.ts',
-    'dist/testing/index.js',
-    'dist/testing/index.d.ts',
-  ],
-};
+// Every tarball also needs the files its published `exports` map points at (each subpath's
+// `types` and `default`), read from the manifest's publishConfig.exports.
+const required = ['LICENSE-MIT', 'LICENSE-APACHE', 'README.md'];
+// The rules the release workflow's publish job applies, checked here on the real tarballs.
+const publishRules = loadPublishRules(join(root, '.github/workflows/release.yml'));
 const forbidden = [/\.map$/, /\.tsbuildinfo$/, /\/src\//, /\/test\//];
 const problems: string[] = [];
 const args = process.argv.slice(2);
@@ -72,22 +68,25 @@ try {
       const tarball = join(from, expected);
       if (!existsSync(tarball)) throw new Error(`tarball ${expected} not found`);
       tarballs.set(label, tarball);
-      const entries = run(['tar', 'tzf', tarball], tmp)
-        .stdout.split('\n')
-        .filter(Boolean)
-        .map((e) => e.replace(/^package\//, ''));
+      const listing = listTarball(tarball);
+      const entries = listing.map((e) => e.name.replace(/^package\//, ''));
       for (const e of entries) {
         if (forbidden.some((re) => re.test(`/${e}`)))
           problems.push(`${label}: forbidden entry ${e}`);
       }
-      for (const r of [...required, ...(requiredByPackage[label] ?? [])]) {
+      const targets = exportTargets(pkg.publishConfig?.exports ?? pkg.exports);
+      if (targets.length === 0) problems.push(`${label}: package.json declares no exports`);
+      for (const r of [...required, ...targets]) {
         if (!entries.includes(r)) problems.push(`${label}: missing ${r}`);
       }
       const packed = run(['tar', 'xzf', tarball, '-O', 'package/package.json'], tmp).stdout;
       if (packed.includes('workspace:'))
         problems.push(`${label}: packed package.json contains workspace:`);
-      if (JSON.stringify(JSON.parse(packed).exports).includes('/src/'))
+      const packedManifest = JSON.parse(packed);
+      if (JSON.stringify(packedManifest.exports).includes('/src/'))
         problems.push(`${label}: exports point at src`);
+      for (const p of publishProblems(packedManifest, listing, publishRules))
+        problems.push(`${label}: ${p} (the release's publish step would refuse it)`);
       console.log(`${label}: ${entries.length} entries ok`);
     } catch (err) {
       problems.push(`${label}: ${(err as Error).message}`);

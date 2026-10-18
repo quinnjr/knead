@@ -61,7 +61,7 @@ outside any module. The constructor validates its options (see
 | `level` | `LogLevel` | `'debug'` when `development` is true, otherwise `'info'` | The lowest level written. |
 | `name` | `string` | `'knead'` | The `logger` field of every record. Must be non-empty. |
 | `fields` | `Readonly<Record<string, unknown>>` | `{}` | Fields added to every record. Must be a plain object without `toJSON`. Redacted once, when the logger is created. |
-| `development` | `boolean` | `NODE_ENV === 'development'` for `new JsonLogger()`; the application's development flag under `LoggingModule.forRoot()` | Whether errors are written in full (redacted stack, own properties and causes) rather than as `Name: message`. |
+| `development` | `boolean` | `NODE_ENV === 'development'` for `new JsonLogger()`; the application's development flag under `LoggingModule.forRoot()` | Whether errors are written in full (redacted stack, own properties and causes) rather than as `Name: message`. Any other value than a boolean is a `LoggingConfigError`. |
 | `write` | `(line: string, level: LogLevel) => unknown` | stdout for `debug` and `info`, stderr for `warn` and `error` | Receives each record as one line of JSON without the trailing newline. A throw or a rejected promise is ignored. |
 | `now` | `() => Date` | `() => new Date()` | The clock for the `time` field. |
 
@@ -147,8 +147,11 @@ childLogger(logger: Logger, fields: Readonly<Record<string, unknown>>): Logger
 
 Adds `fields` to every entry of any `Logger`. For a `JsonLogger` it returns `logger.child(fields)`.
 For any other logger it returns a wrapper that passes the fields as the first meta argument of
-every call; wrapping a wrapper merges the fields into one object (later fields win). Throws
-`LoggingConfigError: childLogger() fields must be a plain object without toJSON` for other values.
+every call; wrapping a wrapper merges the fields into one object (later fields win). Either way the
+fields are redacted once, when the child is created, and the reserved keys (`time`, `level`,
+`logger`, `msg`, `err`, `meta`) and `__proto__`, `constructor` and `prototype` are dropped. Throws
+`LoggingConfigError: childLogger() fields must be a plain object without toJSON` for other values,
+whatever the logger.
 Use it as `childLogger(inject(LOGGER), { component: 'invoices' })`.
 
 ## `validateJsonLoggerOptions()`

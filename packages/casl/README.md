@@ -121,7 +121,8 @@ Without a token, `GET /posts` is a `401`. Alice with a `posts:read` token can li
   every field of a GraphQL type.
 - **Safe token issuing.** `validateGrant()` refuses a grant that exceeds its user.
 - **Configuration errors at startup.** Invalid catalogs and options throw `CaslConfigError` (a
-  `KneadError`); nothing about the configuration fails at request time.
+  `KneadError`) at startup, never at request time. A route with `@PermittedFields()` but no
+  `AbilityGuard` is not caught at startup: it responds `403` to every request.
 
 ## The catalog
 

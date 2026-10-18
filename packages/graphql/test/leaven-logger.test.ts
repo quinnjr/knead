@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { LOGGER, type Logger } from '@knead-js/http';
 import { Test, type TestingModule } from '@knead-js/testing';
-import { GraphQLModule, PUBSUB, Query, Resolver } from '../src/index.js';
+import { GraphQLModule, PUBSUB, PubSub, Query, Resolver } from '../src/index.js';
 
 @Resolver()
 class Q {
@@ -54,6 +54,51 @@ describe("Leaven's diagnostics go through LOGGER", () => {
     }
     expect(leaked).toEqual([]);
     expect(JSON.stringify(logger.errors.map((a) => a.map(String)))).toContain('subscriber boom');
+  });
+});
+
+describe('a hand-built PubSub', () => {
+  async function throwingSubscriber(pubsub: PubSub, message: string) {
+    const original = console.error;
+    const leaked: unknown[] = [];
+    console.error = (...args: unknown[]) => leaked.push(args);
+    try {
+      pubsub.subscribe('t', () => {
+        throw new Error(message);
+      });
+      pubsub.publish('t', 1);
+      await Bun.sleep(5);
+    } finally {
+      console.error = original;
+    }
+    return leaked;
+  }
+
+  test('passed as `pubsub` logs a throwing subscriber through LOGGER, redacted', async () => {
+    const logger = spyLogger();
+    const pubsub = new PubSub();
+    mod = await Test.createModule({ imports: [GraphQLModule.forRoot({ pubsub })], providers: [Q] })
+      .overrideProvider(LOGGER)
+      .useValue(logger)
+      .compile({ development: false });
+    const leaked = await throwingSubscriber(pubsub, 'boom at redis://ada:hunter2@db');
+    expect(leaked).toEqual([]);
+    const logged = JSON.stringify(logger.errors.map((a) => a.map(String)));
+    expect(logged).toContain('boom at');
+    expect(logged).not.toContain('hunter2');
+  });
+
+  test('keeps a logger passed to its constructor', async () => {
+    const own = spyLogger();
+    const app = spyLogger();
+    const pubsub = new PubSub({ logger: own });
+    mod = await Test.createModule({ imports: [GraphQLModule.forRoot({ pubsub })], providers: [Q] })
+      .overrideProvider(LOGGER)
+      .useValue(app)
+      .compile({ development: false });
+    expect(await throwingSubscriber(pubsub, 'own boom')).toEqual([]);
+    expect(JSON.stringify(own.errors.map((a) => a.map(String)))).toContain('own boom');
+    expect(app.errors).toEqual([]);
   });
 });
 

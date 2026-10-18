@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { CorsModule } from '@knead-js/cors';
-import { Controller, type Ctx, Get } from '@knead-js/http';
+import { Controller, type Ctx, Get, HttpConfigError } from '@knead-js/http';
 import { RateLimitModule } from '@knead-js/rate-limit';
 import { Test, type TestingModule } from '@knead-js/testing';
 import {
@@ -247,5 +247,65 @@ describe('short HSTS max-age', () => {
       await mod.close();
       mod = undefined;
     }
+  });
+});
+
+describe('merged HSTS options are validated at startup', () => {
+  async function create(options: SecurityHeadersOptions, controller: new () => object) {
+    mod = await Test.createModule({
+      imports: [SecurityHeadersModule.forRoot(options)],
+      controllers: [controller],
+    }).compile();
+    return mod.createApp({ trustProxy: ['127.0.0.1'] });
+  }
+
+  test('a route preload over a module maxAge under one year is rejected', async () => {
+    @Controller('/')
+    class PreloadRoute {
+      @Get('/') @SecurityHeaders({ strictTransportSecurity: { preload: true } }) home() {
+        return 'ok';
+      }
+    }
+    const app = create({ strictTransportSecurity: { maxAge: 86_400 } }, PreloadRoute);
+    await expect(app).rejects.toThrow(HttpConfigError);
+    await expect(app).rejects.toThrow('PreloadRoute.home');
+    await expect(app).rejects.toThrow('HSTS preload requires maxAge >= 31536000');
+  });
+
+  test('a controller includeSubDomains: false under a module preload is rejected', async () => {
+    @Controller('/')
+    @SecurityHeaders({ strictTransportSecurity: { includeSubDomains: false } })
+    class NoSubdomains {
+      @Get('/') home() {
+        return 'ok';
+      }
+    }
+    const app = create({ strictTransportSecurity: { preload: true } }, NoSubdomains);
+    await expect(app).rejects.toThrow('HSTS preload requires includeSubDomains.');
+  });
+
+  test('a route maxAge under one year over a module preload is rejected', async () => {
+    @Controller('/')
+    class ShortRoute {
+      @Get('/') @SecurityHeaders({ strictTransportSecurity: { maxAge: 86_400 } }) home() {
+        return 'ok';
+      }
+    }
+    const app = create({ strictTransportSecurity: { preload: true } }, ShortRoute);
+    await expect(app).rejects.toThrow(HttpConfigError);
+  });
+
+  test('valid merges start, and the merged header is sent', async () => {
+    @Controller('/')
+    class Valid {
+      @Get('/') @SecurityHeaders({ strictTransportSecurity: { preload: true } }) home() {
+        return 'ok';
+      }
+    }
+    const app = await create({ strictTransportSecurity: { maxAge: 63_072_000 } }, Valid);
+    const res = await app.request('GET', '/', { headers: { 'x-forwarded-proto': 'https' } });
+    expect(res.headers.get('strict-transport-security')).toBe(
+      'max-age=63072000; includeSubDomains; preload',
+    );
   });
 });

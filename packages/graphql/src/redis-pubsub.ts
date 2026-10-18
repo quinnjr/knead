@@ -74,6 +74,9 @@ const byteLength = (text: string) => Buffer.byteLength(text, 'utf8');
 /** Longest accepted maxSignatureAge: 10 minutes. */
 const MAX_SIGNATURE_AGE = 600_000;
 
+/** Longest accepted publishTimeout: the largest setTimeout delay (longer ones fire at once). */
+const MAX_PUBLISH_TIMEOUT = 2 ** 31 - 1;
+
 export interface RedisPubSubOptions {
   /**
    * Publisher connection (not closed by close()). The subscriber is always a dedicated duplicate.
@@ -122,7 +125,8 @@ export interface RedisPubSubOptions {
   maxSignatureAge?: number;
   /**
    * Milliseconds a publish waits for Redis: past it, publish() logs and resolves, and
-   * publishOrThrow() rejects. Default 2000. A supplied client should also set
+   * publishOrThrow() rejects. Default 2000; an integer from 1 to 2 ** 31 - 1 (the largest timer
+   * delay), else an HttpConfigError. A supplied client should also set
    * `enableOfflineQueue: false` and a `connectionTimeout`, so commands fail fast while Redis is
    * unreachable instead of queueing.
    */
@@ -203,9 +207,13 @@ export class RedisPubSub implements PubSubEngine {
     }
     this.#maxSignatureAge = maxAge;
     const publishTimeout = options.publishTimeout ?? 2000;
-    if (!Number.isInteger(publishTimeout) || publishTimeout < 1) {
+    if (
+      !Number.isInteger(publishTimeout) ||
+      publishTimeout < 1 ||
+      publishTimeout > MAX_PUBLISH_TIMEOUT
+    ) {
       throw new HttpConfigError(
-        `RedisPubSub publishTimeout must be a positive integer (ms); got ${String(publishTimeout)}.`,
+        `RedisPubSub publishTimeout must be an integer from 1 to ${MAX_PUBLISH_TIMEOUT} (ms); got ${String(publishTimeout)}.`,
       );
     }
     this.#publishTimeout = publishTimeout;
@@ -621,11 +629,28 @@ export class RedisPubSub implements PubSubEngine {
   }
 
   async #redisSubscribe(topic: string, listeners: Set<Listener>): Promise<void> {
-    if (this.#closed) return;
+    // A set that is no longer current was ended while this op waited in the queue (its
+    // connection was lost, or its last listener left): subscribing it would leak the channel,
+    // and the topic's next set would then SUBSCRIBE a second handler for it.
+    const stale = () => this.#closed || this.#topics.get(topic) !== listeners;
+    if (stale()) return;
     try {
       const subscriber = await this.#subscriberClient();
-      await subscriber.subscribe(this.#prefix + topic, (message) => this.#receive(topic, message));
-      this.#subscribed.add(listeners);
+      if (stale()) return;
+      const channel = this.#prefix + topic;
+      await subscriber.subscribe(channel, (message) => this.#receive(topic, message));
+      if (!stale()) {
+        this.#subscribed.add(listeners);
+        return;
+      }
+      // Ended while SUBSCRIBE was in flight: undo it here (a queued UNSUBSCRIBE skips sets that
+      // are not in #subscribed).
+      if (this.#closed) return;
+      try {
+        await subscriber.unsubscribe(channel);
+      } catch {
+        // The connection is gone (it was lost), and its subscriptions with it.
+      }
     } catch (error) {
       if (this.#closed) return;
       // State first, so a failing logger or callback cannot leave the topic stuck. A topic that

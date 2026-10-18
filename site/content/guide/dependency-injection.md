@@ -142,6 +142,11 @@ A malformed provider is a `ProviderConfigError` when the module graph is built:
 - `Provider for APP_CONFIG must define useClass, useValue, useFactory or useExisting.`
 - `UsersService is listed in the providers of UsersModule but is not decorated with @Injectable().`
 - `The provider for MAILER in AppModule uses SmtpMailer, which is not decorated with @Injectable().`
+- `The provider for MAILER in AppModule: useClass is undefined. This usually means a circular file import; check the import order of your files.`
+- `The provider for CLOCK in AppModule: useFactory must be a function, got 42.`
+
+`provide` and `useExisting` must be a class or an `InjectionToken`, `useClass` a class and
+`useFactory` a function.
 
 ## Scopes
 

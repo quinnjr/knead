@@ -210,8 +210,10 @@ a query or mutation sent over it never executes.
 - **Payloads are shared.** Plain objects and arrays are deep-frozen on arrival (the in-memory
   `PubSub` freezes them in `publish()`, even with no subscriber); class instances, `Date`s and
   `Map`s are not. Publish fresh DTOs, and build new objects in `resolve`.
-- **Per-event state.** Each event gets fresh DataLoaders and an empty `ctx.state`. A subscriber
-  more than 1000 events behind loses the oldest, with a warning.
+- **Per-event state.** Each event gets fresh DataLoaders and an empty `ctx.state`, before its
+  `filter` and its guard recheck run; that event's resolvers see what those set. Nothing cached at
+  subscribe time or by an earlier event carries over. A subscriber more than 1000 events behind
+  loses the oldest, with a warning.
 
 Authorization is decided when the socket connects and when each subscription starts. To revoke it
 later:

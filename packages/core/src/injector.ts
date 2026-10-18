@@ -194,8 +194,11 @@ export class ContainerState {
 export class ModuleInjector implements InjectorLike {
   readonly records = new Map<Token, ProviderRecord[]>();
   readonly imports: ModuleInjector[] = [];
-  /** token → the injector whose own records hold it (itself, or a re-exported module). */
-  readonly exported = new Map<Token, ModuleInjector>();
+  /**
+   * token → the injectors whose own records hold it (itself, or re-exported modules): one for an
+   * ordinary token, every contributing module for a multi token, own contributions first.
+   */
+  readonly exported = new Map<Token, readonly ModuleInjector[]>();
   readonly #constructed = new Map<Type, ProviderRecord>();
 
   constructor(
@@ -247,13 +250,15 @@ export class ModuleInjector implements InjectorLike {
     if (own && !own[0]!.provider.multi) return own;
     const collected: ProviderRecord[] = own ? [...own] : [];
     for (const source of this.#sources()) {
-      const records = source.exported.get(token)?.records.get(token);
-      if (!records) continue;
-      if (!records[0]!.provider.multi) {
-        if (collected.length === 0) return records;
-        continue;
+      for (const owner of source.exported.get(token) ?? []) {
+        const records = owner.records.get(token);
+        if (!records) continue;
+        if (!records[0]!.provider.multi) {
+          if (collected.length === 0) return records;
+          continue;
+        }
+        for (const r of records) if (!collected.includes(r)) collected.push(r);
       }
-      for (const r of records) if (!collected.includes(r)) collected.push(r);
     }
     return collected.length > 0 ? collected : undefined;
   }

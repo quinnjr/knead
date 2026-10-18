@@ -1,4 +1,6 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
+import type { Server } from 'bun';
+import { RequestContext } from '../src/context.js';
 import { compileTrust } from '../src/net.js';
 import { makeCtx } from './helpers.js';
 
@@ -40,6 +42,28 @@ describe('RequestContext', () => {
     const ctx = makeCtx(req, { address: '8.8.8.8', net: { trust: compileTrust(['10.0.0.0/8']) } });
     expect(ctx.ip).toBe('8.8.8.8');
     expect(ctx.secure).toBe(false);
+  });
+
+  test('ip and secure share one remote address and X-Forwarded-For lookup', () => {
+    for (const trust of [compileTrust(false), compileTrust(1), compileTrust(['10.0.0.0/8'])]) {
+      const req = new Request('http://localhost/', {
+        headers: { 'x-forwarded-for': '203.0.113.9', 'x-forwarded-proto': 'https' },
+      });
+      let lookups = 0;
+      const server = {
+        requestIP: () => {
+          lookups++;
+          return { address: '10.0.0.1', family: 'IPv4', port: 50000 };
+        },
+      } as unknown as Server<any>;
+      const get = spyOn(req.headers, 'get');
+      const ctx = new RequestContext(req, server, null, { trust, tls: false });
+      const first = [ctx.ip, ctx.secure];
+      expect([ctx.ip, ctx.secure]).toEqual(first);
+      expect(lookups).toBe(1);
+      expect(get.mock.calls.filter(([name]) => name === 'x-forwarded-for').length).toBeLessThan(2);
+      expect(first).toEqual(trust.kind === 'none' ? ['10.0.0.1', false] : ['203.0.113.9', true]);
+    }
   });
 
   test('json() parses once and is memoized', async () => {

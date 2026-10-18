@@ -46,7 +46,7 @@ build one internally; use it directly for applications without HTTP. See
 | `overrides` | `Iterable<readonly [Token, Provider]>` | none | Replaces the provider of each token in every module that registers it. Multi providers cannot be overridden; a token no module registers is unaffected. |
 | `globalModules` | `readonly ModuleImport[]` | `[]` | Modules added to the graph before the root module. Global only if they set `global: true`. |
 | `logger` | `Logger` | `new ConsoleLogger()` | The default value of `LOGGER`. A global module that provides `LOGGER` takes precedence. |
-| `development` | `boolean` | `process.env.NODE_ENV === 'development'` | The default value of `DEVELOPMENT`. |
+| `development` | `boolean` | `process.env.NODE_ENV === 'development'` | The default value of `DEVELOPMENT`. Any other value than `true`, `false` or `undefined` is a `KneadError`: `The development option must be a boolean, got string.` |
 
 ## Modules
 
@@ -78,7 +78,8 @@ separate module instance. See [dynamic modules](/guide/modules/#dynamic-modules)
 `type ModuleExport = Token | ModuleImport`: an entry of `exports`, either a token or an imported
 module to re-export. When a module exports a token it provides itself and also re-exports a
 module exporting the same token, importers see the module's own provider, whatever the order of
-`exports`.
+`exports`. A multi token instead collects every contribution the module exports: its own first,
+then those of each re-exported module, in import order.
 
 ### The `MODULES` token
 
@@ -240,8 +241,11 @@ provider or an unmarked class. `owner` names the declaring module in that error 
 | { kind: 'existing'; token: Token; existing: Token; scope: 'singleton'; multi: boolean }
 ```
 
-It throws `ProviderConfigError` for anything that is not a class or an object with `provide`, and
-for an object without `useClass`, `useValue`, `useFactory` or `useExisting`. The message describes an
+It throws `ProviderConfigError` for anything that is not a class or an object with `provide`, for
+an object without `useClass`, `useValue`, `useFactory` or `useExisting`, and for a malformed one:
+`provide` and `useExisting` must be a class or an `InjectionToken`, `useClass` a class and
+`useFactory` a function. An `undefined` value usually means a circular file import, and the
+message says so. The message describes an
 invalid object by its keys only (never its values, which may be credentials), and any other value
 redacted and capped at 64 characters.
 
@@ -384,7 +388,7 @@ injected `LOGGER` and `DEVELOPMENT`.
 | `development` | What is logged |
 | --- | --- |
 | `true` | `<message> (correlation id <id>)`, with the full error as meta, credentials redacted. An `Error` stays an `Error`: one with nothing to redact is passed as is, and one that needed redacting is passed as a copy whose `message` is redacted and whose `stack` is the redacted stack, causes and properties (`redactValue()`'s text). Other values are passed through `redactValue()`. |
-| `false` | `<message> (correlation id <id>): <summarizeError(error)>`, with no meta: only `Name: message`, no stack, cause or properties, which tend to hold request data. |
+| anything else | `<message> (correlation id <id>): <summarizeError(error)>`, with no meta: only `Name: message`, no stack, cause or properties, which tend to hold request data. |
 
 The message is passed through `redactCredentials()` in both cases. A logger that throws is
 ignored, so logging can never turn an error response into a second error. `logError()` does not

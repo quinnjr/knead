@@ -50,3 +50,21 @@ test('freezes own enumerable properties only: Map, Set and Date contents stay mu
   expect(config.get('set').has(2)).toBe(true);
   expect(config.get('date').getTime()).toBe(1);
 });
+test('typed arrays, Buffers and ArrayBuffers are kept as they are: their bytes stay mutable', () => {
+  const bytes = new Uint8Array([1, 2]);
+  const buffer = Buffer.from('key');
+  const raw = new ArrayBuffer(4);
+  const config = new Config({ bytes, buffer, raw, nested: { bytes } });
+  expect(Object.isFrozen(config.all())).toBe(true);
+  expect(Object.isFrozen(config.get('nested'))).toBe(true);
+  expect(config.get('bytes')).toBe(bytes);
+  expect(config.get('buffer').toString()).toBe('key');
+  config.get('bytes')[0] = 9;
+  expect(bytes[0]).toBe(9);
+  expect(config.get('raw').byteLength).toBe(4);
+});
+test('objects under symbol keys are frozen too', () => {
+  const key = Symbol('nested');
+  const config = new Config({ db: { [key]: { host: 'h' } } });
+  expect(Object.isFrozen(config.get('db')[key])).toBe(true);
+});

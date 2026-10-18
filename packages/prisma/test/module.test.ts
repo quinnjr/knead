@@ -16,6 +16,13 @@ describe('PrismaModule', () => {
     expect(() => PrismaModule.forRoot({ client: 42 } as never)).toThrow(KneadError);
   });
 
+  test('forRoot rejects a non-boolean disconnectOnShutdown', () => {
+    const fake = createFakeClient();
+    expect(() =>
+      PrismaModule.forRoot({ instance: fake, disconnectOnShutdown: 'yes' } as never),
+    ).toThrow(new KneadError('PrismaModule `disconnectOnShutdown` must be a boolean.'));
+  });
+
   test('forRootAsync validates its options eagerly', () => {
     const bad: unknown[] = [
       undefined,
@@ -182,7 +189,9 @@ describe('PrismaModule', () => {
   });
 
   test('an invalid client shape is a KneadError', async () => {
+    // An `instance` is checked when forRoot() is called; a factory's result only at bootstrap.
     expect(() => PrismaModule.forRoot({ instance: {} } as never)).toThrow(KneadError);
+    expect(() => PrismaModule.forRoot({ client: () => ({}) } as never)).not.toThrow();
     for (const bad of [undefined, {}, { $connect() {}, $disconnect() {} }]) {
       await expect(
         ApplicationContext.create(PrismaModule.forRoot({ client: () => bad } as never)),

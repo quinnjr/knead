@@ -134,9 +134,9 @@ describe('RateLimitGuard', () => {
       return { http, fields };
     }
 
-    async function guard(store: RateLimitStore, limit = 5) {
+    async function guard(store: RateLimitStore, limit = 5, key?: (ctx: Ctx) => string | undefined) {
       mod = await Test.createModule({
-        imports: [RateLimitModule.forRoot({ limit, window: '1m', middleware: false, store })],
+        imports: [RateLimitModule.forRoot({ limit, window: '1m', middleware: false, store, key })],
       }).compile();
       return mod.get(RateLimitGuard);
     }
@@ -169,6 +169,35 @@ describe('RateLimitGuard', () => {
       const override = { [RATE_LIMIT_META]: { limit: 20 } };
       await Promise.all(graphqlRequest(3, override).fields.map((ctx) => g.canActivate(ctx)));
       expect(calls).toEqual(Array(3).fill('guard:graphql Book.author|203.0.113.7'));
+    });
+
+    test('a custom module key receives the HTTP Ctx, not the ResolverCtx', async () => {
+      const { store, calls } = countingStore();
+      const seen: Ctx[] = [];
+      const g = await guard(store, 5, (ctx) => {
+        seen.push(ctx);
+        return ctx.req.headers.get('x-api-key') ?? undefined;
+      });
+      const { http, fields } = graphqlRequest(2);
+      http.req.headers.set('x-api-key', 'k1');
+      for (const ctx of fields) expect(await g.canActivate(ctx)).toBe(true);
+      expect(seen).toEqual([http, http]);
+      expect(calls).toEqual(['guard:global|k1']);
+    });
+
+    test('a custom @RateLimit({ key }) receives the HTTP Ctx, not the ResolverCtx', async () => {
+      const { store, calls } = countingStore();
+      const g = await guard(store);
+      const seen: Ctx[] = [];
+      const key = (ctx: Ctx) => {
+        seen.push(ctx);
+        return (ctx.state.accountId as string | undefined) ?? ctx.ip;
+      };
+      const { http, fields } = graphqlRequest(2, { [RATE_LIMIT_META]: { limit: 20, key } });
+      http.state.accountId = 'acct-1';
+      for (const ctx of fields) expect(await g.canActivate(ctx)).toBe(true);
+      expect(seen).toEqual([http, http]);
+      expect(calls).toEqual(Array(2).fill('guard:graphql Book.author|acct-1'));
     });
   });
 });

@@ -492,3 +492,25 @@ describe('redactValue object keys', () => {
     });
   });
 });
+
+describe('redactValue node budget', () => {
+  test('a graph of more than 20000 strings and objects ends in [Truncated]', () => {
+    // The array itself is one node, each string another.
+    const over = Array.from({ length: 20_000 }, (_, i) => `v${i}`);
+    const redacted = redactValue(over) as unknown[];
+    expect(redacted.at(-1)).toBe('[Truncated]');
+    expect(redacted.at(-2)).toBe('v19998');
+    expect(redacted.filter((v) => v === '[Truncated]')).toHaveLength(1);
+    // A shared reference counts once per path, so a wide graph of one object is bounded too.
+    const shared = { password: 'pw' };
+    const wide = redactValue(Array.from({ length: 30_000 }, () => shared)) as unknown[];
+    expect(wide.at(-1)).toBe('[Truncated]');
+    expect(wide[0]).toEqual({ password: '***' });
+  });
+
+  test('a graph within the budget is not truncated', () => {
+    const under = Array.from({ length: 19_999 }, (_, i) => ({ [`k${i % 10}`]: i }));
+    // 1 array + 19999 objects (numbers are not counted) = 20000 nodes.
+    expect(JSON.stringify(redactValue(under))).not.toContain('[Truncated]');
+  });
+});

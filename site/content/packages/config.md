@@ -143,8 +143,10 @@ class Config<T> {
 
 The validated configuration. The constructor deep-freezes `data` in place (cycles are handled),
 so `new Config({ ... })` is also how a test builds a replacement value. Freezing covers each object
-and array and the values of their own enumerable properties at any depth; the contents of a `Map`,
-`Set` or `Date` (for example from a schema transform) are not properties, so they stay mutable.
+and array and the values of their own properties (string and symbol keys) at any depth; the
+contents of a `Map`, `Set` or `Date` (for example from a schema transform) are not properties, so
+they stay mutable. Binary data (a `Uint8Array`, `Buffer`, other typed array, `DataView` or
+`ArrayBuffer`) is kept as it is, since a typed array cannot be frozen: its bytes stay mutable.
 
 | Member | Description |
 | --- | --- |

@@ -341,3 +341,70 @@ describe('re-exports', () => {
     }
   });
 });
+
+describe('re-exported ordinary tokens', () => {
+  test('two re-exported modules exporting one token: the first in import order wins', () => {
+    const TOKEN = new InjectionToken<string>('TOKEN');
+    @Module({ providers: [{ provide: TOKEN, useValue: 'a' }], exports: [TOKEN] })
+    class A {}
+    @Module({ providers: [{ provide: TOKEN, useValue: 'b' }], exports: [TOKEN] })
+    class B {}
+    @Module({ imports: [A, B], exports: [B, A] })
+    class Shared {}
+    @Module({ imports: [Shared] })
+    class App {}
+    expect(build(App).root.injector.get(TOKEN)).toBe('a');
+  });
+});
+
+describe('re-exported multi tokens', () => {
+  const PLUGINS = new InjectionToken<string[]>('PLUGINS');
+  const plugin = (value: string) => ({ provide: PLUGINS, useValue: value, multi: true as const });
+
+  @Module({ providers: [plugin('a')], exports: [PLUGINS] })
+  class A {}
+  @Module({ providers: [plugin('b')], exports: [PLUGINS] })
+  class B {}
+
+  test('re-exporting two modules that export a multi token collects both, in import order', () => {
+    @Module({ imports: [A, B], exports: [B, A] })
+    class Shared {}
+    @Module({ imports: [Shared] })
+    class App {}
+    expect(build(App).root.injector.get(PLUGINS)).toEqual(['a', 'b']);
+  });
+
+  test("a module's own contributions come first, then those of the re-exported modules", () => {
+    @Module({ imports: [A, B], providers: [plugin('own')], exports: [A, PLUGINS, B] })
+    class Shared {}
+    @Module({ imports: [Shared] })
+    class App {}
+    expect(build(App).root.injector.get(PLUGINS)).toEqual(['own', 'a', 'b']);
+  });
+
+  test('exporting a multi token re-exports the contributions of every import exporting it', () => {
+    @Module({ imports: [A, B], exports: [PLUGINS] })
+    class Shared {}
+    @Module({ imports: [Shared] })
+    class App {}
+    expect(build(App).root.injector.get(PLUGINS)).toEqual(['a', 'b']);
+  });
+
+  test('own contributions that are not exported stay private', () => {
+    @Module({ imports: [A], providers: [plugin('own')], exports: [A] })
+    class Shared {}
+    @Module({ imports: [Shared] })
+    class App {}
+    expect(build(App).root.injector.get(PLUGINS)).toEqual(['a']);
+  });
+
+  test('a re-exported chain collects every level once', () => {
+    @Module({ imports: [A, B], exports: [A, B] })
+    class Inner {}
+    @Module({ imports: [Inner, A], providers: [plugin('outer')], exports: [Inner, A, PLUGINS] })
+    class Outer {}
+    @Module({ imports: [Outer] })
+    class App {}
+    expect(build(App).root.injector.get(PLUGINS)).toEqual(['outer', 'a', 'b']);
+  });
+});
