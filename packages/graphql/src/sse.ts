@@ -10,10 +10,11 @@ import type { GraphQLRequest, GraphQLResponse } from '@leaven-graphql/core';
 import { createEventStreamResponse, isSubscriptionIterator } from '@leaven-graphql/sse';
 import { getOperationAST } from 'graphql';
 import type { OperationContext, OperationKind } from './context.js';
-import { logInternalError, toSafeError } from './errors.js';
+import { type ErrorMaskingOptions, logInternalError, toSafeError } from './errors.js';
 import { acceptQuality, GRAPHQL_RESPONSE_JSON, jsonHeaders, noDataStatus } from './http.js';
 import type { ConnectionParams } from './options.js';
 import { type GraphQLRuntime, rejectionMessage } from './runtime.js';
+import type { GraphQLConnection } from './subscriptions.js';
 
 /**
  * True when `accept` prefers `text/event-stream` (named explicitly) strictly over
@@ -44,9 +45,28 @@ export interface SseConnection {
   initDone: boolean;
 }
 
-/** The open SSE subscription streams of a GraphQLRuntime. */
+type ConnectionPredicate = (connection: GraphQLConnection) => boolean;
+
+/** What SseConnections reads from its GraphQLRuntime. */
+interface SseConnectionsHost {
+  readonly masking: ErrorMaskingOptions;
+  /** `listen({ websocket: { maxPendingRevocations } })`: the predicates kept per pending stream. */
+  readonly maxPendingRevocations: number;
+}
+
+/**
+ * The open SSE subscription streams of a GraphQLRuntime, for GraphQLSubscriptions.closeWhere.
+ * Shutdown ends them through WsRegistry.endStreams(), which holds their slots.
+ */
 export class SseConnections {
+  readonly #host: SseConnectionsHost;
   readonly #open = new Set<SseConnection>();
+  /** closeWhere predicates kept for streams whose onConnect has not settled. */
+  readonly #deferred = new Map<SseConnection, ConnectionPredicate[]>();
+
+  constructor(host: SseConnectionsHost) {
+    this.#host = host;
+  }
 
   add(connection: SseConnection): void {
     this.#open.add(connection);
@@ -54,6 +74,64 @@ export class SseConnections {
 
   delete(connection: SseConnection): void {
     this.#open.delete(connection);
+    this.#deferred.delete(connection);
+  }
+
+  /**
+   * Ends (without `complete`) every open stream whose connection matches `predicate` and returns
+   * how many. A stream whose onConnect has not settled also keeps the predicate, which settle()
+   * applies to its full identity; past maxPendingRevocations kept predicates it is ended instead
+   * (fail closed). A predicate that throws is logged and that stream is skipped.
+   */
+  closeWhere(predicate: ConnectionPredicate): number {
+    let count = 0;
+    for (const connection of [...this.#open]) {
+      if (!connection.initDone) {
+        const kept = this.#deferred.get(connection) ?? [];
+        if (kept.length >= this.#host.maxPendingRevocations) {
+          // Too many to keep: end it rather than let one escape.
+          this.#end(connection);
+          continue;
+        }
+        kept.push(predicate);
+        this.#deferred.set(connection, kept);
+      }
+      if (this.#matches(connection, predicate)) {
+        this.#end(connection);
+        count++;
+      }
+    }
+    return count;
+  }
+
+  /**
+   * Applies the predicates kept while onConnect was pending, once `connection.context` is set:
+   * false when one matches (the stream must not start).
+   */
+  settle(connection: SseConnection): boolean {
+    const kept = this.#deferred.get(connection) ?? [];
+    this.#deferred.delete(connection);
+    return !kept.some((predicate) => this.#matches(connection, predicate));
+  }
+
+  #matches(connection: SseConnection, predicate: ConnectionPredicate): boolean {
+    try {
+      // Truthy revokes, as for WebSocket sockets: a revocation errs towards ending the stream.
+      return Boolean(predicate({ http: connection.http, context: connection.context }));
+    } catch (error) {
+      logInternalError(
+        this.#host.masking,
+        'GraphQLSubscriptions.closeWhere predicate threw',
+        error,
+      );
+      return false;
+    }
+  }
+
+  /** Ends a stream once: it leaves the set now, so a later closeWhere does not count it again. */
+  #end(connection: SseConnection): void {
+    this.delete(connection);
+    connection.end();
   }
 }
 
@@ -208,11 +286,17 @@ async function subscribe(
   // calls are bounded by the connection limits. Throws 429 / 503 past them.
   runtime.ws.openStream(connection, ctx.ip, end);
   runtime.sse.add(connection);
+  const { subscriptions } = runtime.options;
+  const lifetime = subscriptions === false ? undefined : subscriptions.maxConnectionLifetime;
+  // At the limit the stream ends (no complete), so the client reconnects and passes onConnect
+  // again; counted from the slot, as a WebSocket's lifetime is from open.
+  const expiry = lifetime === undefined ? undefined : setTimeout(end, lifetime);
   const signal = ctx.req.signal;
   let released = false;
   const release = () => {
     if (released) return;
     released = true;
+    clearTimeout(expiry);
     signal.removeEventListener('abort', end);
     runtime.ws.closeStream(connection);
     runtime.sse.delete(connection);
@@ -233,7 +317,8 @@ async function subscribe(
   }
   if (accepted) connection.context = Object.freeze({ ...accepted.base, ...accepted.extra });
   connection.initDone = true;
-  if (!accepted) {
+  // A closeWhere issued while onConnect was pending is applied now, to the full identity.
+  if (!accepted || !runtime.sse.settle(connection)) {
     release();
     return new Response(FORBIDDEN, {
       status: 403,

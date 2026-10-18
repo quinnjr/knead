@@ -733,7 +733,7 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
   readonly #modules = inject(MODULES);
   readonly #ws = inject(WsRegistry);
   /** @internal The open SSE subscription streams. */
-  readonly sse = new SseConnections();
+  readonly sse = new SseConnections(this);
   #schema: GraphQLSchema | undefined;
   #executor: GraphQLExecutor | undefined;
   #playground: PlaygroundGate | undefined;
