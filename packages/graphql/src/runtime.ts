@@ -140,7 +140,7 @@ export function rejectWildcards(topics: string | readonly string[]): void {
   }
 }
 
-/** Stands in for an event whose rechecked guards denied; its resolver rethrows `error`. */
+/** Stands in for an event whose filter threw or whose rechecked guards denied; its resolver rethrows `error`. */
 class RevokedEvent {
   constructor(readonly error: unknown) {}
 }
@@ -149,7 +149,7 @@ class RevokedEvent {
  * Runs `check` before each event of `source`. When it throws, the next value is a RevokedEvent
  * and the iterator then ends (and unsubscribes).
  */
-function recheckEvents<T>(
+function checkEvents<T>(
   source: AsyncIterableIterator<T>,
   check: () => Promise<void>,
 ): AsyncIterableIterator<T | RevokedEvent> {
@@ -786,6 +786,8 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
     for (const ref of this.options.guards) assertGuardRef(ref, 'GraphQLModule guards');
     for (const resolver of discoverResolvers(this.#modules)) {
       const target = getMetadata(resolver.cls, RESOLVER)?.type?.();
+      // The target is built even when no field returns it, whatever the resolver's methods are.
+      if (target && !types.includes(target)) types.push(target);
       for (const def of getMetadata(resolver.cls, RESOLVER_METHODS) ?? []) {
         const spec = this.#spec(resolver, def);
         if (def.kind === 'query') query.push(spec);
@@ -815,7 +817,6 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
           }
           list.push(spec);
           typeFields.set(target, list);
-          if (!types.includes(target)) types.push(target);
         }
       }
     }
@@ -940,6 +941,10 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
     // The arguments validated at subscribe time, reused for every event of that subscription
     // (graphql-js passes each event the same contextValue; a subscription has one root field).
     const validated = new WeakMap<OperationContext, unknown>();
+    // Each event starts with fresh state and DataLoaders, reset by its first stage (the filter,
+    // then the guard recheck, then the resolver), so no stage sees what subscribe time or the
+    // previous event cached, and the later stages of an event see what the earlier ones set.
+    const resetIn = sub.filter ? 'filter' : sub.recheckGuards ? 'recheck' : 'resolve';
     spec.subscribe = marked(async (parent, args, op: OperationContext, info) => {
       const ctx = await prepare(parent, args, op, info, true);
       validated.set(op, ctx.args);
@@ -957,17 +962,22 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
       }
       const filter = sub.filter;
       let warned = false;
+      // A throwing filter lets its event through as this error, delivered (formatted, so a client
+      // HttpException keeps its code) in place of the event, which then ends the subscription.
+      let filterError: unknown;
       const events = eventIterator(
         this.pubsub,
         topics,
         filter
           ? async (payload) => {
+              op.resetForEvent();
               try {
                 // Built per event from op.user, so the filter sees a refreshContext identity.
                 const current = createResolverCtx(op, injector, meta, ctx.args, parent, info);
                 return await filter({ payload, args: ctx.args, ctx: current });
               } catch (error) {
-                throw toSafeError(error, this.masking, `${owner} filter`);
+                filterError = toSafeError(error, this.masking, `${owner} filter`);
+                return true;
               }
             }
           : undefined,
@@ -981,10 +991,13 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
           },
         },
       );
-      if (!sub.recheckGuards) return events;
+      if (!filter && !sub.recheckGuards) return events;
       const subscriptions = this.options.subscriptions;
       const refresh = subscriptions === false ? undefined : subscriptions.refreshContext;
-      return recheckEvents(events, async () => {
+      return checkEvents(events, async () => {
+        if (filterError !== undefined) throw filterError;
+        if (!sub.recheckGuards) return;
+        if (resetIn === 'recheck') op.resetForEvent();
         if (refresh) {
           let refreshed: unknown;
           try {
@@ -1010,7 +1023,7 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
       if (!validated.has(op)) {
         throw new BadRequestException('Subscriptions are only available over WebSocket.');
       }
-      op.resetForEvent();
+      if (resetIn === 'resolve') op.resetForEvent();
       const value = sub.resolve ? await sub.resolve(payload) : payload;
       const ctx = createResolverCtx(op, injector, meta, validated.get(op), value, info);
       const result = await call(ctx);

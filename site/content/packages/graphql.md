@@ -337,7 +337,7 @@ method.
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `topic` | `string \| ((ctx: SubscriptionCtx) => string \| readonly string[])` | required | Duplicate topics are subscribed once. A computed topic list of more than 100 distinct topics, or a computed topic containing `*` or `#` or longer than 256 characters, is `BAD_USER_INPUT`. |
-| `filter` | `({ payload, args, ctx }) => boolean \| Promise<boolean>` | none | Per event; `false` skips it. Its `ctx` carries the current context, as last replaced by `refreshContext`. A throw is logged and becomes a masked error. |
+| `filter` | `({ payload, args, ctx }) => boolean \| Promise<boolean>` | none | Per event; `false` skips it. Its `ctx` carries the current context, as last replaced by `refreshContext`, and the event's fresh `ctx.state`. An unexpected throw is logged and masked; a client `HttpException` (or one returned by `mapError`) keeps its code. The error is delivered in place of the event and ends the subscription. |
 | `resolve` | `(payload) => unknown` | none | Transforms each event before the method. |
 | `recheckGuards` | `boolean` | `false` | Re-run the root guards and `authorize` before every event; a denial delivers `FORBIDDEN` and ends the subscription. |
 
@@ -458,8 +458,10 @@ Leaven's in-memory engine, extended so that `publish(topic, payload)` deep-freez
 (`deepFreeze`) before delivering it, whether or not anything is subscribed: a publisher cannot
 change a payload after publishing it, with or without listeners. `new PubSub(config?)` with
 `maxSubscribersPerTopic` (default 10000; past it `subscribe` throws), `wildcards` (default `false`),
-`maxQueueSize` (default unbounded) and `logger` (default `console`; the module's default engine logs
-through `LOGGER` instead). `publish()` delivers synchronously, in-process only.
+`maxQueueSize` (default unbounded) and `logger`. Without a `logger`, an engine passed as the
+module's `pubsub` (like the module's default engine) logs through `LOGGER`, redacted, once the module
+initializes; before that, or when it is not given to the module, it logs to `console`. `publish()`
+delivers synchronously, in-process only.
 
 ### `RedisPubSub`
 
@@ -499,7 +501,7 @@ are deep-frozen.
 | `signingKey` | `RedisPubSubKey \| readonly RedisPubSubKey[]` | none | HMAC-SHA256 over the channel, a timestamp and the payload; unsigned, forged and stale messages are dropped. An array rotates keys: sign with the first, accept any. |
 | `encryptionKey` | `RedisPubSubKey \| readonly RedisPubSubKey[]` | none | AES-256-GCM with a random IV per message and the channel and timestamp as associated data. Rotates like `signingKey`. With both keys, the payload is encrypted and the envelope then signed. |
 | `maxSignatureAge` | `number` (ms) | `60000` | Oldest signed or encrypted message accepted, 1 to 600000. Messages dated more than 60 s ahead are dropped too. |
-| `publishTimeout` | `number` (ms) | `2000` | How long a publish waits for Redis. |
+| `publishTimeout` | `number` (ms) | `2000` | How long a publish waits for Redis. An integer from 1 to `2 ** 31 - 1` (the largest timer delay); anything else is an `HttpConfigError`. |
 | `maxMessageBytes` | `number` | `1048576` | Largest message (UTF-8, after signing and encryption), checked before any HMAC, decryption or parsing. |
 
 Keys must be at least 32 bytes; generate one with `openssl rand -base64 32` and use the same keys on
