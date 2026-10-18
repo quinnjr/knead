@@ -128,8 +128,8 @@ With a `JsonLogger` named `billing`, `run('b_17', 120)` writes:
 providers. On a `JsonLogger` it returns `logger.child(fields)`: the same level, name, sink and
 development flag, with `fields` added to (or replacing) the parent's fields. On any other logger
 (a `ConsoleLogger`, or the `MemoryLogger` of a test) it passes the fields as the first meta
-argument of every call, merging the fields of nested children, so tests see them too. Child fields
-are redacted once, when the child is created, and cannot set the reserved keys.
+argument of every call, merging the fields of nested children, so tests see them too. Either way,
+child fields are redacted once, when the child is created, and cannot set the reserved keys.
 
 ## Redaction
 

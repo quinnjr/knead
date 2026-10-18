@@ -353,6 +353,8 @@ describe('options', () => {
     [{ fields: new Map() }, 'fields'],
     [{ write: 'stdout' }, 'write'],
     [{ fields: { toJSON: () => ({}), a: 1 } }, 'toJSON'],
+    [{ development: 'false' }, 'development must be a boolean'],
+    [{ development: 1 }, 'development must be a boolean'],
   ])('rejects %p', (options, word) => {
     expect(() => new JsonLogger(options as JsonLoggerOptions)).toThrow(LoggingConfigError);
     expect(() => new JsonLogger(options as JsonLoggerOptions)).toThrow(word);
@@ -601,6 +603,37 @@ describe('development errors are bounded', () => {
   });
 });
 
+describe('collection caps', () => {
+  test('a Map of more than 1000 entries is cut at 1000, with a marker entry', () => {
+    const { logger, records } = capture();
+    const map = new Map(Array.from({ length: 1500 }, (_, i) => [`k${i}`, i]));
+    logger.info('m', { map });
+    const written = records()[0]!.map as Record<string, unknown>;
+    expect(Object.keys(written)).toHaveLength(1001);
+    expect(written.k999).toBe(999);
+    expect(written.k1000).toBeUndefined();
+    expect(written['…']).toBe('more entries omitted');
+  });
+
+  test('Headers of more than 1000 entries are cut the same way', () => {
+    const { logger, records } = capture();
+    const headers = new Headers(Array.from({ length: 1200 }, (_, i) => [`x-h${i}`, 'v']));
+    logger.info('h', { headers });
+    const written = records()[0]!.headers as Record<string, unknown>;
+    expect(Object.keys(written)).toHaveLength(1001);
+    expect(written['…']).toBe('more entries omitted');
+  });
+
+  test('a Map of exactly 1000 entries is written whole', () => {
+    const { logger, records } = capture();
+    const map = new Map(Array.from({ length: 1000 }, (_, i) => [`k${i}`, i]));
+    logger.info('m', { map });
+    const written = records()[0]!.map as Record<string, unknown>;
+    expect(Object.keys(written)).toHaveLength(1000);
+    expect(written['…']).toBeUndefined();
+  });
+});
+
 describe('childLogger()', () => {
   test('uses child() for a JsonLogger', () => {
     const { logger, records } = capture();
@@ -619,8 +652,35 @@ describe('childLogger()', () => {
     ]);
   });
 
-  test('rejects fields that are not a plain object', () => {
-    expect(() => childLogger(new MemoryLogger(), new Map() as never)).toThrow(LoggingConfigError);
+  test('rejects fields that are not a plain object, with one message for every logger', () => {
+    const message = 'childLogger() fields must be a plain object without toJSON';
+    for (const logger of [new MemoryLogger(), capture().logger]) {
+      expect(() => childLogger(logger, new Map() as never)).toThrow(LoggingConfigError);
+      expect(() => childLogger(logger, new Map() as never)).toThrow(message);
+    }
+  });
+
+  test('redacts the fields once, when the child is created, for any other Logger', () => {
+    const memory = new MemoryLogger();
+    const fields = { password: 'pw', dsn: 'postgres://app:secret@db/app', nested: { token: 't' } };
+    const child = childLogger(memory, fields);
+    fields.dsn = 'changed';
+    child.info('x');
+    expect(memory.entries[0]!.meta[0]).toEqual({
+      password: '***',
+      dsn: 'postgres://***@db/app',
+      nested: { token: '***' },
+    });
+  });
+
+  test('drops the reserved keys from the fields of any other Logger', () => {
+    const memory = new MemoryLogger();
+    const fields = JSON.parse(
+      '{"time":1,"level":2,"logger":3,"msg":4,"err":5,"meta":6,"__proto__":{"x":1},"job":"r"}',
+    );
+    childLogger(memory, fields).info('x');
+    expect(memory.entries[0]!.meta[0]).toEqual({ job: 'r' });
+    expect(Object.keys(memory.entries[0]!.meta[0] as object)).toEqual(['job']);
   });
 });
 

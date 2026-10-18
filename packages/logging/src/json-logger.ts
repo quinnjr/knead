@@ -86,7 +86,7 @@ function writeDefault(line: string, level: LogLevel): void {
 
 /** Throws a LoggingConfigError for an invalid option; called by JsonLogger and LoggingModule. */
 export function validateJsonLoggerOptions(options: JsonLoggerOptions): void {
-  const { level, name, fields, write, now } = options;
+  const { level, name, fields, development, write, now } = options;
   if (level !== undefined && !Object.hasOwn(LEVELS, level)) {
     throw new LoggingConfigError(
       `JsonLogger level must be one of ${Object.keys(LEVELS).join(', ')}, got ${String(level)}`,
@@ -97,6 +97,11 @@ export function validateJsonLoggerOptions(options: JsonLoggerOptions): void {
   }
   if (fields !== undefined && !isFieldsObject(fields)) {
     throw new LoggingConfigError('JsonLogger fields must be a plain object without toJSON');
+  }
+  if (development !== undefined && typeof development !== 'boolean') {
+    throw new LoggingConfigError(
+      `JsonLogger development must be a boolean, got ${typeof development}`,
+    );
   }
   if (write !== undefined && typeof write !== 'function') {
     throw new LoggingConfigError('JsonLogger write must be a function');
@@ -453,17 +458,32 @@ class FieldsLogger implements Logger {
 }
 
 /**
+ * `fields` as FieldsLogger passes them: redacted (redactValue), without the reserved keys or
+ * `__proto__`, `constructor` and `prototype`, like the fields of a JsonLogger.
+ */
+function redactedFields(fields: Readonly<Record<string, unknown>>): Record<string, unknown> {
+  const redacted = redactValue({ ...fields });
+  if (!isPlainObject(redacted)) return {};
+  return Object.fromEntries(
+    Object.keys(redacted)
+      .filter((key) => !RESERVED.has(key) && !DROPPED.has(key))
+      .map((key) => [key, redacted[key]]),
+  );
+}
+
+/**
  * A logger adding `fields` to every entry of `logger`, whatever LOGGER is configured: a
  * JsonLogger's child(), or for any other Logger (a MemoryLogger in tests, a ConsoleLogger) a
- * wrapper passing the fields as the first meta argument.
+ * wrapper passing the fields as the first meta argument. Either way the fields are redacted once,
+ * here, and cannot set the reserved keys.
  */
 export function childLogger(logger: Logger, fields: Readonly<Record<string, unknown>>): Logger {
-  if (logger instanceof JsonLogger) return logger.child(fields);
   if (!isFieldsObject(fields)) {
     throw new LoggingConfigError('childLogger() fields must be a plain object without toJSON');
   }
+  if (logger instanceof JsonLogger) return logger.child(fields);
   if (logger instanceof FieldsLogger) {
-    return new FieldsLogger(logger.base, { ...logger.fields, ...fields });
+    return new FieldsLogger(logger.base, { ...logger.fields, ...redactedFields(fields) });
   }
-  return new FieldsLogger(logger, { ...fields });
+  return new FieldsLogger(logger, redactedFields(fields));
 }
