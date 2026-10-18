@@ -573,31 +573,26 @@ export function checkAliases(document: DocumentNode, max: number): void {
   }
 }
 
-const OPERATION_NOT_FOUND = /^Operation "(.*)" not found(?: in document)?$/;
-
 /**
- * Leaven reports anything non-GraphQL thrown inside its pipeline (a failing custom cache, a
- * compiler error) as INTERNAL_ERROR with the raw message. The two client mistakes among them, a
- * missing or unknown operation name, become BAD_USER_INPUT as graphql-js reports them; every
- * other INTERNAL_ERROR is logged and becomes INTERNAL_SERVER_ERROR, masked when `maskErrors`.
+ * Leaven codes client mistakes in the request (a missing or unknown operation name, a variable
+ * that does not coerce) BAD_REQUEST; Knead reports client input as BAD_USER_INPUT. Anything
+ * non-GraphQL thrown inside Leaven's pipeline (a failing custom cache, a compiler error) is
+ * INTERNAL_ERROR with the raw message: it is logged and becomes INTERNAL_SERVER_ERROR, masked
+ * when `maskErrors`.
  */
 export function normalizeResponse<T>(
   response: GraphQLResponse<T>,
   masking: ErrorMaskingOptions,
 ): GraphQLResponse<T> {
-  if (!response.errors?.some((e) => e.extensions?.code === 'INTERNAL_ERROR')) return response;
+  const code = (error: { extensions?: { code?: unknown } }) => error.extensions?.code;
+  if (!response.errors?.some((e) => code(e) === 'INTERNAL_ERROR' || code(e) === 'BAD_REQUEST')) {
+    return response;
+  }
   const errors = response.errors.map((error) => {
-    if (error.extensions?.code !== 'INTERNAL_ERROR') return error;
-    const named = OPERATION_NOT_FOUND.exec(error.message);
-    const message =
-      error.message === 'No operation found in document'
-        ? 'Must provide operation name if query contains multiple operations.'
-        : named
-          ? `Unknown operation named "${named[1]}".`
-          : undefined;
-    if (message) {
-      return { ...error, message, extensions: { ...error.extensions, code: 'BAD_USER_INPUT' } };
+    if (code(error) === 'BAD_REQUEST') {
+      return { ...error, extensions: { ...error.extensions, code: 'BAD_USER_INPUT' } };
     }
+    if (code(error) !== 'INTERNAL_ERROR') return error;
     const correlationId = logInternalError(
       masking,
       'GraphQL execution failed inside Leaven',
