@@ -111,8 +111,9 @@ Rules to keep in mind:
   instead of running every job twice.
 - A class that no module lists as a provider is never instantiated, so its jobs never run.
   `SchedulerRegistry.list()` shows what was registered.
-- Jobs on a `transient` provider fail at bootstrap. A class provided by several modules registers
-  its jobs once.
+- Jobs on a `transient` or `multi: true` class provider fail at bootstrap (for a multi token, list
+  the class as its own provider and use `useExisting`). A class provided by several modules
+  registers its jobs once.
 - Job names default to `ClassName.methodName` and must be unique. Minifiers rename classes, so give
   jobs explicit names in minified builds.
 - **Runs may overlap.** A tick starts a new run even if the previous one is still going; guard
