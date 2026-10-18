@@ -48,8 +48,10 @@ export function parseGrant(input: unknown, permissions: Permissions): Grant | nu
   }
   if (typeof input === 'object' && input !== null) {
     const pairs: [string, string][] = [];
-    for (const key of Object.keys(input)) {
-      if (SKIPPED_KEYS.has(key)) continue;
+    // for...in with Object.hasOwn() visits the same own enumerable string keys, in the same order,
+    // as Object.keys(), but reads them one at a time, so an early return stops the walk.
+    for (const key in input) {
+      if (!Object.hasOwn(input, key) || SKIPPED_KEYS.has(key)) continue;
       const level = (input as Record<string, unknown>)[key];
       if (typeof level !== 'string') return null;
       // Stop before walking the rest of an oversized, attacker-supplied object.

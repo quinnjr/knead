@@ -88,7 +88,9 @@ module is global and exports `PrismaService`, `TransactionHost` and the `PRISMA_
 
 Options are checked when `forRoot()` is called, so a mistake fails before the application starts:
 the options need exactly one of `client` and `instance`, and the client must have `$connect()`,
-`$disconnect()` and `$transaction()` methods. Each problem is a `KneadError` such as
+`$disconnect()` and `$transaction()` methods. An `instance` is checked at that call too; the
+client a `client` factory returns is checked when the application bootstraps, which then fails.
+Each problem is a `KneadError` such as
 `PrismaModule options need exactly one of \`client\` or \`instance\`.`
 
 ### Typing the client
@@ -342,7 +344,8 @@ your repositories instead. See [testing](/guide/testing/).
 
 `withRollback(moduleRef, fn, options?)` from `@knead-js/prisma/testing` runs `fn` inside a
 transaction that is always rolled back, and resolves with `fn`'s value. Everything `fn` does
-through `PrismaService.db` joins that transaction, so nothing persists:
+through `PrismaService.db` joins that transaction and is rolled back with it, except
+`requiresNew` runs (see the caution below):
 
 <<< prisma/signup.test.ts#rollback title="signup.service.test.ts"
 
@@ -360,6 +363,11 @@ through `PrismaService.db` joins that transaction, so nothing persists:
 - It fails closed: if the client never runs `fn`, or the transaction does not end in the rollback
   it asked for, it throws a `KneadError` (`withRollback: rollback not confirmed`) instead of
   resolving.
+
+> [!CAUTION]
+> Inner `TransactionHost.run()` calls with `propagation: 'requiresNew'`, such as
+> `recordAttempt()` above, open a transaction of their own on another connection. It commits for
+> real, and the test's rollback does not undo it. Clean up what they write yourself.
 
 > [!CAUTION]
 > `withRollback()` does not cover requests sent to a real server (`createApp()` and `request()`, or
