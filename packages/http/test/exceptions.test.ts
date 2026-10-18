@@ -26,6 +26,25 @@ describe('HttpException', () => {
     expect(e.name).toBe('HttpException');
   });
 
+  test.each([
+    [408, 'Request Timeout'],
+    [410, 'Gone'],
+    [501, 'Not Implemented'],
+    [502, 'Bad Gateway'],
+    [504, 'Gateway Timeout'],
+  ] as const)(
+    '%p without a STATUS_TITLES entry gets its standard reason phrase',
+    (status, title) => {
+      expect(new HttpException(status).title).toBe(title);
+    },
+  );
+
+  test('an unregistered status falls back to "Error"; STATUS_TITLES wins over node:http', () => {
+    expect(new HttpException(499).title).toBe('Error');
+    // node:http calls 413 "Payload Too Large"; RFC 9110 renamed it.
+    expect(new HttpException(413).title).toBe('Content Too Large');
+  });
+
   test('toProblem includes detail, instance and extensions; extensions cannot override reserved keys', () => {
     const e = new HttpException(409, 'Email taken', {
       type: 'https://errors.example/conflict',

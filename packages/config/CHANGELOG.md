@@ -1,5 +1,14 @@
 # @knead-js/config
 
+## 0.4.0
+
+### Patch Changes
+
+- Updated dependencies [141cdf4]
+- Updated dependencies [141cdf4]
+- Updated dependencies [141cdf4]
+  - @knead-js/core@0.4.0
+
 ## 0.3.0
 
 ### Patch Changes

@@ -1,3 +1,4 @@
+import { STATUS_CODES } from 'node:http';
 import { KneadError } from '@knead-js/core';
 
 export const STATUS_TITLES: Readonly<Record<number, string>> = {
@@ -48,7 +49,8 @@ export class HttpException extends Error {
         `HttpException status must be an integer between 400 and 599, got ${status}`,
       );
     }
-    const title = options.title ?? STATUS_TITLES[status] ?? 'Error';
+    // STATUS_TITLES holds the RFC 9110 names; node:http's table covers every other registered code.
+    const title = options.title ?? STATUS_TITLES[status] ?? STATUS_CODES[status] ?? 'Error';
     super(detail ?? title, options.cause === undefined ? undefined : { cause: options.cause });
     this.name = new.target.name;
     this.status = status;

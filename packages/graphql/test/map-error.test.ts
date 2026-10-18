@@ -87,9 +87,11 @@ describe('mapError', () => {
   });
 
   test('maps an error thrown by the context factory over WebSocket', async () => {
+    let wsCalls = 0;
     s = await startGraphQL([M], {
+      // connection_init succeeds (a failure there rejects the connection); the operation fails.
       context: (http) => {
-        if (http.req.headers.get('upgrade')) throw new Nope('context secret');
+        if (http.req.headers.get('upgrade') && ++wsCalls > 1) throw new Nope('context secret');
         return {};
       },
       mapError: (e) => (e instanceof Nope ? new ForbiddenException('no') : undefined),

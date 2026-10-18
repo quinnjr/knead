@@ -512,6 +512,13 @@ kbd {
   }
 }
 
+/* Theme switches crossfade (ThemeToggle uses the View Transitions API). */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 0.35s;
+  animation-timing-function: var(--ease-out);
+}
+
 @media (prefers-reduced-motion: reduce) {
   /* Overrides must beat every component's own motion, hence !important. */
   *,

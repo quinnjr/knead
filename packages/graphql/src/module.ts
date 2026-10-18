@@ -6,7 +6,6 @@ import {
   type Provider,
 } from '@knead-js/core';
 import { HTTP_DEVELOPMENT, LOGGER } from '@knead-js/http';
-import { PubSub } from '@leaven-graphql/ws';
 import { createGraphQLController } from './http.js';
 import {
   GRAPHQL_OPTIONS,
@@ -15,7 +14,7 @@ import {
   normalizePath,
   validateGraphQLOptions,
 } from './options.js';
-import { leavenLogger, PUBSUB } from './pubsub.js';
+import { leavenLogger, PUBSUB, PubSub } from './pubsub.js';
 import { GraphQLRuntime } from './runtime.js';
 import { GraphQLSubscriptions } from './subscriptions-service.js';
 

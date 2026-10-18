@@ -126,6 +126,8 @@ Where the nonce goes:
 - `script-src` (and `style-src` with `styles: true`) gets the nonce appended to its sources.
 - If that directive is not set, it is created from the `default-src` sources plus the nonce, so
   the defaults give `script-src 'self' 'nonce-…'`.
+- A directive set to `true` (no sources) does not inherit `default-src`: it becomes the nonce
+  alone.
 - If neither the directive nor a `default-src` source list exists, the directive is the nonce
   alone: only scripts carrying the nonce may run.
 

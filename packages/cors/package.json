@@ -1,6 +1,6 @@
 {
   "name": "@knead-js/cors",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Secure-by-default CORS middleware for Knead, the NestJS-style web framework for Bun",
   "keywords": [
     "bun",

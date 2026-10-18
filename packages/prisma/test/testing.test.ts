@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
-import { KneadError } from '@knead-js/core';
+import { inject, KneadError, Module } from '@knead-js/core';
 import { Test } from '@knead-js/testing';
-import { PrismaModule, TransactionHost } from '../src/index.js';
+import { PrismaModule, Transactional, TransactionHost } from '../src/index.js';
 import { withRollback } from '../src/testing/index.js';
 import { createFakeClient, type FakeClient } from './fake-client.js';
 
@@ -85,5 +85,36 @@ describe('withRollback', () => {
     expect(value).toBe('outer');
     expect(fake.transactions.map((t) => t.outcome)).toEqual(['commit', 'rollback']);
     expect(fake.transactions[0]?.tx).not.toBe(fake.transactions[1]?.tx);
+  });
+
+  // Inner @Transactional calls join the test's transaction (as they join any ambient one), so a
+  // failure inside one marks it rollback-only even when fn catches it, and withRollback rejects.
+  test('a caught failure in a joined @Transactional call rejects with the rollback-only error', async () => {
+    const boom = new Error('boom');
+    class Users {
+      readonly host = inject(TransactionHost);
+
+      @Transactional()
+      async create(): Promise<void> {
+        throw boom;
+      }
+    }
+    @Module({
+      imports: [PrismaModule.forRoot({ instance: createFakeClient() })],
+      providers: [Users],
+    })
+    class AppModule {}
+    const ctx = await Test.createModule({ imports: [AppModule] }).compile();
+    const users = ctx.get(Users);
+    const rejection = withRollback(ctx, async () => {
+      await users.create().catch(() => undefined);
+      return 'caught';
+    });
+    await expect(rejection).rejects.toThrow(
+      'TransactionHost: transaction marked rollback-only by an inner failure',
+    );
+    await expect(rejection).rejects.toBeInstanceOf(KneadError);
+    expect(await rejection.catch((e: Error) => e.cause)).toBe(boom);
+    await ctx.close();
   });
 });

@@ -20,7 +20,7 @@ other value throws a `RangeError`), an optional `detail` for the client, and the
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `type` | `string` | `'about:blank'` | A URI identifying the problem type. |
-| `title` | `string` | the status's title from `STATUS_TITLES`, or `'Error'` | A short summary of the problem type. |
+| `title` | `string` | the status's title from `STATUS_TITLES`, else its reason phrase from `node:http`'s `STATUS_CODES`, or `'Error'` | A short summary of the problem type. |
 | `extensions` | `Record<string, unknown>` | `{}` | Extra members added to the problem body. |
 | `headers` | `Bun.HeadersInit` | none | Headers added to the problem response, such as `Retry-After` or `WWW-Authenticate`. |
 | `cause` | `unknown` | none | The underlying error, kept as the standard `Error.cause`. Never sent to the client. |
@@ -48,7 +48,9 @@ Each subclass takes `(detail?, options?)`:
 
 `ValidationException` is a `BadRequestException` too (see [validation](/guide/validation/)).
 `STATUS_TITLES` also has titles for 413 (`Content Too Large`) and 421 (`Misdirected Request`),
-which Knead uses for its own responses. For any other status, pass a `title`, or it is `'Error'`.
+which Knead uses for its own responses. Any other status takes its standard reason phrase from
+`node:http`'s `STATUS_CODES` (`502` is `Bad Gateway`, `504` is `Gateway Timeout`); a status with
+none, such as `499`, is `'Error'` unless you pass a `title`.
 
 ### Your own exceptions
 

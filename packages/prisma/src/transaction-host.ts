@@ -54,6 +54,9 @@ export function assertIsolationLevel(isolationLevel: unknown): void {
   }
 }
 
+/** Set by TransactionHost's static block, which can read its private state. */
+let rollbackOnlyOf: (host: TransactionHost) => KneadError | undefined;
+
 /** Runs work inside an ambient Prisma interactive transaction. One per application. */
 export class TransactionHost {
   readonly #als = new AsyncLocalStorage<TxFrame>();
@@ -101,14 +104,8 @@ export class TransactionHost {
       const next: TxFrame = { tx, options: txOptions, open: true, rollbackOnly: false };
       try {
         const result = await this.#als.run(next, fn);
-        if (next.rollbackOnly) {
-          // Thrown inside the callback so Prisma rolls back instead of committing.
-          const error = new KneadError(
-            'TransactionHost: transaction marked rollback-only by an inner failure',
-          );
-          error.cause = next.failure;
-          throw error;
-        }
+        // Thrown inside the callback so Prisma rolls back instead of committing.
+        if (next.rollbackOnly) throw rollbackOnlyError(next);
         return result;
       } finally {
         next.open = false;
@@ -134,6 +131,29 @@ export class TransactionHost {
     const frame = this.#als.getStore();
     return frame?.open ? frame : undefined;
   }
+
+  static {
+    rollbackOnlyOf = (host) => {
+      const frame = host.#open();
+      return frame?.rollbackOnly ? rollbackOnlyError(frame) : undefined;
+    };
+  }
+}
+
+/**
+ * @internal For withRollback(), which owns its transaction but always rolls it back: the
+ * KneadError an owning run() would reject with when the current transaction is rollback-only.
+ */
+export function pendingRollbackOnlyError(host: TransactionHost): KneadError | undefined {
+  return rollbackOnlyOf(host);
+}
+
+function rollbackOnlyError(frame: TxFrame): KneadError {
+  const error = new KneadError(
+    'TransactionHost: transaction marked rollback-only by an inner failure',
+  );
+  error.cause = frame.failure;
+  return error;
 }
 
 function pick(options: RunOptions): TransactionOptions {

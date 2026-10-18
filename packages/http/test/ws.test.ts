@@ -95,7 +95,9 @@ describe('WsRegistry', () => {
         throw new Error('bad handler');
       },
     });
-    await ws.handler().message!(fakeSocket('/b'), 'x');
+    const socket = fakeSocket('/b');
+    await ws.handler().open!(socket);
+    await ws.handler().message!(socket, 'x');
     await Bun.sleep(0);
     expect(logger.entries.some((e) => e.level === 'error' && e.message.includes('/b'))).toBe(true);
   });

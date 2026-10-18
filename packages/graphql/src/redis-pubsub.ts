@@ -153,12 +153,18 @@ interface Listener {
  * connection in subscriber mode to do nothing else, so subscriptions use a dedicated connection.
  * If that connection or a SUBSCRIBE fails, the failure is logged, every subscriber of the topic
  * is told through its `onError` (ending its GraphQL subscription), and the next subscriber retries.
+ * If the subscriber connection closes later, or Bun reconnects it (which drops its channel
+ * subscriptions), every subscriber of every topic is told the same way and the next subscribe()
+ * opens a new connection. An owned publisher that Bun gave up on is reconnected on next use.
  * `publish()` never rejects (failures are logged); `publishOrThrow()` does. Connect with
  * `rediss://` and an ACL user limited to the prefix's channels in production, and set
  * `signingKey` when anything else can publish to the server.
  */
 export class RedisPubSub implements PubSubEngine {
   readonly #publisher: RedisClient;
+  /** Set when the owned publisher gave up (onclose): Bun does not reconnect it on its own. */
+  #publisherLost = false;
+  #reconnecting: Promise<void> | undefined;
   readonly #owned: boolean;
   readonly #prefix: string;
   readonly #topics = new Map<string, Set<Listener>>();
@@ -230,6 +236,12 @@ export class RedisPubSub implements PubSubEngine {
     }
     this.#owned = options.client === undefined;
     this.#publisher = options.client ?? new RedisClient(options.url);
+    // A supplied client's callbacks belong to the caller, and so does reconnecting it.
+    if (this.#owned) {
+      this.#publisher.onclose = () => {
+        if (!this.#closed) this.#publisherLost = true;
+      };
+    }
   }
 
   /**
@@ -299,7 +311,7 @@ export class RedisPubSub implements PubSubEngine {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
-        this.#publisher.publish(this.#prefix + topic, message),
+        this.#publisherClient().then((client) => client.publish(this.#prefix + topic, message)),
         new Promise<never>((_, reject) => {
           timer = setTimeout(
             () => reject(new Error(`Redis did not answer within ${this.#publishTimeout}ms`)),
@@ -511,16 +523,101 @@ export class RedisPubSub implements PubSubEngine {
     }
   }
 
-  #subscriberClient(): Promise<RedisClient> {
-    if (!this.#subscriber) {
-      const pending = this.#publisher.duplicate();
-      this.#subscriber = pending;
-      // A failed connection is not cached: the next subscribe() tries again.
-      pending.catch(() => {
-        if (this.#subscriber === pending) this.#subscriber = undefined;
+  /**
+   * The publisher, reconnected first when the owned one was lost: after onclose (it gave up
+   * reconnecting, or idleTimeout closed it) Bun fails every command until connect() is called.
+   */
+  #publisherClient(): Promise<RedisClient> {
+    if (this.#publisherLost && !this.#reconnecting) {
+      this.#publisherLost = false;
+      const attempt = this.#publisher.connect().finally(() => {
+        if (this.#reconnecting === attempt) this.#reconnecting = undefined;
+      });
+      this.#reconnecting = attempt;
+      // Still down: the next use tries again.
+      attempt.catch(() => {
+        if (!this.#closed) this.#publisherLost = true;
       });
     }
+    const reconnecting = this.#reconnecting;
+    return reconnecting
+      ? reconnecting.then(() => this.#publisher)
+      : Promise.resolve(this.#publisher);
+  }
+
+  #subscriberClient(): Promise<RedisClient> {
+    if (!this.#subscriber) {
+      const pending = this.#publisherClient().then((publisher) => publisher.duplicate());
+      this.#subscriber = pending;
+      pending.then(
+        (client) => {
+          if (this.#subscriber !== pending) return;
+          client.onclose = (error) => this.#subscriberLost(pending, client, error);
+          // A duplicate of a publisher that has not connected yet connects lazily, and its first
+          // onconnect is that connection. Any later one is Bun reconnecting a dropped
+          // connection, without its channel subscriptions: the connection is as good as lost.
+          let established = client.connected;
+          client.onconnect = () => {
+            if (!established) {
+              established = true;
+              return;
+            }
+            this.#subscriberLost(
+              pending,
+              client,
+              new Error('The Redis subscriber reconnected without its subscriptions.'),
+            );
+          };
+        },
+        // A failed connection is not cached: the next subscribe() tries again.
+        () => {
+          if (this.#subscriber === pending) this.#subscriber = undefined;
+        },
+      );
+    }
     return this.#subscriber;
+  }
+
+  /**
+   * The subscriber connection closed or lost its subscriptions: every topic's listeners are told
+   * through `onError` (ending their GraphQL subscriptions, so clients resubscribe), and the next
+   * subscribe() opens a new connection.
+   */
+  #subscriberLost(pending: Promise<RedisClient>, client: RedisClient, error: unknown): void {
+    if (this.#closed || this.#subscriber !== pending) return;
+    this.#subscriber = undefined;
+    // No-ops rather than null: Bun calls onclose on close() and throws when it is null.
+    client.onclose = () => {};
+    client.onconnect = () => {};
+    try {
+      client.close();
+    } catch {
+      // Already closed.
+    }
+    // State first, so a failing logger or callback cannot leave a topic on the dead connection.
+    const lost = [...this.#topics];
+    this.#topics.clear();
+    for (const [, listeners] of lost) this.#subscribed.delete(listeners);
+    const failure = error instanceof Error ? error : new Error(String(error));
+    this.#logError(
+      `RedisPubSub lost its subscriber connection; ending the subscriptions of ${lost.length} topic(s)`,
+      failure,
+    );
+    for (const [topic, listeners] of lost) this.#notify(topic, listeners, failure);
+  }
+
+  /** Calls every listener's onError; one throwing callback does not keep the others from it. */
+  #notify(topic: string, listeners: Set<Listener>, failure: Error): void {
+    for (const listener of listeners) {
+      try {
+        listener.onError?.(failure);
+      } catch (callbackError) {
+        this.#logError(
+          `RedisPubSub onError callback for ${JSON.stringify(topic)} threw`,
+          callbackError,
+        );
+      }
+    }
   }
 
   async #redisSubscribe(topic: string, listeners: Set<Listener>): Promise<void> {
@@ -531,19 +628,12 @@ export class RedisPubSub implements PubSubEngine {
       this.#subscribed.add(listeners);
     } catch (error) {
       if (this.#closed) return;
-      // State first, so a failing logger or callback cannot leave the topic stuck.
-      if (this.#topics.get(topic) === listeners) this.#topics.delete(topic);
-      const failure = error instanceof Error ? error : new Error(String(error));
-      for (const listener of listeners) {
-        try {
-          listener.onError?.(failure);
-        } catch (callbackError) {
-          // One throwing callback must not keep the others from hearing about the failure.
-          this.#logError(
-            `RedisPubSub onError callback for ${JSON.stringify(topic)} threw`,
-            callbackError,
-          );
-        }
+      // State first, so a failing logger or callback cannot leave the topic stuck. A topic that
+      // is no longer current was ended already (its connection was lost) or has no listeners.
+      const current = this.#topics.get(topic) === listeners;
+      if (current) {
+        this.#topics.delete(topic);
+        this.#notify(topic, listeners, error instanceof Error ? error : new Error(String(error)));
       }
       this.#logError(`RedisPubSub failed to subscribe to ${JSON.stringify(topic)}`, error);
     }

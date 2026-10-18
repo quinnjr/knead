@@ -349,6 +349,11 @@ through `PrismaService.db` joins that transaction, so nothing persists:
 - `moduleRef` is anything with `get(token)`, such as a `TestingModule` or an
   `ApplicationContext`.
 - Errors thrown by `fn` propagate unchanged.
+- Inner `@Transactional()` calls join the test's transaction, exactly as they join the
+  outermost transaction in production. If one of them rejects, the transaction is rollback-only:
+  even when `fn` catches the error, `withRollback()` rejects with the `KneadError`
+  `TransactionHost: transaction marked rollback-only by an inner failure` (its `cause` is the
+  inner rejection), as the owning `@Transactional()` method would in production.
 - The default `timeout` is 30 seconds, because Prisma's 5-second default is short for tests. Pass
   `{ timeout }` to change it.
 - It opens the transaction with `requiresNew`, so the pool needs at least 2 connections.

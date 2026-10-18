@@ -155,10 +155,12 @@ idempotent.
 `LOGGER` is injectable from every module. Its default is a `ConsoleLogger`, which runs messages and
 arguments through `redactCredentials()` and `redactValue()` before printing:
 
-- URL userinfo (`redis://***@host`), secret `key=value` pairs (`password=`, `access_token=`,
-  `DB_PASSWORD=`) and `Bearer`/`Basic` credentials are masked.
+- URL userinfo (`redis://***@host`), secret `key=value` and `key: value` pairs (`password=`,
+  `access_token=`, `DB_PASSWORD=`, `{"password":"x"}`), `Authorization:` and `Cookie:` header
+  lines and `Bearer`/`Basic` credentials are masked.
 - Values of sensitive keys (`authorization`, `cookie`, `password`, `token`, `apikey`, ...) in
-  objects, `Headers`, `Map`s and Errors become `***`.
+  objects, class instances, `Headers`, `Map`s, `Request`s and Errors become `***`, and `URL`s
+  lose their userinfo.
 - Control characters in the message and in string arguments are escaped, so a logged string
   cannot forge a log line. Other arguments (objects, Errors) are only redacted, not escaped. The
   originals are never modified, and logging never throws.

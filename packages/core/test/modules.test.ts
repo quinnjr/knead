@@ -307,3 +307,28 @@ describe('definition errors', () => {
     expect(() => build(M)).toThrow('M exports DbService, which it neither provides nor imports.');
   });
 });
+
+describe('re-exports', () => {
+  test("a module's own provider wins over a re-exported child exporting the same token", () => {
+    const TOKEN = new InjectionToken<string>('TOKEN');
+    @Module({ providers: [{ provide: TOKEN, useValue: 'child' }], exports: [TOKEN] })
+    class Child {}
+    @Module({
+      imports: [Child],
+      providers: [{ provide: TOKEN, useValue: 'own' }],
+      exports: [TOKEN, Child],
+    })
+    class OwnFirst {}
+    @Module({
+      imports: [Child],
+      providers: [{ provide: TOKEN, useValue: 'own' }],
+      exports: [Child, TOKEN],
+    })
+    class ChildFirst {}
+    for (const Parent of [OwnFirst, ChildFirst]) {
+      @Module({ imports: [Parent] })
+      class App {}
+      expect(build(App).root.injector.get(TOKEN)).toBe('own');
+    }
+  });
+});

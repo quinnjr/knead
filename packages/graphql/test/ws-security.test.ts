@@ -2,8 +2,8 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { Module } from '@knead-js/core';
 import { APP_GUARD, type Ctx, originAllowed } from '@knead-js/http';
 import { RateLimitModule } from '@knead-js/rate-limit';
-import { Int, Mutation, Query, Resolver, Subscription } from '../src/index.js';
-import { type Started, startGraphQL, upgradeStatus } from './helpers.js';
+import { Int, Mutation, PUBSUB, type PubSub, Query, Resolver, Subscription } from '../src/index.js';
+import { type Started, startGraphQL, until, upgradeStatus } from './helpers.js';
 
 let bumps = 0;
 
@@ -121,23 +121,20 @@ describe('WebSocket transport security', () => {
   });
 });
 
-describe('subscribe before connection_init', () => {
-  function rawSocket(started: Started) {
-    const ws = new WebSocket(
-      `ws://127.0.0.1:${started.app.url.port}/graphql`,
-      'graphql-transport-ws',
-    );
-    const messages: unknown[] = [];
-    ws.onmessage = (e) => messages.push(JSON.parse(String(e.data)));
-    const opened = new Promise<void>((resolve) => {
-      ws.onopen = () => resolve();
-    });
-    const closed = new Promise<{ code: number; reason: string }>((resolve) => {
-      ws.onclose = (e) => resolve({ code: e.code, reason: e.reason });
-    });
-    return { ws, messages, opened, closed };
-  }
+function rawSocket(started: Started, protocols: string | string[] = 'graphql-transport-ws') {
+  const ws = new WebSocket(`ws://127.0.0.1:${started.app.url.port}/graphql`, protocols);
+  const messages: unknown[] = [];
+  ws.onmessage = (e) => messages.push(JSON.parse(String(e.data)));
+  const opened = new Promise<void>((resolve) => {
+    ws.onopen = () => resolve();
+  });
+  const closed = new Promise<{ code: number; reason: string }>((resolve) => {
+    ws.onclose = (e) => resolve({ code: e.code, reason: e.reason });
+  });
+  return { ws, messages, opened, closed };
+}
 
+describe('subscribe before connection_init', () => {
   test('an over-long subscribe on an uninitialized socket closes it with 4401', async () => {
     s = await startGraphQL([M], { maxQueryLength: 100 });
     const socket = rawSocket(s);
@@ -162,5 +159,59 @@ describe('subscribe before connection_init', () => {
       JSON.stringify({ id: '1', type: 'subscribe', payload: { query: 'subscription { t }' } }),
     );
     expect((await socket.closed).code).toBe(4401);
+  });
+});
+
+describe('graphql-transport-ws handshake', () => {
+  test('the accepted subprotocol is echoed even when it is not offered first', async () => {
+    s = await startGraphQL([M]);
+    for (const offered of [
+      ['foo', 'graphql-transport-ws'],
+      ['graphql-ws', 'graphql-transport-ws'],
+    ]) {
+      const socket = rawSocket(s, offered);
+      await socket.opened;
+      expect(socket.ws.protocol).toBe('graphql-transport-ws');
+      socket.ws.close();
+      await socket.closed;
+    }
+  });
+
+  test('a context factory failing at connection_init rejects the connection (fail closed)', async () => {
+    let calls = 0;
+    s = await startGraphQL([M], {
+      context: () => {
+        if (++calls === 1) throw new Error('identity store down');
+        return { user: 'alice' };
+      },
+    });
+    const socket = rawSocket(s);
+    await socket.opened;
+    socket.ws.send(JSON.stringify({ type: 'connection_init' }));
+    const closed = await socket.closed;
+    expect(closed.code).toBe(4403);
+    expect(socket.messages).toEqual([]);
+    expect(calls).toBe(1);
+  });
+
+  test('an over-long subscribe reusing an active id closes the socket with 4409', async () => {
+    s = await startGraphQL([M], { maxQueryLength: 100 });
+    const socket = rawSocket(s);
+    await socket.opened;
+    socket.ws.send(JSON.stringify({ type: 'connection_init' }));
+    await until(() => socket.messages.length === 1);
+    socket.ws.send(
+      JSON.stringify({ id: '1', type: 'subscribe', payload: { query: 'subscription { t }' } }),
+    );
+    await until(() => (s!.mod.get(PUBSUB) as PubSub).getSubscriberCount('t') === 1);
+    socket.ws.send(
+      JSON.stringify({
+        id: '1',
+        type: 'subscribe',
+        payload: { query: `subscription { t }${' '.repeat(200)}` },
+      }),
+    );
+    expect(await socket.closed).toEqual({ code: 4409, reason: 'Subscriber for 1 already exists' });
+    expect(socket.messages).toEqual([{ type: 'connection_ack' }]);
   });
 });

@@ -41,6 +41,12 @@ export class ContainerState {
   /** Singletons on the stack: a transient built under one is created once per singleton. */
   #singletonsBuilding = 0;
   readonly #tracked = new Set<unknown>();
+  /**
+   * One list per record on the stack: the transients tracked for the instance it constructs
+   * (directly, or through a transient it depends on). When that construction throws (as when
+   * it hits an unsettled async factory and is retried), they are untracked: nothing holds them.
+   */
+  readonly #transientFrames: unknown[][] = [];
 
   constructor(overrides: Iterable<readonly [Token, Provider]> = []) {
     const map = new Map<Token, NormalizedProvider>();
@@ -69,19 +75,36 @@ export class ContainerState {
     this.stack.push(record);
     const singleton = p.scope === 'singleton' && p.kind !== 'existing';
     if (singleton) this.#singletonsBuilding++;
+    const frame: unknown[] = [];
+    this.#transientFrames.push(frame);
+    let value: unknown;
     try {
-      const value = record.owner.instantiate(record);
-      if (p.kind !== 'existing' && (p.scope !== 'transient' || this.#tracksTransient())) {
-        this.#track(value);
-      }
-      if (p.scope === 'transient') return value;
-      record.value = value;
-      record.state = 'ready';
-      return value;
+      value = record.owner.instantiate(record);
+    } catch (error) {
+      this.#untrack(frame);
+      throw error;
     } finally {
+      this.#transientFrames.pop();
       if (singleton) this.#singletonsBuilding--;
       this.stack.pop();
     }
+    const tracked =
+      p.kind !== 'existing' &&
+      (p.scope !== 'transient' || this.#tracksTransient()) &&
+      this.#track(value);
+    if (p.scope === 'transient' || p.kind === 'existing') {
+      // A transient (or an alias of one) and the transients it holds belong to the instance
+      // being constructed, if any.
+      const parent = this.#transientFrames.at(-1);
+      if (parent !== undefined) {
+        parent.push(...frame);
+        if (p.scope === 'transient' && tracked) parent.push(value);
+      }
+      if (p.scope === 'transient') return value;
+    }
+    record.value = value;
+    record.state = 'ready';
+    return value;
   }
 
   /** Closes the bootstrap tracking scope (ApplicationContext.create, once started). */
@@ -150,11 +173,21 @@ export class ContainerState {
     return this.#scopes > 0 || this.#singletonsBuilding > 0;
   }
 
-  #track(value: unknown): void {
-    if (value !== null && typeof value === 'object' && !this.#tracked.has(value)) {
-      this.#tracked.add(value);
-      this.instances.push(value);
+  /** Untracks the transients of a construction that threw. */
+  #untrack(transients: readonly unknown[]): void {
+    for (const value of transients) {
+      if (!this.#tracked.delete(value)) continue;
+      const at = this.instances.lastIndexOf(value);
+      if (at !== -1) this.instances.splice(at, 1);
     }
+  }
+
+  /** Tracks `value`; true when it was not tracked before. */
+  #track(value: unknown): boolean {
+    if (value === null || typeof value !== 'object' || this.#tracked.has(value)) return false;
+    this.#tracked.add(value);
+    this.instances.push(value);
+    return true;
   }
 }
 
@@ -291,6 +324,16 @@ export class ModuleInjector implements InjectorLike {
       record = { provider, owner: this, state: 'idle' };
       this.#constructed.set(cls, record);
     }
-    return this.state.resolve(record) as T;
+    try {
+      return this.state.resolve(record) as T;
+    } catch (error) {
+      // Async factories are settled by ApplicationContext.create(); one first reached here (an
+      // override of a class constructed at listen()) can never be awaited.
+      if (!(error instanceof AsyncProviderPendingError)) throw error;
+      const pending = (error.record as ProviderRecord).provider.token;
+      throw new ProviderConfigError(
+        `The override of ${tokenName(pending)} cannot use an async factory.`,
+      );
+    }
   }
 }

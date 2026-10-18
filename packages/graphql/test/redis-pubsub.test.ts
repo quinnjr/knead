@@ -55,6 +55,65 @@ describe.skipIf(!url)('RedisPubSub', () => {
     await pubsub.close();
   });
 
+  test('a killed subscriber connection ends its subscriptions; the next subscribe reconnects', async () => {
+    // Capture the subscriber's connection id so only this test's connection is killed (the
+    // Redis server may be shared).
+    const original = RedisClient.prototype.duplicate;
+    let subscriberId: unknown;
+    RedisClient.prototype.duplicate = async function (this: RedisClient) {
+      const client = await original.call(this);
+      subscriberId ??= await client.send('CLIENT', ['ID']);
+      return client;
+    };
+    const logger = new MemoryLogger();
+    const pubsub = new RedisPubSub({ url, prefix, logger });
+    try {
+      const errors: Error[] = [];
+      pubsub.subscribe(
+        'killed',
+        () => {},
+        (error) => errors.push(error),
+      );
+      await until(async () => (await channelSubscribers('killed')) === 1);
+      await admin!.send('CLIENT', ['KILL', 'ID', String(subscriberId)]);
+      await until(() => errors.length === 1, 5000);
+      expect(logger.entries.some((e) => e.message.includes('lost its subscriber'))).toBe(true);
+      const received: unknown[] = [];
+      pubsub.subscribe('killed', (p) => received.push(p));
+      await until(async () => (await channelSubscribers('killed')) === 1);
+      await pubsub.publish('killed', { n: 1 });
+      await until(() => received.length === 1);
+    } finally {
+      RedisClient.prototype.duplicate = original;
+      await pubsub.close();
+    }
+  });
+
+  test('an owned publisher that Bun closed is reconnected on next use', async () => {
+    // Capture the owned publisher (the `this` of its first PUBLISH) to close it as Bun does
+    // after giving up or on idleTimeout.
+    const original = RedisClient.prototype.publish;
+    let publisher: RedisClient | undefined;
+    RedisClient.prototype.publish = function (this: RedisClient, ...args: [string, string]) {
+      publisher ??= this;
+      return original.apply(this, args);
+    } as typeof original;
+    const pubsub = new RedisPubSub({ url, prefix, logger: new MemoryLogger() });
+    try {
+      const received: unknown[] = [];
+      pubsub.subscribe('reconnect', (p) => received.push(p));
+      await until(async () => (await channelSubscribers('reconnect')) === 1);
+      await pubsub.publishOrThrow('reconnect', { n: 1 });
+      await until(() => received.length === 1);
+      publisher!.close();
+      await pubsub.publishOrThrow('reconnect', { n: 2 });
+      await until(() => received.length === 2);
+    } finally {
+      RedisClient.prototype.publish = original;
+      await pubsub.close();
+    }
+  });
+
   test('signed messages round-trip through Redis; unsigned ones are dropped', async () => {
     const logger = new MemoryLogger();
     const signingKey = crypto.getRandomValues(new Uint8Array(32));

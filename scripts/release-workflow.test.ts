@@ -22,7 +22,9 @@ setDefaultTimeout(60_000);
 
 interface Step {
   name?: string;
+  uses?: string;
   run?: string;
+  with?: Record<string, unknown>;
   env?: Record<string, string>;
 }
 const workflow = Bun.YAML.parse(
@@ -389,6 +391,12 @@ describe('release.yml publish step', () => {
     ['1.0.0-V2.beta', 'next'],
     ['1.0.0-xyz.1', 'xyz'],
     ['1.0.0-vnext.1', 'vnext'],
+    // latest and the v<major>.<minor>-latest backport tags belong to stable releases.
+    ['1.0.0-latest.1', 'next'],
+    ['1.0.0-latest', 'next'],
+    ['1.0.0-v1.0-latest.1', 'next'],
+    ['1.0.0-backport-latest.2', 'next'],
+    ['1.0.0-latestish.1', 'latestish'],
   ])('prerelease %s publishes to dist-tag %s', (version, distTag) => {
     const r = publish(`v${version}`, [['@knead-js/core', version]]);
     expect(r.exitCode).toBe(0);
@@ -881,6 +889,79 @@ describe('release.yml publish step', () => {
       ]);
       expectRejected(r, `@knead-js/core: dependency ${dep} is not allowed`);
     });
+
+    // Names alone are not enough: an allowed name can still point at an alias, a git repository,
+    // a URL or a local path. Only plain registry ranges may be published.
+    test.each([
+      '7.0.2',
+      '^7',
+      '^0.3.0',
+      '~1.2',
+      '1.x',
+      '*',
+      '>=1 <2',
+      '>=7.0.0 <8',
+      '^16 || ^17',
+      '1.0.0 - 2.0.0',
+      '^1.0.0-rc.1',
+      '1.2.3+build.5',
+    ])('accepts the registry specifier %j', (spec) => {
+      const r = publish('v1.2.3', [
+        {
+          name: '@knead-js/prisma',
+          version: '1.2.3',
+          manifest: { peerDependencies: { '@prisma/client': spec } },
+        },
+      ]);
+      expect(r.exitCode).toBe(0);
+      expect(r.publishes).toHaveLength(1);
+    });
+
+    test.each([
+      ['dependencies', 'npm:evil@1.0.0'],
+      ['dependencies', 'git+https://github.com/evil/casl.git'],
+      ['dependencies', 'git://github.com/evil/casl.git#v7'],
+      ['dependencies', 'github:evil/casl'],
+      ['optionalDependencies', 'https://example.com/casl-7.0.2.tgz'],
+      ['peerDependencies', 'file:../casl'],
+      ['dependencies', 'link:../casl'],
+      ['dependencies', 'workspace:^'],
+      ['dependencies', 'latest'],
+      ['dependencies', '7.0.2#main'],
+      ['dependencies', ''],
+    ])('rejects %s on a non-registry specifier %j', (field, spec) => {
+      const r = publish('v1.2.3', [
+        {
+          name: '@knead-js/casl',
+          version: '1.2.3',
+          manifest: { [field]: { '@casl/ability': spec } },
+        },
+      ]);
+      expectRejected(r, '@knead-js/casl: dependency @casl/ability has a non-registry specifier');
+    });
+
+    test('checks specifiers in linear time', () => {
+      // The step builds range_re from shell variables: evaluate those lines to get the regex.
+      const defs = (publishStep ?? '')
+        .split('\n')
+        .filter((l) => /^\s*(comparator|range_re)=/.test(l))
+        .join('\n');
+      const re = Bun.spawnSync(['bash', '-c', `${defs}\nprintf %s "$range_re"`]).stdout.toString();
+      expect(re).toStartWith('^');
+      for (const spec of [
+        `${'1 '.repeat(100_000)}:`,
+        `1.0.0-${'a.'.repeat(100_000)}:`,
+        `${'^1 || '.repeat(50_000)}:`,
+        `${'1 - '.repeat(50_000)}:`,
+      ]) {
+        const start = performance.now();
+        const r = Bun.spawnSync(['jq', '--arg', 're', re as string, '.v | test($re)'], {
+          stdin: Buffer.from(JSON.stringify({ v: spec })),
+        });
+        expect(r.stdout.toString().trim()).toBe('false');
+        expect(performance.now() - start).toBeLessThan(2_000);
+      }
+    });
   });
 
   describe('normalisation by npm publish', () => {
@@ -996,6 +1077,24 @@ describe('release.yml build job', () => {
     expect(sums).toBe(check + 1);
     // No second, separately packed set.
     expect(index((s) => s.run === 'pnpm check:pack')).toBe(-1);
+  });
+
+  // A poisoned Actions cache must not reach a release build: neither the package-manager cache
+  // nor setup-bun's cached Bun binary.
+  test.each(['build', 'publish'])('the %s job restores nothing from the Actions cache', (job) => {
+    const steps = workflow.jobs[job]?.steps ?? [];
+    const node = steps.filter((s) => s.uses?.startsWith('actions/setup-node@'));
+    const bun = steps.filter((s) => s.uses?.startsWith('oven-sh/setup-bun@'));
+    expect(node.length).toBeGreaterThan(0);
+    for (const s of node) expect(s.with?.['package-manager-cache']).toBe(false);
+    for (const s of bun) expect(s.with?.['no-cache']).toBe(true);
+    expect(steps.some((s) => /^actions\/cache[@/]/.test(s.uses ?? ''))).toBe(false);
+  });
+
+  test('the build job sets up Bun without its cache', () => {
+    const bun = build?.filter((s) => s.uses?.startsWith('oven-sh/setup-bun@'));
+    expect(bun).toHaveLength(1);
+    expect(bun?.[0]?.with?.['no-cache']).toBe(true);
   });
 });
 

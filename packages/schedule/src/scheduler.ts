@@ -48,6 +48,8 @@ export class Scheduler {
   readonly #inflight = new Map<Promise<void>, string>();
   readonly #abort = new AbortController();
   #started = false;
+  /** Set before anything else in shutdown(), so code run by the abort (listeners) cannot re-arm. */
+  #closing = false;
   #shutdown: Promise<void> | undefined;
 
   constructor(
@@ -90,7 +92,7 @@ export class Scheduler {
 
   /** Arms every job that is not paused. Jobs added later are armed immediately. */
   start(): void {
-    if (this.#started || this.#shutdown) return;
+    if (this.#started || this.#closing) return;
     this.#started = true;
     for (const job of this.#jobs.values()) {
       if (!job.paused) this.#arm(job, job.schedule.first(this.clock.now()));
@@ -144,6 +146,7 @@ export class Scheduler {
 
   /** Disarms everything, aborts job signals and waits up to shutdownTimeout for runs in progress. */
   shutdown(): Promise<void> {
+    this.#closing = true;
     this.#shutdown ??= this.#drain();
     return this.#shutdown;
   }
@@ -190,6 +193,7 @@ export class Scheduler {
 
   #fire(job: Job): void {
     job.timer = undefined;
+    if (this.#closing) return;
     const scheduledAt = job.nextAt!;
     const now = this.clock.now();
     // Early timer or a hop of a long delay: wait for the remainder.
@@ -219,7 +223,7 @@ export class Scheduler {
 
   /** Registered under its name and the scheduler is not shutting down. */
   #isLive(job: Job): boolean {
-    return !this.#shutdown && this.#jobs.get(job.name) === job;
+    return !this.#closing && this.#jobs.get(job.name) === job;
   }
 
   /** Never rejects: failures go to onError. */
@@ -276,14 +280,14 @@ export class Scheduler {
   }
 
   #assertOpen(): void {
-    if (this.#shutdown) throw new ScheduleConfigError('The scheduler has shut down.');
+    if (this.#closing) throw new ScheduleConfigError('The scheduler has shut down.');
   }
 
   #info(job: Job): JobInfo {
     return {
       name: job.name,
       kind: job.schedule.kind,
-      state: job.stopped || this.#shutdown ? 'stopped' : job.paused ? 'paused' : 'scheduled',
+      state: job.stopped || this.#closing ? 'stopped' : job.paused ? 'paused' : 'scheduled',
       nextRunAt: job.nextAt === undefined ? undefined : new Date(job.nextAt),
       running: job.running,
     };

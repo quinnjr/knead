@@ -67,8 +67,9 @@ export interface CompiledApp {
 
 const upgraded = new WeakSet<RequestContext>();
 
+/** A WebSocket handshake: a GET (RFC 6455) with `Upgrade: websocket`. */
 function isUpgrade(req: Request): boolean {
-  return req.headers.get('upgrade')?.toLowerCase() === 'websocket';
+  return req.method === 'GET' && req.headers.get('upgrade')?.toLowerCase() === 'websocket';
 }
 
 /**
@@ -230,7 +231,7 @@ export function compileApplication(input: CompileInput): CompiledApp {
   for (const mod of input.modules) {
     const injector = mod.injector;
     const moduleMw = (getOwnMetadata(mod.metatype, MODULE_MIDDLEWARE) ?? []).map((r) =>
-      resolveMiddleware(r, injector),
+      resolveMiddleware(r, injector, `the middleware of ${mod.name}`),
     );
     for (const controller of mod.controllers) {
       const def = getOwnMetadata(controller, CONTROLLER);
@@ -243,7 +244,7 @@ export function compileApplication(input: CompileInput): CompiledApp {
       const ctrlMw = [
         ...(def.options.middleware ?? []),
         ...(getMetadata(controller, MIDDLEWARE) ?? []),
-      ].map((r) => resolveMiddleware(r, injector));
+      ].map((r) => resolveMiddleware(r, injector, `the middleware of ${controller.name}`));
       const ctrlGuards = [
         ...(def.options.guards ?? []),
         ...(getMetadata(controller, GUARDS) ?? []),
@@ -251,7 +252,7 @@ export function compileApplication(input: CompileInput): CompiledApp {
       const ctrlFilters = [
         ...(def.options.filters ?? []),
         ...(getMetadata(controller, FILTERS) ?? []),
-      ].map((r) => resolveFilter(r, injector));
+      ].map((r) => resolveFilter(r, injector, `the filters of ${controller.name}`));
       const ctrlMeta = {
         ...(def.options.meta ?? {}),
         ...(getMetadata(controller, ROUTE_META) ?? {}),
@@ -289,7 +290,7 @@ export function compileApplication(input: CompileInput): CompiledApp {
         const routeMw = [
           ...(route.options.middleware ?? []),
           ...(getMethodMetadata(controller, name, MIDDLEWARE) ?? []),
-        ].map((r) => resolveMiddleware(r, injector));
+        ].map((r) => resolveMiddleware(r, injector, `the middleware of ${label}`));
         const routeGuards = [
           ...(route.options.guards ?? []),
           ...(getMethodMetadata(controller, name, GUARDS) ?? []),
@@ -297,7 +298,7 @@ export function compileApplication(input: CompileInput): CompiledApp {
         const routeFilters = [
           ...(route.options.filters ?? []),
           ...(getMethodMetadata(controller, name, FILTERS) ?? []),
-        ].map((r) => resolveFilter(r, injector));
+        ].map((r) => resolveFilter(r, injector, `the filters of ${label}`));
         const meta = Object.freeze({
           ...ctrlMeta,
           ...(route.options.meta ?? {}),

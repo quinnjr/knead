@@ -1,13 +1,21 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { inject, Module } from '@knead-js/core';
 import type { HttpApplication } from '../src/application.js';
-import { Controller, createRouteDecorator, Get, Post, UseGuards } from '../src/decorators.js';
+import { KneadFactory } from '../src/application.js';
+import {
+  Controller,
+  createRouteDecorator,
+  Get,
+  ModuleMiddleware,
+  Post,
+  UseGuards,
+} from '../src/decorators.js';
 import {
   BadRequestException,
   HttpConfigError,
   ServiceUnavailableException,
 } from '../src/exceptions.js';
-import type { MemoryLogger } from '../src/logger.js';
+import { MemoryLogger } from '../src/logger.js';
 import { HTTP_DEVELOPMENT } from '../src/tokens.js';
 import type { Ctx } from '../src/types.js';
 import { WsRegistry } from '../src/ws.js';
@@ -542,5 +550,253 @@ describe('route authorize guards run after validation', () => {
     });
     expect(bad.status).toBe(400);
     expect(seenByAuthorize).toEqual([]);
+  });
+});
+
+describe('errors that escape the pipeline', () => {
+  /** Throws while logging a rejected Host, which runs before any error handler. */
+  class ThrowingWarnLogger extends MemoryLogger {
+    override warn(message: string, ...meta: unknown[]): void {
+      if (message.startsWith('Rejected a request')) throw new Error('leaky-secret from warn');
+      super.warn(message, ...meta);
+    }
+  }
+  @Controller('/x')
+  class X {
+    @Get('/') get() {
+      return 'x';
+    }
+  }
+  @Module({ controllers: [X] })
+  class XModule {}
+
+  test("an escaping rejection gets a masked problem, not Bun's development error page", async () => {
+    // Bun turns its development mode on whenever NODE_ENV is not 'production'.
+    expect(process.env.NODE_ENV).not.toBe('production');
+    const logger = new ThrowingWarnLogger();
+    app = await start(XModule, { allowedHosts: ['good.example'] }, { logger });
+    expect(app.server.development).toBe(false);
+    const res = await fetch(new URL('/x', app.url), { headers: { host: 'evil.example' } });
+    expect(res.status).toBe(500);
+    expect(res.headers.get('content-type')).toBe('application/problem+json; charset=utf-8');
+    const body = await res.text();
+    expect(body).not.toContain('leaky-secret');
+    expect(JSON.parse(body)).toMatchObject({ title: 'Internal Server Error', status: 500 });
+    expect(logger.entries.some((e) => e.level === 'error')).toBe(true);
+  });
+
+  test('an HttpException whose extensions do not serialize answers without them', async () => {
+    @Controller('/big')
+    class Big {
+      @Get('/') get() {
+        throw new BadRequestException('bad', { extensions: { id: 10n, safe: 1 } });
+      }
+      @Get('/5xx') fail() {
+        throw new ServiceUnavailableException('down', { extensions: { id: 10n } });
+      }
+    }
+    @Module({ controllers: [Big] })
+    class BigModule {}
+    for (const development of [false, true]) {
+      app = await start(BigModule, {}, { development });
+      const res = await fetch(new URL('/big', app.url));
+      expect(res.status).toBe(400);
+      expect(res.headers.get('content-type')).toBe('application/problem+json; charset=utf-8');
+      const problem = await res.json();
+      expect(problem).toEqual({
+        type: 'about:blank',
+        title: 'Bad Request',
+        status: 400,
+        detail: 'bad',
+        instance: '/big',
+      });
+      const down = await fetch(new URL('/big/5xx', app.url));
+      expect(down.status).toBe(503);
+      expect(await down.json()).toMatchObject({ title: 'Service Unavailable', status: 503 });
+      await app.close();
+      app = undefined;
+    }
+  });
+});
+
+describe('server limits are validated at listen()', () => {
+  @Module({})
+  class Empty {}
+  const bad: [string, unknown[]][] = [
+    ['maxRequestBodySize', ['2048', 'abc', Number.POSITIVE_INFINITY, 0, -1, 1.5, Number.NaN]],
+    ['shutdownTimeout', [Number.NaN, -1, Number.POSITIVE_INFINITY, '10', 1.5]],
+    ['idleTimeout', [-1, 256, 1.5, Number.NaN, '10']],
+  ];
+  for (const [option, values] of bad) {
+    test(`an invalid ${option} is an HttpConfigError and binds nothing`, async () => {
+      for (const value of values) {
+        const created = await KneadFactory.create(Empty, {
+          logger: new MemoryLogger(),
+          development: false,
+        });
+        const failure = await created
+          .listen({ port: 0, hostname: '127.0.0.1', [option]: value })
+          .catch((e) => e);
+        expect(failure).toBeInstanceOf(HttpConfigError);
+        expect((failure as Error).message).toContain(option);
+        expect(() => created.server).toThrow(HttpConfigError);
+        await created.close();
+      }
+    });
+  }
+
+  test('boundary values are accepted', async () => {
+    app = await start(Empty, { maxRequestBodySize: 1, idleTimeout: 255, shutdownTimeout: 0 });
+    await app.close();
+    app = await start(Empty, { idleTimeout: 0 });
+  });
+});
+
+describe('middleware and filter references are validated at listen()', () => {
+  class ArrowMiddleware {
+    use = (_ctx: Ctx, next: () => Promise<Response>) => next();
+  }
+  class ArrowFilter {
+    catch = () => undefined;
+  }
+  class ProtoMiddleware {
+    use(_ctx: Ctx, next: () => Promise<Response>) {
+      return next();
+    }
+  }
+  class ProtoFilter {
+    catch() {
+      return undefined;
+    }
+  }
+
+  test('undefined, arrow-field classes and plain objects are an HttpConfigError naming the route', async () => {
+    for (const bad of [undefined, ArrowMiddleware, {}, null, 42]) {
+      @Controller('/m')
+      class M {
+        @Get('/', { middleware: [bad as never] }) get() {
+          return 'x';
+        }
+      }
+      @Module({ controllers: [M] })
+      class MM {}
+      const failure = await start(MM).catch((e) => e);
+      expect(failure).toBeInstanceOf(HttpConfigError);
+      expect((failure as Error).message).toContain('the middleware of M.get');
+    }
+    for (const bad of [undefined, ArrowFilter, {}, null, 42, () => undefined]) {
+      @Controller('/f')
+      class F {
+        @Get('/', { filters: [bad as never] }) get() {
+          return 'x';
+        }
+      }
+      @Module({ controllers: [F] })
+      class FM {}
+      const failure = await start(FM).catch((e) => e);
+      expect(failure).toBeInstanceOf(HttpConfigError);
+      expect((failure as Error).message).toContain('the filters of F.get');
+    }
+  });
+
+  test('controller, module and global references name where they are', async () => {
+    @Controller('/c', { middleware: [undefined as never] })
+    class CtrlMw {
+      @Get('/') get() {
+        return 'x';
+      }
+    }
+    @Module({ controllers: [CtrlMw] })
+    class CtrlMwModule {}
+    await expect(start(CtrlMwModule)).rejects.toThrow('the middleware of CtrlMw');
+    @Controller('/c', { filters: [undefined as never] })
+    class CtrlF {
+      @Get('/') get() {
+        return 'x';
+      }
+    }
+    @Module({ controllers: [CtrlF] })
+    class CtrlFModule {}
+    await expect(start(CtrlFModule)).rejects.toThrow('the filters of CtrlF');
+    @ModuleMiddleware(ArrowMiddleware as never)
+    @Module({})
+    class ModMw {}
+    await expect(start(ModMw)).rejects.toThrow('the middleware of ModMw');
+
+    @Module({})
+    class Empty {}
+    for (const [setup, where] of [
+      [(a: HttpApplication) => a.useGlobalMiddleware(undefined as never), 'useGlobalMiddleware()'],
+      [(a: HttpApplication) => a.useGlobalFilters(undefined as never), 'useGlobalFilters()'],
+    ] as const) {
+      const created = await KneadFactory.create(Empty, {
+        logger: new MemoryLogger(),
+        development: false,
+      });
+      setup(created);
+      await expect(created.listen({ port: 0, hostname: '127.0.0.1' })).rejects.toThrow(where);
+      await created.close();
+    }
+  });
+
+  test('valid references pass', async () => {
+    const mwObject = { use: (_ctx: Ctx, next: () => Promise<Response>) => next() };
+    @Controller('/ok', {
+      middleware: [ProtoMiddleware, (_ctx, next) => next(), mwObject],
+      filters: [ProtoFilter, { catch: () => undefined }],
+    })
+    class Ok {
+      @Get('/') get() {
+        return 'ok';
+      }
+    }
+    @Module({ controllers: [Ok] })
+    class OkModule {}
+    app = await start(OkModule);
+    expect((await fetch(new URL('/ok', app.url))).status).toBe(200);
+  });
+});
+
+describe('only GET requests are WebSocket upgrades', () => {
+  test('a POST with Upgrade: websocket is an ordinary request', async () => {
+    const upgrades: string[] = [];
+    class Gateway {
+      readonly ws = inject(WsRegistry);
+      onModuleInit() {
+        this.ws.register('/live', {
+          upgrade: (ctx) => {
+            upgrades.push(ctx.req.method);
+            return false;
+          },
+        });
+      }
+    }
+    @Controller('/')
+    class Root {
+      @Get('/*') any() {
+        return 'any';
+      }
+      @Post('/live') post() {
+        return 'posted';
+      }
+    }
+    @Module({ controllers: [Root], providers: [Gateway] })
+    class M {}
+    app = await start(M);
+    const headers = {
+      upgrade: 'websocket',
+      connection: 'Upgrade',
+      'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==',
+      'sec-websocket-version': '13',
+    };
+    const posted = await fetch(new URL('/live', app.url), { method: 'POST', headers });
+    expect(posted.status).toBe(200);
+    expect(await posted.text()).toBe('posted');
+    const put = await fetch(new URL('/live', app.url), { method: 'PUT', headers });
+    expect(put.status).toBe(405);
+    expect(upgrades).toEqual([]);
+    const get = await fetch(new URL('/live', app.url), { headers });
+    expect(get.status).toBe(403);
+    expect(upgrades).toEqual(['GET']);
   });
 });

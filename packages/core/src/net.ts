@@ -1,6 +1,6 @@
 /** IP address parsing and Redis helpers shared by the HTTP, rate-limit, GraphQL and schedule packages. */
 
-import type { RedisClient } from 'bun';
+import type { RedisClient, RedisOptions } from 'bun';
 
 function parseV4(ip: string): Uint8Array | undefined {
   const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip);
@@ -86,44 +86,59 @@ export function defaultRedisUrl(): string | undefined {
   return process.env.REDIS_URL || process.env.VALKEY_URL || undefined;
 }
 
+/** What `send` receives from sendRedisCommand(): whether the timeout has already fired. */
+export interface RedisDeadline {
+  /** True once sendRedisCommand() has rejected with its timeout error. */
+  readonly expired: boolean;
+}
+
 /**
  * Runs `send` (a command on `client`), first connecting the client when `connect` is true and it
  * is disconnected: without the offline queue, a send while disconnected rejects. Rejects when no
- * answer arrives within `timeoutMs`. `send` never runs after the timeout, so a late command cannot
- * act on an operation already reported as failed.
+ * answer arrives within `timeoutMs` (an integer of at least 1). `send` never starts after the
+ * timeout, so a late command cannot act on an operation already reported as failed; a `send` that
+ * issues several commands (a fallback after an error) checks `deadline.expired` before each later
+ * one.
  */
 export async function sendRedisCommand<T>(
   client: RedisClient,
-  send: () => Promise<T>,
+  send: (deadline: RedisDeadline) => Promise<T>,
   timeoutMs: number,
   connect = true,
 ): Promise<T> {
-  if (!connect || client.connected) return withTimeout(send(), timeoutMs);
-  let expired = false;
-  return withTimeout(
-    (async () => {
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1) {
+    throw new RangeError(`timeoutMs must be an integer >= 1, got ${String(timeoutMs)}.`);
+  }
+  const deadline = { expired: false };
+  const run = async (): Promise<T> => {
+    if (connect && !client.connected) {
       await client.connect();
       // Already rejected by the timeout: the value is never seen.
-      if (expired) return undefined as T;
-      return send();
-    })(),
-    timeoutMs,
-  ).finally(() => {
-    expired = true;
-  });
-}
-
-/** Rejects with a timeout error when `promise` has not settled within `ms`. */
-async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+      if (deadline.expired) return undefined as T;
+    }
+    return send(deadline);
+  };
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
-      promise,
+      run(),
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`Redis did not answer within ${ms}ms`)), ms);
+        timer = setTimeout(() => {
+          deadline.expired = true;
+          reject(new Error(`Redis did not answer within ${timeoutMs}ms`));
+        }, timeoutMs);
       }),
     ]);
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * The options of a client a Redis store builds itself: no offline queue, so commands sent during
+ * an outage fail instead of piling up and being replayed later, and a `connectionTimeout` of
+ * `max(commandTimeout, 1000)` ms.
+ */
+export function ownedRedisClientOptions(commandTimeout: number): RedisOptions {
+  return { enableOfflineQueue: false, connectionTimeout: Math.max(commandTimeout, 1_000) };
 }

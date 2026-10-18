@@ -1,5 +1,6 @@
 <script lang="ts">
 import { faMoon, faSun } from '@fortawesome/free-regular-svg-icons';
+import { prefersReducedMotion } from 'svelte/motion';
 import Icon from './Icon.svelte';
 
 type Theme = 'light' | 'dark';
@@ -19,10 +20,19 @@ $effect(() => {
 });
 
 function toggle() {
-  theme = theme === 'dark' ? 'light' : 'dark';
-  document.documentElement.dataset.theme = theme;
+  const next: Theme = theme === 'dark' ? 'light' : 'dark';
+  const apply = () => {
+    theme = next;
+    document.documentElement.dataset.theme = next;
+  };
+  // Crossfade the whole page between themes where view transitions exist and motion is welcome.
+  if (document.startViewTransition && !prefersReducedMotion.current) {
+    document.startViewTransition(apply);
+  } else {
+    apply();
+  }
   try {
-    localStorage.setItem('knead-theme', theme);
+    localStorage.setItem('knead-theme', next);
   } catch {
     // Storage can be unavailable (private mode); the choice then lasts for this page only.
   }

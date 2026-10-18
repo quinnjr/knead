@@ -188,7 +188,8 @@ ability.
 
 **`validateGrant()`** parses the input with `parseGrant()` and, for every rule of every granted
 level, checks each action and subject pair: the user needs some positive rule for it, conditions
-not evaluated. When the catalog rule names `fields`, each field must be allowed instead (a
+not evaluated, that no later unconditional `cannot` (one with no conditions and no fields)
+overrides. When the catalog rule names `fields`, each field must be allowed instead (a
 `cannot` on it wins). It resolves to `{ ok: true, grant }` or to `{ ok: false, problems }`.
 
 <<< casl/token-issuer.ts#issuer
@@ -243,12 +244,15 @@ subject names. It writes the same metadata as `@Can()`.
 ### `@SkipAbility()`
 
 `SkipAbility(): ClassOrMethodDecorator` marks a route as public for `AbilityGuard` (route metadata
-`SKIP` set to `true`). It wins over `@Can()` when both apply.
+`SKIP` set to `true`). When both apply, the more specific one wins: `@Can()` sets `SKIP` to `false`
+on its own level, so a method's `@Can()` overrides its controller's `@SkipAbility()`, and a
+method's `@SkipAbility()` overrides its controller's `@Can()`. On the same method or controller,
+`@SkipAbility()` wins, in either decorator order.
 
 ### `canMeta()`
 
 `canMeta(action: string, subject: string, field?: string): Readonly<Record<PropertyKey, unknown>>`
-returns `{ [CAN]: requirement }`, the metadata `@Can()` writes, for places without decorators, such
+returns `{ [CAN]: requirement }`, the requirement `@Can()` writes, for places without decorators, such
 as `WsRegistry.register(path, endpoint, { meta: canMeta('read', 'Post') })`.
 
 ### `skipAbilityMeta()`
@@ -268,7 +272,7 @@ under `CAN`. `field` is absent when not given.
 | Key | Value | Description |
 | --- | --- | --- |
 | `CAN` | `Symbol.for('knead:casl:can')` | Route-metadata key holding a `CanRequirement`. |
-| `SKIP` | `Symbol.for('knead:casl:skip')` | Route-metadata key that `@SkipAbility()` sets to `true`; `AbilityGuard` checks for exactly `true`. |
+| `SKIP` | `Symbol.for('knead:casl:skip')` | Route-metadata key that `@SkipAbility()` sets to `true` (and `@Can()` to `false`); `AbilityGuard` checks for exactly `true`. |
 
 Both are created with `Symbol.for()`, so they are the same symbols across copies of the package.
 

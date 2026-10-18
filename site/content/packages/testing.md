@@ -92,13 +92,15 @@ interface OverrideBy<T> {
 | --- | --- | --- |
 | `app` | `HttpApplication` | The listening application. |
 | `url` | `URL` | The server's URL, such as `http://127.0.0.1:41723/`. |
-| `request(method: string, path: string, init?: TestRequestInit): Promise<Response>` | method | Sends a request with `fetch()` to `new URL(path, url)`. |
+| `request(method: string, path: string, init?: TestRequestInit): Promise<Response>` | method | Sends a request with `fetch()` to the server's origin followed by `path`. |
 | `graphql<TData>(query: string, options?: GraphQLRequestOptions): Promise<GraphQLResult<TData>>` | method | POSTs `{ query, variables, operationName }` as JSON to `options.path` (default `'/graphql'`) and returns the parsed body plus `status` and `headers`. A response that is not JSON rejects with `Error: GraphQL response is not JSON (status <status>): <body text>` (the text capped at 1024 characters). |
 | `graphqlSubscribe<TData>(query: string, options?: GraphQLSubscribeOptions): Promise<GraphQLSubscription<TData>>` | method | Opens a `graphql-transport-ws` connection (`ws:`, or `wss:` for an HTTPS server) and subscribes. |
 | `close(): Promise<void>` | method | Closes the application, like `TestingModule.close()`. |
 
-Because `path` is resolved against `url`, an absolute URL is followed to the host it names, with
-the request's headers. Pass paths, never URLs built from untrusted input.
+`path` (for `graphql()` and `graphqlSubscribe()`, `options.path`) must start with `/`, or the
+call rejects with a `TypeError`: an absolute URL or a relative path is not accepted. It is appended
+to the test server's origin, so `'//other.example/x'` is sent to the test server, never to the
+host it seems to name.
 
 ### `TestRequestInit`
 
@@ -146,8 +148,12 @@ interface GraphQLSubscription<TData> extends AsyncIterableIterator<GraphQLPayloa
 }
 ```
 
-Yields the payload of each `next` message. A `complete` message ends the iteration; an `error`
-message is yielded as `{ errors }` and then ends it. `close()` sends `complete` (when the socket
+Yields the payload of each `next` message. A `complete` message or a normal close (code 1000)
+ends the iteration; an `error` message is yielded as `{ errors }` and then ends it. A close with
+any other code before that (a revoked socket, a server error) makes `next()` reject with
+`Error: WebSocket closed: <code> <reason>`, after the payloads already received, and every later
+`next()` rejects too. A frame that is not JSON makes it reject with
+`Error: graphql-transport-ws message is not JSON: <text>` and closes the socket with 4400. `close()` sends `complete` (when the socket
 is open and the subscription has not ended) and closes the socket with code 1000; `return()`,
 called when a `for await` loop exits early, does the same.
 

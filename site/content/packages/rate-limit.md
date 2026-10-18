@@ -144,6 +144,11 @@ class or method): it reads the request from `ctx.http` (the default key is `ctx.
 counter per resolver field that has `@RateLimit()`, puts the headers on the GraphQL HTTP response,
 and a denial is a `RATE_LIMITED` GraphQL error. See [GraphQL](/guide/graphql/).
 
+A guarded field without `@RateLimit()` counts against the guard's global budget once per HTTP
+request: a nested field in a list resolves once per item, but all its checks, and a `RateLimitGuard`
+on the GraphQL route itself, share one store call. A field with `@RateLimit()` counts every time it
+resolves, so its limit bounds how often that field runs.
+
 ## Responses
 
 Every counted request that is allowed gets:
@@ -179,7 +184,11 @@ CORS exposes them: list `RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Res
 ### Store failures
 
 When the store throws (Redis is down, or slower than `commandTimeout`), the failure is logged as a
-warning with a correlation id, and `onStoreError` decides:
+warning with a correlation id, and `onStoreError` decides what happens to the request. An outage
+fails every request, so the logging is throttled: the first failure is logged, then at most one
+line every 10 seconds (`Rate limit store still failing (N failures not logged)`), and the first
+success afterwards logs `Rate limit store recovered after N failures.`
+
 
 | Value | Behavior |
 | --- | --- |

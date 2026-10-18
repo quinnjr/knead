@@ -282,12 +282,18 @@ export function createSubscriptionEndpoint(
       if (runtime.options.context) {
         try {
           state.base = await runtime.options.context(state.http);
-        } catch {
-          // Every operation calls the factory again and reports the failure as a masked error
-          // (logged there), so the connection itself is not rejected here.
+        } catch (error) {
+          // Fail closed: a connection accepted without its identity could slip past closeWhere
+          // predicates while its later operations (which call the factory again) succeed.
+          logInternalError(
+            runtime.masking,
+            'GraphQL context factory threw at connection_init; rejecting the connection',
+            error,
+          );
+          accepted = false;
         }
       }
-      if (options.onConnect) {
+      if (accepted && options.onConnect) {
         try {
           const result = await options.onConnect(state.http, params ?? {});
           if (result === false) accepted = false;
@@ -388,6 +394,8 @@ export function createSubscriptionEndpoint(
           `GraphQL subscriptions require the ${GRAPHQL_TRANSPORT_WS} WebSocket subprotocol.`,
         );
       }
+      // Without this header Bun echoes the first offered subprotocol, which may not be this one.
+      ctx.res.headers.set('sec-websocket-protocol', GRAPHQL_TRANSPORT_WS);
       return { http: ctx };
     },
     open(ws) {
@@ -458,6 +466,11 @@ export function createSubscriptionEndpoint(
         // over-long one, rather than an error frame the protocol does not allow before init.
         if (!(facade.data as WebSocketContext | undefined)?.initialized) {
           ws.close(4401, 'Unauthorized');
+          return;
+        }
+        // Reusing an active id closes the socket, as Leaven does for a subscribe of any length.
+        if ((facade.data as WebSocketContext).subscriptions?.has(parsed.id)) {
+          ws.close(4409, `Subscriber for ${parsed.id} already exists`);
           return;
         }
         ws.send(

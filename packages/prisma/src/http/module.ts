@@ -2,6 +2,7 @@ import {
   type DynamicModule,
   InjectionToken,
   inject,
+  isPlainObject,
   KneadError,
   MODULES,
   Module,
@@ -9,12 +10,6 @@ import {
 import { APP_FILTER } from '@knead-js/http';
 import { PrismaExceptionFilter } from './filter.js';
 import { PRISMA_HTTP_OPTIONS, type PrismaHttpOptions } from './tokens.js';
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  if (typeof value !== 'object' || value === null) return false;
-  const proto = Object.getPrototypeOf(value);
-  return proto === Object.prototype || proto === null;
-}
 
 /**
  * Validates `options` and returns a frozen snapshot of them. `map` is copied first (each own key read
