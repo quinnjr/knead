@@ -1,6 +1,6 @@
 {
   "name": "@knead-js/testing",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Testing utilities with real ephemeral servers for Knead, the NestJS-style web framework for Bun",
   "keywords": [
     "bun",
