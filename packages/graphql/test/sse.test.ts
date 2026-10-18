@@ -535,7 +535,7 @@ describe('GraphQL over SSE', () => {
     await again.return!();
   });
 
-  test('listen() rejects keepAliveInterval >= idleTimeout', async () => {
+  test('listen() rejects keepAliveInterval > idleTimeout / 2', async () => {
     const mod = await Test.createModule({
       imports: [
         GraphQLModule.forRoot({ subscriptions: { sse: { keepAliveInterval: 10_000 } } }),
@@ -545,13 +545,14 @@ describe('GraphQL over SSE', () => {
     try {
       await expect(mod.createApp()).rejects.toThrow(
         'GraphQL SSE (subscriptions.sse.keepAliveInterval) keep-alive interval (10000 ms) must be ' +
-          'below the HTTP idleTimeout (10 s)',
+          'at most half the HTTP idleTimeout (10 s, so at most 5000 ms)',
       );
-      await expect(mod.createApp({ idleTimeout: 11 })).resolves.toBeDefined();
+      await expect(mod.createApp({ idleTimeout: 19 })).rejects.toThrow('at most half');
+      await expect(mod.createApp({ idleTimeout: 20 })).resolves.toBeDefined();
     } finally {
       await mod.close();
     }
-    await start({ subscriptions: { sse: { keepAliveInterval: 9_999 } } });
+    await start({ subscriptions: { sse: { keepAliveInterval: 5_000 } } });
     await s!.mod.close();
     await start({ subscriptions: { sse: { keepAliveInterval: 10_000 } } }, [], { idleTimeout: 0 });
   });
@@ -590,6 +591,36 @@ describe('GraphQL over SSE', () => {
     // An app with subscriptions and no explicit keepAliveInterval listens too.
     await s.mod.close();
     await start({}, [], { idleTimeout: 1 });
+  });
+
+  test('an idleTimeout of 1 to 4 s logs one warning when SSE subscriptions are on', async () => {
+    const warnings = () =>
+      s!.mod.logs.filter((e) => e.level === 'warn' && e.message.includes('Bun may close quiet'));
+    await start({}, [], { idleTimeout: 3 });
+    expect(warnings()).toHaveLength(1);
+    expect(warnings()[0]!.message).toContain('GraphQL SSE subscriptions at /graphql');
+    expect(warnings()[0]!.message).toContain('subscriptions.sse: false');
+    expect(await all(await send('{ n }'))).toEqual([next({ data: { n: 1 } }), COMPLETE]);
+    for (const listen of [{ idleTimeout: 0 }, { idleTimeout: 5 }, {}]) {
+      await s!.mod.close();
+      await start({}, [], listen);
+      expect(warnings()).toHaveLength(0);
+    }
+    await s!.mod.close();
+    await start({ subscriptions: { sse: false } }, [], { idleTimeout: 3 });
+    expect(warnings()).toHaveLength(0);
+    // No Subscription type: no long-lived stream, no warning.
+    @Resolver()
+    class QueryOnly {
+      @Query(() => Int) n() {
+        return 1;
+      }
+    }
+    @Module({ providers: [QueryOnly] })
+    class Q {}
+    await s!.mod.close();
+    s = await startGraphQL([Q], {}, [], { idleTimeout: 3 });
+    expect(warnings()).toHaveLength(0);
   });
 
   test('the slot is taken before onConnect: pending onConnect calls are bounded', async () => {

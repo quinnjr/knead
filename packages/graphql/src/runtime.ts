@@ -835,6 +835,9 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
       await Bun.write(this.options.emitSchemaFile, printSortedSchema(this.#schema));
     }
     const sse = this.options.sse;
+    if (sse !== false && this.#schema.getSubscriptionType()) {
+      this.#ws.expectLongLivedStreams(`GraphQL SSE subscriptions at ${this.options.path}`);
+    }
     if (sse !== false && sse.explicit && this.#schema.getSubscriptionType()) {
       // Checked at listen(): Bun closes a stream quiet for longer than its idleTimeout. Without an
       // explicit interval, streams derive one below the idle timeout (sse.ts), and an app with no

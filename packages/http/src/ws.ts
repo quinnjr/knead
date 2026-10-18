@@ -320,6 +320,8 @@ export class WsRegistry {
   #httpIdleTimeout = 10;
   /** Keep-alive intervals checked against the HTTP idle timeout at the next configure(). */
   readonly #keepAlives: { label: string; intervalMs: number }[] = [];
+  /** Labels of the long-lived streams announced by expectLongLivedStreams(). */
+  readonly #longLivedStreams: string[] = [];
   readonly #log = {
     logger: inject(LOGGER),
     development: inject(HTTP_DEVELOPMENT),
@@ -404,20 +406,31 @@ export class WsRegistry {
 
   /**
    * @internal Called by HttpApplication.listen() with `listen({ websocket })` and its
-   * `idleTimeout`. Throws when a keep-alive recorded by `requireKeepAliveBelowIdle()` is not
-   * below a non-zero idle timeout (Bun's default is 10s).
+   * `idleTimeout`. Throws when a keep-alive recorded by `requireKeepAliveBelowIdle()` is more
+   * than half a non-zero idle timeout (Bun's default is 10s): Bun checks idle connections on a
+   * coarse tick, so a quiet connection can be closed before the full idleTimeout. Logs one
+   * warning when long-lived streams were announced (`expectLongLivedStreams()`) and the idle
+   * timeout is 1 to 4 s, where Bun may close any quiet stream at its next tick.
    */
   configure(options: WsServerOptions, http?: { idleTimeout?: number }): void {
     const idleTimeout = http?.idleTimeout ?? 10;
     if (idleTimeout !== 0) {
       for (const { label, intervalMs } of this.#keepAlives) {
-        if (intervalMs >= idleTimeout * 1000) {
+        if (intervalMs > (idleTimeout * 1000) / 2) {
           throw new HttpConfigError(
-            `${label} keep-alive interval (${intervalMs} ms) must be below the HTTP idleTimeout ` +
-              `(${idleTimeout} s), or idle streams are closed before a keep-alive is sent.`,
+            `${label} keep-alive interval (${intervalMs} ms) must be at most half the HTTP ` +
+              `idleTimeout (${idleTimeout} s, so at most ${(idleTimeout * 1000) / 2} ms), or ` +
+              'idle streams can be closed before a keep-alive is sent.',
           );
         }
       }
+    }
+    if (idleTimeout >= 1 && idleTimeout <= 4 && this.#longLivedStreams.length > 0) {
+      this.#log.logger.warn(
+        `${this.#longLivedStreams.join(', ')}: with an HTTP idleTimeout of ${idleTimeout} s, Bun ` +
+          'may close quiet streams early whatever keep-alive they send. Use idleTimeout >= 5 ' +
+          '(or 0), or turn the streams off (subscriptions.sse: false for GraphQL SSE).',
+      );
     }
     this.#server = resolveServerOptions(options);
     this.#streamsEnded = false;
@@ -435,6 +448,14 @@ export class WsRegistry {
    */
   requireKeepAliveBelowIdle(label: string, intervalMs: number): void {
     this.#keepAlives.push({ label, intervalMs });
+  }
+
+  /**
+   * @internal Announces long-lived streaming responses (named by `label`), so `configure()` warns
+   * when the HTTP idle timeout is too short for Bun to keep them open.
+   */
+  expectLongLivedStreams(label: string): void {
+    if (!this.#longLivedStreams.includes(label)) this.#longLivedStreams.push(label);
   }
 
   /**

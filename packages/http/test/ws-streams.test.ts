@@ -130,19 +130,51 @@ describe('WsRegistry stream slots', () => {
 });
 
 describe('WsRegistry keep-alive check', () => {
-  test('configure rejects a keep-alive not below the HTTP idle timeout', async () => {
+  test('configure rejects a keep-alive above half the HTTP idle timeout', async () => {
     const ws = await registry();
     ws.requireKeepAliveBelowIdle('GraphQL SSE', 10_000);
     expect(() => ws.configure({}, {})).toThrow(HttpConfigError);
-    expect(() => ws.configure({}, {})).toThrow(/GraphQL SSE.*10000.*10/);
+    expect(() => ws.configure({}, {})).toThrow(
+      'GraphQL SSE keep-alive interval (10000 ms) must be at most half the HTTP idleTimeout ' +
+        '(10 s, so at most 5000 ms)',
+    );
+    expect(() => ws.configure({}, { idleTimeout: 19 })).toThrow(HttpConfigError);
     expect(() => ws.configure({}, { idleTimeout: 20 })).not.toThrow();
     expect(() => ws.configure({}, { idleTimeout: 0 })).not.toThrow();
-    const other = await registry();
-    other.requireKeepAliveBelowIdle('GraphQL SSE', 8_000);
-    expect(() => other.configure({}, {})).not.toThrow();
+    const half = await registry();
+    half.requireKeepAliveBelowIdle('GraphQL SSE', 5_000);
+    expect(() => half.configure({}, {})).not.toThrow();
+    const over = await registry();
+    over.requireKeepAliveBelowIdle('GraphQL SSE', 5_001);
+    expect(() => over.configure({}, {})).toThrow(HttpConfigError);
   });
 
-  test('listen() rejects a keep-alive not below idleTimeout', async () => {
+  test('configure warns once for long-lived streams with an idleTimeout of 1 to 4 s', async () => {
+    const warnings = (logger: MemoryLogger) =>
+      logger.entries.filter((e) => e.level === 'warn' && e.message.includes('idleTimeout'));
+    for (const idleTimeout of [1, 3, 4]) {
+      const logger = new MemoryLogger();
+      const ws = await registry(logger);
+      ws.expectLongLivedStreams('GraphQL SSE subscriptions at /graphql');
+      ws.expectLongLivedStreams('GraphQL SSE subscriptions at /graphql');
+      ws.configure({}, { idleTimeout });
+      expect(warnings(logger)).toHaveLength(1);
+      expect(warnings(logger)[0]!.message).toContain('GraphQL SSE subscriptions at /graphql');
+    }
+    for (const idleTimeout of [0, 5, undefined]) {
+      const logger = new MemoryLogger();
+      const ws = await registry(logger);
+      ws.expectLongLivedStreams('GraphQL SSE subscriptions at /graphql');
+      ws.configure({}, { idleTimeout });
+      expect(warnings(logger)).toHaveLength(0);
+    }
+    const logger = new MemoryLogger();
+    const ws = await registry(logger);
+    ws.configure({}, { idleTimeout: 3 });
+    expect(warnings(logger)).toHaveLength(0);
+  });
+
+  test('listen() rejects a keep-alive above half the idleTimeout', async () => {
     @Module({})
     class M {}
     const { KneadFactory } = await import('../src/application.js');
