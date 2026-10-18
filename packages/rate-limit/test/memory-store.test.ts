@@ -238,6 +238,17 @@ describe('sweep timer', () => {
       clear.mockRestore();
     }
   });
+
+  test('sweeps every 60 000 ms by default', () => {
+    const timer = { unref: () => timer };
+    const set = spyOn(globalThis, 'setInterval').mockImplementation((() => timer) as never);
+    try {
+      new MemoryStore().close();
+      expect(set.mock.calls[0]![1]).toBe(60_000);
+    } finally {
+      set.mockRestore();
+    }
+  });
 });
 
 describe('housekeeping', () => {
@@ -248,6 +259,15 @@ describe('housekeeping', () => {
     await store.consume('c', sliding);
     expect(store.size).toBe(2);
     expect((await store.consume('a', sliding)).remaining).toBe(2);
+  });
+
+  test('maxKeys defaults to 10 000', async () => {
+    const { store } = clockStore();
+    for (let i = 0; i <= 10_000; i++) await store.consume(`k${i}`, sliding);
+    expect(store.size).toBe(10_000);
+    // k0, the least recently used, was evicted, so its counter starts over.
+    expect((await store.consume('k0', sliding)).remaining).toBe(2);
+    expect((await store.consume('k10000', sliding)).remaining).toBe(1);
   });
 
   test('sweep drops expired entries', async () => {

@@ -390,6 +390,28 @@ describe('locking', () => {
     expect(runs.map((r) => r.split('@')[1])).toEqual(['60000', '120000', '180000']);
   });
 
+  test("the default lock TTL is lockTtl's default, '60s'", async () => {
+    const ttls: number[] = [];
+    const lockStore: ScheduleLockStore = {
+      acquire: async (_key, ttl) => {
+        ttls.push(ttl);
+        return true;
+      },
+    };
+    expect(resolveScheduleOptions({}, new MemoryLogger()).lockTtl).toBe(60_000);
+    const { scheduler, clock } = setup({ lockStore });
+    scheduler.add({
+      name: 'j',
+      schedule: cronSchedule('* * * * *', 'UTC'),
+      handler: () => {},
+      lock: { ttl: undefined },
+    });
+    scheduler.start();
+    await clock.advance(60_000);
+    expect(ttls).toEqual([60_000]);
+    await scheduler.shutdown();
+  });
+
   test('the key is the job name and scheduled time; the TTL comes from options', async () => {
     const calls: [string, number][] = [];
     const lockStore: ScheduleLockStore = {
@@ -490,6 +512,30 @@ describe('shutdown', () => {
     await closing;
     expect(finished).toBe(true);
     expect(clock.pending).toBe(0);
+  });
+
+  test("shutdownTimeout defaults to '10s'", async () => {
+    expect(resolveScheduleOptions({}, new MemoryLogger()).shutdownTimeout).toBe(10_000);
+    const { scheduler, clock, logger } = setup();
+    scheduler.add({
+      name: 'stuck',
+      schedule: intervalSchedule(100),
+      handler: () => new Promise(() => {}),
+      lock: noLock,
+    });
+    scheduler.start();
+    await clock.advance(100);
+    let done = false;
+    const closing = scheduler.shutdown().then(() => {
+      done = true;
+    });
+    await clock.advance(9_999);
+    expect(done).toBe(false);
+    expect(logger.entries).toEqual([]);
+    await clock.advance(1);
+    await closing;
+    expect(logger.entries).toHaveLength(1);
+    expect(logger.entries[0]!.level).toBe('warn');
   });
 
   test('gives up after shutdownTimeout and names the jobs still running', async () => {
