@@ -31,7 +31,18 @@ export type ConnectionParams = Readonly<Record<string, unknown>> & {
 /** What onConnect may add to the context: GraphQLContext fields, never the raw params. */
 export type ConnectContext = Partial<GraphQLContext> & { readonly [CONNECTION_PARAMS]?: never };
 
+/** Options of the GraphQL-over-SSE transport (`subscriptions.sse`). */
+export interface SseOptions {
+  /** ms between keep-alive comments, an integer from 1 to 2^31 - 1. Default 8000. */
+  keepAliveInterval?: number;
+}
+
 export interface SubscriptionOptions {
+  /**
+   * GraphQL over SSE, on by default whenever subscriptions are. `false` turns SSE off while the
+   * WebSocket transport stays on; an object configures it (see `SseOptions`).
+   */
+  sse?: false | SseOptions;
   /**
    * Runs on `connection_init` with the upgrade request's Ctx, after the `context` factory (which
    * closes the socket with 4403 if it throws). `false` closes the socket with 4403; an object is
@@ -198,6 +209,8 @@ export interface ResolvedGraphQLOptions {
   readonly csrf: { readonly requiredHeaders: readonly string[] } | false;
   readonly cacheControl: string | false;
   readonly subscriptions: SubscriptionOptions | false;
+  /** `false` when `subscriptions` or `subscriptions.sse` is `false`. */
+  readonly sse: { readonly keepAliveInterval: number } | false;
   readonly orphanedTypes: readonly Class[];
   readonly guards: readonly GuardRef<ResolverCtx<any, any>>[];
   readonly defaultDeny: boolean;
@@ -346,6 +359,15 @@ export function validateGraphQLOptions(options: GraphQLModuleOptions): void {
       1,
       MAX_TIMER_DELAY,
     );
+    const sse = subscriptions.sse;
+    if (sse !== undefined && sse !== false) {
+      if (typeof sse !== 'object' || sse === null) {
+        throw new HttpConfigError(
+          `GraphQL subscriptions.sse must be false or an object; got ${String(sse)}.`,
+        );
+      }
+      subscriptionInteger('sse.keepAliveInterval', sse.keepAliveInterval, 1, MAX_TIMER_DELAY);
+    }
   }
 }
 
@@ -381,6 +403,10 @@ export function resolveOptions(
             ),
           },
     subscriptions: options.subscriptions === false ? false : { ...(options.subscriptions ?? {}) },
+    sse:
+      options.subscriptions === false || options.subscriptions?.sse === false
+        ? false
+        : { keepAliveInterval: options.subscriptions?.sse?.keepAliveInterval ?? 8000 },
     orphanedTypes: options.orphanedTypes ?? [],
     guards: options.guards ?? [],
     defaultDeny: options.defaultDeny ?? false,

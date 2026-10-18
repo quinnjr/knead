@@ -25,6 +25,7 @@ export {
   type PlaygroundOptions,
   type ResolvedGraphQLOptions,
   resolveOptions,
+  type SseOptions,
   type SubscriptionOptions as GraphQLSubscriptionOptions,
 } from './options.js';
 export {

@@ -88,6 +88,7 @@ The `subscriptions` option (exported under this name; it is `SubscriptionOptions
 | `allowedOrigins` | `readonly string[] \| '*'` | same origin only | Browser origins allowed to open a socket besides the server's own. Upgrades without `Origin` are allowed; others get `403`. |
 | `messageRate` | `WsMessageRate \| false` | the server's, 100 messages per 10 s | Per-socket token bucket; exceeding it closes the socket with `1008`. |
 | `maxConnectionLifetime` | `number` (ms) | no limit | Closes every socket with `4408` after this long, an integer from 1 to 2147483647. |
+| `sse` | `false \| SseOptions` | `{}` | GraphQL over SSE; `false` turns it off and keeps WebSockets. |
 
 Other socket rules: the client must offer the `graphql-transport-ws` subprotocol (`400` otherwise),
 anywhere in its list, and the server answers with it; a second `connection_init` closes the socket
@@ -97,6 +98,14 @@ with `4400`; a `subscribe` before the connection is acknowledged closes it with 
 reusing the id of an active subscription closes it with `4409`, whatever its length; queries and
 mutations get an `error` and never run. The timing and count options above are checked at bootstrap
 (`HttpConfigError`).
+
+### `SseOptions`
+
+The `subscriptions.sse` option: `false` turns GraphQL over SSE off, an object configures it.
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `keepAliveInterval` | `number` (ms) | `8000` | Time between keep-alive comments, an integer from 1 to 2147483647. |
 
 ### `PlaygroundOptions`
 
