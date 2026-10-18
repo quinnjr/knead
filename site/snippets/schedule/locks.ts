@@ -1,4 +1,4 @@
-import { Module, type OnModuleDestroy } from '@knead-js/core';
+import { Injectable, Module, type OnModuleDestroy } from '@knead-js/core';
 import { Cron, RedisLockStore, ScheduleModule } from '@knead-js/schedule';
 
 // #region locks
@@ -8,6 +8,7 @@ const lockStore = new RedisLockStore({
   requireTls: true,
 });
 
+@Injectable()
 export class BillingJobs {
   // Every replica fires at 02:00 UTC; only the one that claims the firing runs it.
   @Cron('0 2 * * *', { name: 'charge-renewals', timezone: 'UTC', lock: true })
@@ -20,6 +21,7 @@ export class BillingJobs {
 
 // The scheduler never closes a lock store. onModuleDestroy runs after the scheduler has
 // drained its runs in beforeApplicationShutdown.
+@Injectable()
 class LockStoreLifecycle implements OnModuleDestroy {
   onModuleDestroy() {
     return lockStore.close();

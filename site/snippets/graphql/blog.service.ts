@@ -1,4 +1,4 @@
-import { inject } from '@knead-js/core';
+import { Injectable, inject } from '@knead-js/core';
 import type { BatchLoader } from '@knead-js/graphql';
 import { NotFoundException } from '@knead-js/http';
 import { Author, type Node, Post, PostStatus } from './blog.types.js';
@@ -18,6 +18,7 @@ function author(id: string, name: string, bio: string | null): Author {
 }
 
 /** The blog's data, kept in memory. */
+@Injectable()
 export class BlogService {
   readonly #authors = new Map<string, Author>([
     ['a1', author('a1', 'Ada Lovelace', 'Wrote the first published algorithm.')],
@@ -76,6 +77,7 @@ export class BlogService {
 
 // #region loader
 /** `ctx.loader(AuthorsById)` gives each operation its own DataLoader over this singleton. */
+@Injectable()
 export class AuthorsById implements BatchLoader<string, Author> {
   readonly #blog = inject(BlogService);
   /** How many times batch() ran (the tests read it). */

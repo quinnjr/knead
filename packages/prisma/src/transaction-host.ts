@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { DEVELOPMENT, inject, KneadError, LOGGER } from '@knead-js/core';
+import { DEVELOPMENT, Injectable, inject, KneadError, LOGGER } from '@knead-js/core';
 import { PRISMA_CLIENT } from './tokens.js';
 import type { IsolationLevel, PrismaLike, TransactionOptions, TxClient } from './types.js';
 
@@ -58,6 +58,7 @@ export function assertIsolationLevel(isolationLevel: unknown): void {
 let rollbackOnlyOf: (host: TransactionHost) => KneadError | undefined;
 
 /** Runs work inside an ambient Prisma interactive transaction. One per application. */
+@Injectable()
 export class TransactionHost {
   readonly #als = new AsyncLocalStorage<TxFrame>();
   readonly #client = inject(PRISMA_CLIENT) as unknown as PrismaLike;

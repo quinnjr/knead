@@ -1,5 +1,5 @@
 // A small blog schema used by the schema, HTTP and snapshot tests.
-import { inject, Module } from '@knead-js/core';
+import { Injectable, inject, Module } from '@knead-js/core';
 import { NotFoundException } from '@knead-js/http';
 import {
   ArgsType,
@@ -58,6 +58,7 @@ export class PageArgs {
   @Field(() => ID, { nullable: true }) after?: string | null;
 }
 
+@Injectable()
 export class Store {
   readonly users = new Map<string, User>();
   readonly posts = new Map<string, Post>();
@@ -84,6 +85,7 @@ export class Store {
   }
 }
 
+@Injectable()
 export class UserLoader implements BatchLoader<string, User> {
   readonly #store = inject(Store);
   async batch(ids: readonly string[]): Promise<(User | Error)[]> {

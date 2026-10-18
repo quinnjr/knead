@@ -1,4 +1,4 @@
-import { inject, Module } from '@knead-js/core';
+import { Injectable, inject, Module } from '@knead-js/core';
 import {
   Field,
   GraphQLModule,
@@ -19,6 +19,7 @@ export class StockLevel {
   @Field(() => Int) quantity!: number;
 }
 
+@Injectable()
 export class StockService {
   readonly #levels = new Map<string, number>([['KETTLE-1', 12]]);
 

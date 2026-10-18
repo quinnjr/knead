@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  ApplicationContext,
   CircularDependencyError,
   getMetadata,
   INJECTABLE,
@@ -7,6 +8,7 @@ import {
   InjectionToken,
   MODULE_METADATA,
   Module,
+  markInjectable,
   normalizeProvider,
   ProviderConfigError,
   tokenName,
@@ -14,6 +16,7 @@ import {
 
 const CONFIG = new InjectionToken<{ url: string }>('CONFIG');
 
+@Injectable()
 class Plain {}
 @Injectable({ scope: 'transient' })
 class Transient {}
@@ -138,5 +141,65 @@ describe('errors', () => {
     expect(e.message).toBe('Circular dependency detected: A → B → A');
     expect(e.path).toEqual(['A', 'B', 'A']);
     expect(e.name).toBe('CircularDependencyError');
+  });
+});
+
+describe('@Injectable is required', () => {
+  class Unmarked {}
+
+  test('a class provider without @Injectable fails, naming the class and module', () => {
+    expect(() => normalizeProvider(Unmarked, 'AppModule')).toThrow(ProviderConfigError);
+    expect(() => normalizeProvider(Unmarked, 'AppModule')).toThrow(
+      'Unmarked is listed in the providers of AppModule but is not decorated with @Injectable().',
+    );
+  });
+
+  test('a useClass provider without @Injectable fails', () => {
+    expect(() => normalizeProvider({ provide: CONFIG, useClass: Unmarked }, 'AppModule')).toThrow(
+      'The provider for CONFIG in AppModule uses Unmarked, which is not decorated with @Injectable().',
+    );
+  });
+
+  test('value, factory and existing providers need no decorator', () => {
+    expect(() => normalizeProvider({ provide: Unmarked, useValue: new Unmarked() })).not.toThrow();
+    expect(() =>
+      normalizeProvider({ provide: Unmarked, useFactory: () => new Unmarked() }),
+    ).not.toThrow();
+    expect(() => normalizeProvider({ provide: CONFIG, useExisting: Unmarked })).not.toThrow();
+  });
+
+  test('markInjectable marks a class for framework decorators without overriding a scope', () => {
+    const Marked = (() => {
+      @Injectable({ scope: 'transient' })
+      @((_t: Function, c: ClassDecoratorContext) => markInjectable(c.metadata))
+      class Marked {}
+      return Marked;
+    })();
+    expect(getMetadata(Marked, INJECTABLE)).toEqual({ scope: 'transient' });
+
+    @Injectable({ scope: 'transient' })
+    class Inner {}
+    const Outer = (() => {
+      @((_t: Function, c: ClassDecoratorContext) => markInjectable(c.metadata))
+      class Outer extends Inner {}
+      return Outer;
+    })();
+    expect(getMetadata(Outer, INJECTABLE)).toEqual({ scope: 'transient' });
+  });
+
+  test('bootstrap fails on an unmarked provider', async () => {
+    @Module({ providers: [Unmarked] })
+    class AppModule {}
+    await expect(ApplicationContext.create(AppModule)).rejects.toThrow(
+      'Unmarked is listed in the providers of AppModule but is not decorated with @Injectable().',
+    );
+  });
+
+  test('guard, middleware and filter classes need no decorator', async () => {
+    @Module({})
+    class AppModule {}
+    const ctx = await ApplicationContext.create(AppModule);
+    expect(ctx.root.injector.resolveOrConstruct(Unmarked)).toBeInstanceOf(Unmarked);
+    await ctx.close();
   });
 });

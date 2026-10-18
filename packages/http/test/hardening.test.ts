@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { inject, Module } from '@knead-js/core';
+import { Injectable, inject, Module } from '@knead-js/core';
 import type { HttpApplication } from '../src/application.js';
 import { KneadFactory } from '../src/application.js';
 import {
@@ -229,6 +229,7 @@ describe('route wildcards', () => {
 });
 
 describe('development mode', () => {
+  @Injectable()
   class Reader {
     readonly development = inject(HTTP_DEVELOPMENT);
   }
@@ -372,6 +373,7 @@ describe('listen({ defaultCacheControl })', () => {
 
 describe('defaultCacheControl on early answers', () => {
   test('421 misdirected and rejected WebSocket upgrades get it too', async () => {
+    @Injectable()
     class Gateway {
       readonly ws = inject(WsRegistry);
       onModuleInit() {
@@ -760,6 +762,7 @@ describe('middleware and filter references are validated at listen()', () => {
 describe('only GET requests are WebSocket upgrades', () => {
   test('a POST with Upgrade: websocket is an ordinary request', async () => {
     const upgrades: string[] = [];
+    @Injectable()
     class Gateway {
       readonly ws = inject(WsRegistry);
       onModuleInit() {

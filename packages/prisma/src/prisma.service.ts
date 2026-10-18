@@ -1,5 +1,6 @@
 import {
   DEVELOPMENT,
+  Injectable,
   inject,
   KneadError,
   LOGGER,
@@ -30,6 +31,7 @@ function describeConnectError(error: unknown): string {
   return code === undefined ? name : `${name} (${code})`;
 }
 
+@Injectable()
 export class PrismaService implements OnModuleInit, OnModuleDestroy {
   /** The raw client. Prefer `db`, which joins the ambient transaction. */
   readonly client: RegisteredClient = inject(PRISMA_CLIENT);

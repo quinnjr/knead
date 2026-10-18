@@ -1,11 +1,13 @@
-import { ApplicationContext, inject, MemoryLogger, Module } from '@knead-js/core';
+import { ApplicationContext, Injectable, inject, MemoryLogger, Module } from '@knead-js/core';
 
+@Injectable()
 export class PaymentGateway {
   charge(cents: number): string {
     return `charged ${cents} through the real gateway`;
   }
 }
 
+@Injectable()
 export class CheckoutService {
   readonly gateway = inject(PaymentGateway);
 }

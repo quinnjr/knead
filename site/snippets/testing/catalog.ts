@@ -1,4 +1,4 @@
-import { inject, LOGGER, Module } from '@knead-js/core';
+import { Injectable, inject, LOGGER, Module } from '@knead-js/core';
 import {
   Controller,
   type Ctx,
@@ -21,6 +21,7 @@ export interface Product {
   tags: string[];
 }
 
+@Injectable()
 export class ProductsService {
   readonly #products = new Map<string, Product>([
     ['p1', { id: 'p1', name: 'Kettle', priceCents: 3900, tags: ['kitchen'] }],

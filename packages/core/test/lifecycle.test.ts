@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   ApplicationContext,
   type BeforeApplicationShutdown,
+  Injectable,
   InjectionToken,
   inject,
   Module,
@@ -13,6 +14,7 @@ import {
 describe('lifecycle hooks', () => {
   test('init in dependency order, shutdown in reverse; close is idempotent', async () => {
     const log: string[] = [];
+    @Injectable()
     class Db
       implements OnModuleInit, OnApplicationBootstrap, BeforeApplicationShutdown, OnModuleDestroy
     {
@@ -30,6 +32,7 @@ describe('lifecycle hooks', () => {
         log.push('db:destroy');
       }
     }
+    @Injectable()
     class Users
       implements OnModuleInit, OnApplicationBootstrap, BeforeApplicationShutdown, OnModuleDestroy
     {
@@ -79,11 +82,13 @@ describe('lifecycle hooks', () => {
 
 describe('overrides', () => {
   test('replace providers by token', async () => {
+    @Injectable()
     class Mailer {
       send() {
         return 'real';
       }
     }
+    @Injectable()
     class Signup {
       readonly mailer = inject(Mailer);
     }
@@ -97,11 +102,13 @@ describe('overrides', () => {
 });
 
 describe('resolveOrConstruct', () => {
+  @Injectable()
   class Clock {
     now() {
       return 1;
     }
   }
+  @Injectable()
   class Guard {
     readonly clock = inject(Clock);
   }
@@ -141,6 +148,7 @@ describe('lifecycle robustness', () => {
         log.push('late:destroy');
       }
     }
+    @Injectable()
     class Svc {
       onModuleDestroy() {
         log.push('svc:destroy');
@@ -157,6 +165,7 @@ describe('lifecycle robustness', () => {
   test('a throwing shutdown hook does not skip the rest; close rejects with the error', async () => {
     const log: string[] = [];
     const boom = new Error('boom');
+    @Injectable()
     class A {
       beforeApplicationShutdown() {
         throw boom;
@@ -165,6 +174,7 @@ describe('lifecycle robustness', () => {
         log.push('a:destroy');
       }
     }
+    @Injectable()
     class B {
       beforeApplicationShutdown() {
         log.push('b:before');
@@ -183,11 +193,13 @@ describe('lifecycle robustness', () => {
   });
 
   test('several shutdown errors are aggregated', async () => {
+    @Injectable()
     class A {
       onModuleDestroy() {
         throw new Error('a');
       }
     }
+    @Injectable()
     class B {
       onModuleDestroy() {
         throw new Error('b');
@@ -204,6 +216,7 @@ describe('lifecycle robustness', () => {
   test('failed bootstrap shuts down already-initialized instances', async () => {
     const log: string[] = [];
     const boom = new Error('init failed');
+    @Injectable()
     class A {
       onModuleInit() {
         log.push('a:init');
@@ -212,6 +225,7 @@ describe('lifecycle robustness', () => {
         log.push('a:destroy');
       }
     }
+    @Injectable()
     class B {
       readonly a = inject(A);
       onModuleInit() {
@@ -230,12 +244,14 @@ describe('lifecycle robustness', () => {
   test('failed bootstrap rethrows the original error even if cleanup throws', async () => {
     const log: string[] = [];
     const boom = new Error('boom');
+    @Injectable()
     class A {
       onModuleDestroy() {
         log.push('a:destroy');
         throw new Error('cleanup failed');
       }
     }
+    @Injectable()
     class B {
       readonly a = inject(A);
       onModuleInit() {
@@ -252,11 +268,13 @@ describe('lifecycle robustness', () => {
 test('a failed bootstrap whose cleanup also fails keeps the cleanup error as shutdownError', async () => {
   const boom = new Error('boom');
   const cleanup = new Error('cleanup failed');
+  @Injectable()
   class A {
     onModuleDestroy() {
       throw cleanup;
     }
   }
+  @Injectable()
   class B {
     readonly a = inject(A);
     onModuleInit() {

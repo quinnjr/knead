@@ -64,6 +64,7 @@ export class AppModule {}
 Then query through `PrismaService.db` in your repositories:
 
 ```ts
+@Injectable()
 export class UsersRepository {
   readonly #prisma = inject(PrismaService);
 
@@ -164,6 +165,7 @@ uncommitted rows.
 `PrismaService.db` joins:
 
 ```ts
+@Injectable()
 export class SignupService {
   readonly #users = inject(UsersRepository);
   readonly #orders = inject(OrdersRepository);

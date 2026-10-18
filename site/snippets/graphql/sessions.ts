@@ -1,4 +1,4 @@
-import { Module } from '@knead-js/core';
+import { Injectable, Module } from '@knead-js/core';
 
 // #region context-type
 declare module '@knead-js/graphql' {
@@ -19,6 +19,7 @@ export interface Member {
  * Demo token store. The tokens are hard-coded and public; use real, expiring tokens from an
  * identity provider in an application.
  */
+@Injectable()
 export class SessionService {
   readonly #tokens = new Map<string, Member>([
     ['ada-token', { id: 'a1', name: 'Ada Lovelace', roles: ['admin'] }],

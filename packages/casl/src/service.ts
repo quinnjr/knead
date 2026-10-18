@@ -1,5 +1,5 @@
 import { AbilityBuilder, createMongoAbility, type MongoAbility } from '@casl/ability';
-import { inject } from '@knead-js/core';
+import { Injectable, inject } from '@knead-js/core';
 import { ForbiddenException, UnauthorizedException } from '@knead-js/http';
 import { type AppAbility, createAppAbility, grantRules, intersectRules } from './ability.js';
 import { type Grant, parseGrant } from './grant.js';
@@ -45,6 +45,7 @@ function isSubscriptionRoot(ctx: AbilityCtx): boolean {
   return info.parentType.name === info.schema.getSubscriptionType()?.name;
 }
 
+@Injectable()
 export class AbilityService {
   readonly #options = inject(CASL_OPTIONS);
 

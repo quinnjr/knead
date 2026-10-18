@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import {
   ApplicationContext,
+  Injectable,
   inject,
   MemoryLogger,
   Module,
@@ -46,12 +47,14 @@ async function boot(
   return { ctx, registry: ctx.get(SchedulerRegistry) };
 }
 
+@Injectable()
 class Counter {
   readonly calls: string[] = [];
 }
 
 describe('ScheduleModule', () => {
   test('discovers decorated jobs in every module and runs them with injected dependencies', async () => {
+    @Injectable()
     class ReportJobs {
       readonly counter = inject(Counter);
       @Cron('0 * * * *', { timezone: 'UTC' }) hourly(job: JobContext) {
@@ -61,6 +64,7 @@ describe('ScheduleModule', () => {
         this.counter.calls.push('tick');
       }
     }
+    @Injectable()
     class FeatureJobs {
       readonly counter = inject(Counter);
       @Timeout('1s') warmup() {
@@ -90,6 +94,7 @@ describe('ScheduleModule', () => {
   });
 
   test('a class provided by two modules registers its jobs once', async () => {
+    @Injectable()
     class Shared {
       @Interval(100) tick() {}
     }
@@ -102,9 +107,11 @@ describe('ScheduleModule', () => {
   });
 
   test('duplicate names fail at bootstrap', async () => {
+    @Injectable()
     class One {
       @Interval(100, { name: 'same' }) a() {}
     }
+    @Injectable()
     class Two {
       @Interval(100, { name: 'same' }) b() {}
     }
@@ -113,6 +120,7 @@ describe('ScheduleModule', () => {
   });
 
   test('a locked job without a lockStore fails at bootstrap', async () => {
+    @Injectable()
     class Locked {
       @Cron('* * * * *', { lock: true }) a() {}
     }
@@ -122,6 +130,7 @@ describe('ScheduleModule', () => {
 
   test('a locked job with a lockStore runs', async () => {
     const calls: string[] = [];
+    @Injectable()
     class Locked {
       @Cron('* * * * *', { lock: true }) a() {
         calls.push('a');
@@ -134,6 +143,7 @@ describe('ScheduleModule', () => {
 
   test('enabled: false registers jobs paused', async () => {
     const calls: string[] = [];
+    @Injectable()
     class Jobs {
       @Interval(100) a() {
         calls.push('a');
@@ -176,6 +186,7 @@ describe('ScheduleModule', () => {
 
   test('jobs registered before bootstrap are armed at bootstrap', async () => {
     const calls: string[] = [];
+    @Injectable()
     class Early implements OnModuleInit {
       readonly registry = inject(SchedulerRegistry);
       onModuleInit() {
@@ -194,11 +205,13 @@ describe('ScheduleModule', () => {
     const order: string[] = [];
     const gate = deferred();
     let signal: AbortSignal | undefined;
+    @Injectable()
     class Db implements OnModuleDestroy {
       onModuleDestroy() {
         order.push('db destroyed');
       }
     }
+    @Injectable()
     class Jobs {
       readonly db = inject(Db);
       @Interval(100) async slow(job: JobContext) {
@@ -231,6 +244,7 @@ describe('ScheduleModule', () => {
 
   test('works in an HTTP application built with @knead-js/testing', async () => {
     const ran = deferred<string>();
+    @Injectable()
     class Jobs {
       @Timeout(5) once(job: JobContext) {
         ran.resolve(job.name);
@@ -250,6 +264,7 @@ describe('ScheduleModule', () => {
   });
 
   test('jobs on transient providers are refused', async () => {
+    @Injectable()
     class Transient {
       @Interval(100) a() {}
     }
@@ -260,16 +275,20 @@ describe('ScheduleModule', () => {
   });
 
   test('anonymous classes get a readable default name', async () => {
-    const Anon = (() =>
-      class {
+    const Anon = (() => {
+      @Injectable()
+      class Anon {
         @Interval(100) tick() {}
-      })();
+      }
+      return Anon;
+    })();
     Object.defineProperty(Anon, 'name', { value: '' });
     const { registry } = await boot([], [Anon]);
     expect(registry.list().map((j) => j.name)).toEqual(['<anonymous>.tick']);
   });
 
   test('importing ScheduleModule.forRoot() twice fails at bootstrap', async () => {
+    @Injectable()
     class Jobs {
       @Interval(100) a() {}
     }
@@ -281,6 +300,7 @@ describe('ScheduleModule', () => {
 
   test('a configured logger receives the default failure report', async () => {
     const errors: unknown[][] = [];
+    @Injectable()
     class Jobs {
       @Interval(100) bad() {
         throw new Error('boom');
@@ -294,6 +314,7 @@ describe('ScheduleModule', () => {
   });
 
   test("without a logger option, reports go to the application's LOGGER", async () => {
+    @Injectable()
     class Jobs {
       @Interval(100) bad() {
         throw new Error('boom');
@@ -334,6 +355,7 @@ describe('ScheduleModule', () => {
 
   test('the default failure report is a redacted summary, never the raw error', async () => {
     const errors: unknown[][] = [];
+    @Injectable()
     class Jobs {
       @Interval(100) leak() {
         const error = new Error('connect redis://app:hunter2@cache:6379 refused');

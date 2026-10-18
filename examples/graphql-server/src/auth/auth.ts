@@ -1,5 +1,5 @@
 import { fullGrant } from '@knead-js/casl';
-import { Module } from '@knead-js/core';
+import { Injectable, Module } from '@knead-js/core';
 import { permissions } from './permissions.js';
 
 /** The signed-in user. Each user is also an author of the blog (same id). */
@@ -42,6 +42,7 @@ export function sessionContext(session: Session | undefined) {
  * Each token carries a grant. A real token issuer checks the requested grant with
  * `AbilityService.validateGrant()` before issuing it.
  */
+@Injectable()
 export class AuthService {
   constructor() {
     if (process.env.NODE_ENV === 'production') {

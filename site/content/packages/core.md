@@ -148,9 +148,17 @@ result. The context covers only the synchronous part of `fn`.
 
 ### `Injectable()`
 
-`@Injectable(options?: InjectableOptions)`. Optional class decorator: classes are injectable without
-it. It records the class's scope, and throws `ProviderConfigError` for a scope other than
-`'singleton'` or `'transient'`.
+`@Injectable(options?: InjectableOptions)`. Marks a class as a provider the container may construct
+and records its scope, throwing `ProviderConfigError` for a scope other than `'singleton'` or
+`'transient'`. Required on every class registered as `providers: [Cls]` or through `useClass`; an
+unmarked one is a `ProviderConfigError` at bootstrap. Guard, middleware and filter classes do not
+need it. Subclasses of a marked class are marked too and inherit its scope.
+
+### `markInjectable()`
+
+`markInjectable(metadata: DecoratorMetadataObject): void`. Marks a class as injectable from inside
+another class decorator, as `@Controller()` and `@Catch()` do, keeping a scope already set by
+`@Injectable()` or a parent class. Pass the decorator's `context.metadata`.
 
 ### `InjectableOptions`
 
@@ -220,8 +228,10 @@ in a provider or in `@Injectable()`, throws `ProviderConfigError`.
 
 ### `normalizeProvider()` and `NormalizedProvider`
 
-`normalizeProvider(provider: Provider): NormalizedProvider` converts any provider form to the
-internal shape the container uses:
+`normalizeProvider(provider: Provider, owner?: string): NormalizedProvider` converts any provider
+form to the internal shape the container uses, and throws a `ProviderConfigError` for a malformed
+provider or an unmarked class. `owner` names the declaring module in that error (default
+`'the application'`):
 
 ```text
 | { kind: 'class'; token: Token; useClass: Type; scope: Scope; multi: boolean }

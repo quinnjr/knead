@@ -1,4 +1,4 @@
-import { inject, Module } from '@knead-js/core';
+import { Injectable, inject, Module } from '@knead-js/core';
 import {
   APP_GUARD,
   assertGuardRef,
@@ -20,6 +20,7 @@ export interface User {
   roles: string[];
 }
 
+@Injectable()
 export class Sessions {
   readonly #byToken = new Map<string, User>([
     ['token-ada', { id: 'ada', roles: ['admin'] }],

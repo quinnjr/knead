@@ -1,6 +1,7 @@
-import { inject, Module } from '@knead-js/core';
+import { Injectable, inject, Module } from '@knead-js/core';
 
 // #region database
+@Injectable()
 export class Database {
   query(sql: string): string[] {
     return [`result of ${sql}`];
@@ -8,6 +9,7 @@ export class Database {
 }
 
 // Only for DatabaseModule's own use: not exported.
+@Injectable()
 export class ConnectionPool {
   readonly size = 10;
 }
@@ -20,6 +22,7 @@ export class DatabaseModule {}
 // #endregion database
 
 // #region users
+@Injectable()
 export class UsersService {
   readonly db = inject(Database);
 

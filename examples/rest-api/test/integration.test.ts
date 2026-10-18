@@ -1,6 +1,12 @@
 // Cross-package integration: every @knead-js/* package working together in one application.
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { inject, Module, type OnModuleDestroy, type OnModuleInit } from '@knead-js/core';
+import {
+  Injectable,
+  inject,
+  Module,
+  type OnModuleDestroy,
+  type OnModuleInit,
+} from '@knead-js/core';
 import { CorsModule } from '@knead-js/cors';
 import {
   Controller,
@@ -44,6 +50,7 @@ class ItController {
   }
 }
 
+@Injectable()
 class Gateway implements OnModuleInit {
   readonly ws = inject(WsRegistry);
   onModuleInit() {
@@ -52,6 +59,7 @@ class Gateway implements OnModuleInit {
   }
 }
 
+@Injectable()
 class Heartbeat {
   beats = 0;
   @Interval(5) beat() {

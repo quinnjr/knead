@@ -2,7 +2,14 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { InjectionToken, inject, LOGGER, Module, NoProviderError } from '@knead-js/core';
+import {
+  Injectable,
+  InjectionToken,
+  inject,
+  LOGGER,
+  Module,
+  NoProviderError,
+} from '@knead-js/core';
 import { ConsoleLogger, Controller, type Ctx, Get, MemoryLogger, Post } from '@knead-js/http';
 import { Test } from '@knead-js/testing';
 import { CatalogModule, ProductsService } from '../snippets/testing/catalog.js';
@@ -109,9 +116,11 @@ describe('testing: builder and module', () => {
 
   test('overrides replace the provider in every module that registers it', async () => {
     const CLOCK = new InjectionToken<() => number>('CLOCK');
+    @Injectable()
     class A {
       readonly now = inject(CLOCK);
     }
+    @Injectable()
     class B {
       readonly now = inject(CLOCK);
     }
@@ -136,6 +145,7 @@ describe('testing: builder and module', () => {
 
   test('a LOGGER override wins over the testing logger', async () => {
     const mine = new MemoryLogger();
+    @Injectable()
     class Svc {
       readonly log = inject(LOGGER);
     }

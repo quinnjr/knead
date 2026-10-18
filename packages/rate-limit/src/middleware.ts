@@ -1,4 +1,4 @@
-import { InjectionToken, inject, type OnModuleDestroy } from '@knead-js/core';
+import { Injectable, InjectionToken, inject, type OnModuleDestroy } from '@knead-js/core';
 import {
   type Ctx,
   ForbiddenException,
@@ -130,6 +130,7 @@ function resolverParts(
  * The limit check shared by RateLimitMiddleware and RateLimitGuard. Returns the RateLimit-*
  * headers to send, `undefined` when the request is not limited, or throws 429 (or 403/503).
  */
+@Injectable()
 export class RateLimiter implements OnModuleDestroy {
   readonly #options = inject(RATE_LIMIT_OPTIONS);
   readonly #store = inject(RATE_LIMIT_STORE);
@@ -277,6 +278,7 @@ export class RateLimiter implements OnModuleDestroy {
  * Global middleware (priority 900): it runs before guards, so its key function sees the
  * request but not what guards set (`ctx.state.user`). Use RateLimitGuard for that.
  */
+@Injectable()
 export class RateLimitMiddleware implements Middleware {
   readonly #limiter = inject(RateLimiter);
 
@@ -294,6 +296,7 @@ export class RateLimitMiddleware implements Middleware {
  * are separate from RateLimitMiddleware's; set `middleware: false` in forRoot() to use only
  * the guard.
  */
+@Injectable()
 export class RateLimitGuard implements Guard {
   readonly #limiter = inject(RateLimiter);
 

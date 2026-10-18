@@ -1,6 +1,12 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import * as core from '@knead-js/core';
-import { inject, Module, type OnModuleDestroy, type OnModuleInit } from '@knead-js/core';
+import {
+  Injectable,
+  inject,
+  Module,
+  type OnModuleDestroy,
+  type OnModuleInit,
+} from '@knead-js/core';
 import type { StandardSchemaV1 } from '@standard-schema/spec';
 import * as http from '../src/index.js';
 import {
@@ -59,6 +65,7 @@ class RolesGuard implements Guard {
   }
 }
 
+@Injectable()
 class UsersService {
   readonly users = new Map([['1', { id: '1', name: 'Ada' }]]);
   find(id: string) {
@@ -120,6 +127,7 @@ class ChatController {
   }
 }
 
+@Injectable()
 class ChatGateway implements OnModuleInit {
   readonly ws = inject(WsRegistry);
   onModuleInit() {
@@ -414,6 +422,7 @@ describe('global middleware ordering', () => {
 describe('listen atomicity and global provider scope', () => {
   test('a failed listen leaves no partial state', async () => {
     const blocker = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response('x') });
+    @Injectable()
     class Gw implements OnModuleInit {
       readonly ws = inject(WsRegistry);
       onModuleInit() {}
@@ -432,6 +441,7 @@ describe('listen atomicity and global provider scope', () => {
   test('close() after a failed listen runs shutdown hooks and resolves', async () => {
     const blocker = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response('x') });
     const log: string[] = [];
+    @Injectable()
     class Resource implements OnModuleDestroy {
       onModuleDestroy() {
         log.push('destroy');
@@ -448,6 +458,7 @@ describe('listen atomicity and global provider scope', () => {
   });
 
   test('class refs from APP_GUARD in a feature module resolve with that module injector', async () => {
+    @Injectable()
     class Secret {
       readonly value = 's3';
     }

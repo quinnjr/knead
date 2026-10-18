@@ -1,6 +1,7 @@
-import { inject } from '@knead-js/core';
+import { Injectable, inject } from '@knead-js/core';
 import { Interval, type JobContext } from '@knead-js/schedule';
 
+@Injectable()
 export class InventorySync {
   async run(signal: AbortSignal): Promise<void> {
     for (let page = 0; page < 10; page++) {
@@ -11,6 +12,7 @@ export class InventorySync {
 }
 
 // #region overlap
+@Injectable()
 export class InventoryJobs {
   readonly sync = inject(InventorySync);
   #running = false;

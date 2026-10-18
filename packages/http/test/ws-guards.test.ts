@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { inject, Module, type OnModuleInit } from '@knead-js/core';
+import { Injectable, inject, Module, type OnModuleInit } from '@knead-js/core';
 import type { HttpApplication } from '../src/application.js';
 import { Controller, Get, ModuleMiddleware } from '../src/decorators.js';
 import { APP_GUARD } from '../src/tokens.js';
@@ -48,6 +48,7 @@ function upgradeStatus(app: HttpApplication, headers: string[] = []): Promise<st
 const seen: (string | null)[] = [];
 const upgrades: unknown[] = [];
 
+@Injectable()
 class Gateway implements OnModuleInit {
   readonly ws = inject(WsRegistry);
   onModuleInit() {
@@ -236,6 +237,7 @@ describe('WebSocket endpoint meta', () => {
 
   test('guards see the endpoint meta on an upgrade without a GET route', async () => {
     const meta: Record<PropertyKey, unknown> = { area: 'chat', [TAG]: 't' };
+    @Injectable()
     class MetaGateway implements OnModuleInit {
       readonly ws = inject(WsRegistry);
       onModuleInit() {
@@ -253,6 +255,7 @@ describe('WebSocket endpoint meta', () => {
   });
 
   test('on the path of a GET route, endpoint meta is merged over the route meta', async () => {
+    @Injectable()
     class MetaGateway implements OnModuleInit {
       readonly ws = inject(WsRegistry);
       onModuleInit() {
@@ -328,6 +331,7 @@ function upgradeHead(app: HttpApplication): Promise<string> {
 
 describe('response headers on WebSocket upgrades', () => {
   test('headers set on ctx.res before the upgrade are sent with the 101 handshake', async () => {
+    @Injectable()
     class CookieGateway implements OnModuleInit {
       readonly ws = inject(WsRegistry);
       onModuleInit() {

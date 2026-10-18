@@ -6,7 +6,7 @@ import {
   SkipAbility,
   skipAbilityMeta,
 } from '@knead-js/casl';
-import { inject, Module, type OnModuleInit } from '@knead-js/core';
+import { Injectable, inject, Module, type OnModuleInit } from '@knead-js/core';
 import { APP_GUARD, Controller, Get, type WsEndpoint, WsRegistry } from '@knead-js/http';
 import { permissions } from './permissions.js';
 import { defineUserAbility, sessionFrom, type User } from './users.js';
@@ -35,6 +35,7 @@ export class StatusController {
 // #endregion controller
 
 // #region gateway
+@Injectable()
 export class FeedGateway implements OnModuleInit {
   readonly #ws = inject(WsRegistry);
 

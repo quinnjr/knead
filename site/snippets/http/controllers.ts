@@ -1,4 +1,4 @@
-import { inject, Module } from '@knead-js/core';
+import { Injectable, inject, Module } from '@knead-js/core';
 import {
   All,
   Controller,
@@ -19,6 +19,7 @@ export interface Cat {
   name: string;
 }
 
+@Injectable()
 export class CatsService {
   readonly #cats = new Map<string, Cat>([['1', { id: '1', name: 'Tom' }]]);
 

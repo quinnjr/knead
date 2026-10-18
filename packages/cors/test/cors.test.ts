@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { inject, type OnModuleInit } from '@knead-js/core';
+import { Injectable, inject, type OnModuleInit } from '@knead-js/core';
 import { Controller, type Ctx, Get, UseGuards, WsRegistry } from '@knead-js/http';
 import { Test, type TestApp } from '@knead-js/testing';
 import { CorsConfigError, CorsModule, type CorsOptions } from '../src/index.js';
@@ -303,6 +303,7 @@ describe('configuration validation', () => {
 });
 
 describe('WebSocket upgrades', () => {
+  @Injectable()
   class Gateway implements OnModuleInit {
     readonly ws = inject(WsRegistry);
     onModuleInit() {

@@ -42,7 +42,7 @@ export class AppModule {}
 Providers keep logging through the injected `LOGGER`:
 
 ```ts
-import { inject, LOGGER } from '@knead-js/core';
+import { Injectable, inject, LOGGER } from '@knead-js/core';
 
 export interface Order {
   id: string;
@@ -54,6 +54,7 @@ export class PaymentDeclinedError extends Error {
   override name = 'PaymentDeclinedError';
 }
 
+@Injectable()
 export class OrdersService {
   readonly #log = inject(LOGGER);
 
@@ -104,9 +105,10 @@ U+2029, keeps every record on exactly one line, so a logged value cannot forge a
 ## Child loggers
 
 ```ts
-import { inject, LOGGER } from '@knead-js/core';
+import { Injectable, inject, LOGGER } from '@knead-js/core';
 import { childLogger } from '@knead-js/logging';
 
+@Injectable()
 export class InvoiceJob {
   // Every entry from this class carries `component: 'invoices'`.
   readonly #log = childLogger(inject(LOGGER), { component: 'invoices' });

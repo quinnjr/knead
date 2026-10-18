@@ -1,6 +1,6 @@
 // Pins the behaviour documented on guide/scheduling and packages/schedule.
 import { afterEach, describe, expect, test } from 'bun:test';
-import { ApplicationContext, Module } from '@knead-js/core';
+import { ApplicationContext, Injectable, Module } from '@knead-js/core';
 import {
   Cron,
   Interval,
@@ -123,6 +123,7 @@ describe('decorated jobs', () => {
 
   test('a timeout runs once, then leaves the registry', async () => {
     let runs = 0;
+    @Injectable()
     class Warmup {
       @Timeout(5) once() {
         runs++;
@@ -137,9 +138,11 @@ describe('decorated jobs', () => {
   });
 
   test('bootstrap refuses duplicate names, transient providers and a second forRoot()', async () => {
+    @Injectable()
     class A {
       @Interval('1h', { name: 'same' }) a() {}
     }
+    @Injectable()
     class B {
       @Interval('1h', { name: 'same' }) b() {}
     }
@@ -147,6 +150,7 @@ describe('decorated jobs', () => {
       'A scheduled job named "same" already exists.',
     );
 
+    @Injectable()
     class Transient {
       @Interval('1h') tick() {}
     }

@@ -20,9 +20,11 @@ function injectorWith(...providers: Provider[]): ModuleInjector {
   return injector;
 }
 
+@Injectable()
 class Db {
   readonly id = Math.random();
 }
+@Injectable()
 class Repo {
   readonly db = inject(Db);
 }
@@ -60,12 +62,14 @@ describe('ModuleInjector', () => {
 
   test('useExisting aliases the same instance', () => {
     abstract class Store {}
+    @Injectable()
     class MemoryStore extends Store {}
     const injector = injectorWith(MemoryStore, { provide: Store, useExisting: MemoryStore });
     expect(injector.get(Store)).toBe(injector.get(MemoryStore)!);
   });
 
   test('optional injection returns undefined when missing', () => {
+    @Injectable()
     class UsesOptional {
       readonly url = inject(URL_TOKEN, { optional: true });
     }
@@ -118,9 +122,11 @@ describe('ModuleInjector', () => {
   });
 
   test('cycles throw CircularDependencyError with the full path', () => {
+    @Injectable()
     class A {
       readonly b: unknown = inject(B);
     }
+    @Injectable()
     class B {
       readonly a: unknown = inject(A);
     }
@@ -138,6 +144,7 @@ describe('ModuleInjector', () => {
 
   test('a constructor that throws leaves the record retryable', () => {
     let fail = true;
+    @Injectable()
     class Flaky {
       constructor() {
         if (fail) throw new Error('boom');
@@ -156,6 +163,7 @@ describe('transients of a construction retried after an async dependency', () =>
     const X = new InjectionToken<unknown>('X');
     let inits = 0;
     let destroys = 0;
+    @Injectable()
     class T {
       onModuleInit() {
         inits++;
@@ -164,6 +172,7 @@ describe('transients of a construction retried after an async dependency', () =>
         destroys++;
       }
     }
+    @Injectable()
     class S {
       readonly t = inject(T);
       readonly c = inject(CFG);
@@ -187,14 +196,17 @@ describe('transients of a construction retried after an async dependency', () =>
     const CFG = new InjectionToken<number>('CFG');
     const X = new InjectionToken<unknown>('X');
     let inits = 0;
+    @Injectable()
     class T {
       onModuleInit() {
         inits++;
       }
     }
+    @Injectable()
     class Inner {
       readonly t = inject(T);
     }
+    @Injectable()
     class Outer {
       readonly inner = inject(Inner);
       readonly c = inject(CFG);
@@ -218,6 +230,7 @@ describe('transients of a construction retried after an async dependency', () =>
 
 describe('provider scopes are validated', () => {
   test('a scope other than singleton or transient is refused', () => {
+    @Injectable()
     class Svc {}
     expect(() =>
       normalizeProvider({ provide: Svc, useClass: Svc, scope: 'request' as 'singleton' }),

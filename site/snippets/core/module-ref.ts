@@ -1,6 +1,7 @@
-import { InjectionToken, inject, MODULES, Module } from '@knead-js/core';
+import { Injectable, InjectionToken, inject, MODULES, Module } from '@knead-js/core';
 
 // #region modules
+@Injectable()
 export class ModuleReport {
   readonly #modules = inject(MODULES);
 

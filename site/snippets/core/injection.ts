@@ -1,12 +1,14 @@
-import { InjectionToken, inject, Module } from '@knead-js/core';
+import { Injectable, InjectionToken, inject, Module } from '@knead-js/core';
 
 // #region basic
+@Injectable()
 export class PriceFormatter {
   format(cents: number): string {
     return `$${(cents / 100).toFixed(2)}`;
   }
 }
 
+@Injectable()
 export class CartService {
   // Field initializers run inside the injection context.
   readonly formatter = inject(PriceFormatter);
@@ -20,6 +22,7 @@ export class CartService {
 // #region constructor
 export const CURRENCY = new InjectionToken<string>('CURRENCY');
 
+@Injectable()
 export class InvoiceService {
   readonly prefix: string;
 
@@ -38,6 +41,7 @@ export interface Tracer {
 
 export const TRACER = new InjectionToken<Tracer>('TRACER');
 
+@Injectable()
 export class CheckoutService {
   readonly tracer = inject(TRACER, { optional: true });
 
