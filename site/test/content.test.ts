@@ -179,15 +179,54 @@ interface PackageApi {
 
 let apis: Map<string, PackageApi> | undefined;
 
+/** The source file of one `exports` target: a path, or a conditions object naming one. */
+function exportSource(target: unknown): string | undefined {
+  if (typeof target === 'string') return target;
+  if (target && typeof target === 'object') {
+    const conditions = target as Record<string, unknown>;
+    for (const key of ['bun', 'import', 'default', 'types']) {
+      const found = exportSource(conditions[key]);
+      if (found) return found;
+    }
+  }
+  return undefined;
+}
+
 /**
- * The public API of every package, from ONE program rooted at every packages/<name>/src/index.ts.
+ * Every entry point a package exposes, from its package.json `exports` (which point at the
+ * TypeScript sources; `publishConfig.exports` holds the published `dist/` paths), so subpath
+ * exports such as `@knead-js/prisma/http` are checked along with the root.
+ */
+function packageEntries(pkg: string): string[] {
+  const dir = join(repo, 'packages', pkg);
+  const manifestPath = join(dir, 'package.json');
+  if (!existsSync(manifestPath)) return [];
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { exports?: unknown };
+  const map =
+    typeof manifest.exports === 'string' || !manifest.exports
+      ? { '.': manifest.exports ?? './src/index.ts' }
+      : (manifest.exports as Record<string, unknown>);
+  return Object.entries(map).map(([subpath, target]) => {
+    const source = exportSource(target);
+    if (!source || !/\.tsx?$/.test(source)) {
+      throw new Error(`${pkg}: exports["${subpath}"] does not point at a TypeScript source`);
+    }
+    const entry = join(dir, source);
+    if (!existsSync(entry)) throw new Error(`${pkg}: exports["${subpath}"] → missing ${source}`);
+    return entry;
+  });
+}
+
+/**
+ * The public API of every package, from ONE program rooted at every entry point each package's
+ * `exports` names (the root and every subpath), with the names of a package's entries merged.
  * A root that cannot resolve a module (TS2307) fails, instead of silently exporting less.
  */
 function packageApis(): Map<string, PackageApi> {
   if (apis) return apis;
-  const roots = readdirSync(join(repo, 'packages'))
-    .map((pkg) => [pkg, join(repo, 'packages', pkg, 'src/index.ts')] as const)
-    .filter(([, entry]) => existsSync(entry));
+  const roots = readdirSync(join(repo, 'packages')).flatMap((pkg) =>
+    packageEntries(pkg).map((entry) => [pkg, entry] as const),
+  );
   const program = ts.createProgram(
     roots.map(([, entry]) => entry),
     {
@@ -208,7 +247,11 @@ function packageApis(): Map<string, PackageApi> {
       if (d.code === 2307)
         unresolved.push(`${pkg}: ${ts.flattenDiagnosticMessageText(d.messageText, ' ')}`);
     }
-    const api: PackageApi = { names: new Set(), statics: new Map(), members: new Map() };
+    let api = result.get(pkg);
+    if (!api) {
+      api = { names: new Set(), statics: new Map(), members: new Map() };
+      result.set(pkg, api);
+    }
     for (const exported of checker.getExportsOfModule(checker.getSymbolAtLocation(source)!)) {
       const name = exported.getName();
       api.names.add(name);
@@ -223,7 +266,6 @@ function packageApis(): Map<string, PackageApi> {
         api.members.set(name, new Set(checker.getPropertiesOfType(type).map((p) => p.getName())));
       }
     }
-    result.set(pkg, api);
   }
   if (unresolved.length) throw new Error(`Unresolved modules:\n${unresolved.join('\n')}`);
   apis = result;
@@ -300,6 +342,19 @@ describe('package reference pages', () => {
       expect(stale).toEqual([]);
     });
   }
+
+  test('subpath exports are part of their package API', () => {
+    // @knead-js/prisma/http and @knead-js/prisma/testing are entry points of their own.
+    expect(packageEntries('prisma').map((e) => relative(repo, e))).toEqual([
+      'packages/prisma/src/index.ts',
+      'packages/prisma/src/http/index.ts',
+      'packages/prisma/src/testing/index.ts',
+    ]);
+    const names = packageApis().get('prisma')!.names;
+    expect(names.has('PrismaModule')).toBe(true);
+    expect(names.has('PrismaExceptionFilter')).toBe(true);
+    expect(names.has('withRollback')).toBe(true);
+  });
 
   test('signature blocks are recognized (the drift guard is not vacuous)', () => {
     const claims = packages.flatMap((pkg) => signatureClaims(pages.get(`packages/${pkg}`) ?? ''));
