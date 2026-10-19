@@ -62,7 +62,7 @@ interface SseConnectionsHost {
 
 /**
  * The open SSE subscription streams of a GraphQLRuntime, for GraphQLSubscriptions.closeWhere.
- * Shutdown ends them through WsRegistry.endStreams(), which holds their slots.
+ * Shutdown ends them through StreamRegistry.endStreams(), which holds their slots.
  */
 export class SseConnections {
   readonly #host: SseConnectionsHost;
@@ -165,8 +165,8 @@ function keepAliveOf(
   sse: { keepAliveInterval: number; explicit: boolean },
 ) {
   if (sse.explicit) return sse.keepAliveInterval;
-  const idle = runtime.ws.httpIdleTimeout;
-  return idle === 0 ? DEFAULT_KEEP_ALIVE : Math.min(DEFAULT_KEEP_ALIVE, (idle * 1000) / 2);
+  const max = runtime.streams.maxKeepAliveMs;
+  return max === undefined ? DEFAULT_KEEP_ALIVE : Math.min(DEFAULT_KEEP_ALIVE, max);
 }
 
 const EMPTY_CONTEXT: Readonly<Record<PropertyKey, unknown>> = Object.freeze({});
@@ -302,7 +302,7 @@ async function subscribe(
   // The slot is taken before onConnect, as a WebSocket upgrade reserves one, and returned only
   // once onConnect has settled, so pending onConnect calls are bounded by the connection limits
   // even when clients abort. Throws 429 / 503 past them.
-  runtime.ws.openStream(connection, ctx.ip, end);
+  runtime.streams.openStream(connection, ctx.ip, end);
   runtime.sse.add(connection);
   const { subscriptions } = runtime.options;
   const lifetime = subscriptions === false ? undefined : subscriptions.maxConnectionLifetime;
@@ -321,7 +321,7 @@ async function subscribe(
   };
   const release = () => {
     detach();
-    runtime.ws.closeStream(connection);
+    runtime.streams.closeStream(connection);
   };
   // The client going away ends the stream, also while the subscription is being set up.
   signal.addEventListener('abort', end, { once: true });
@@ -349,7 +349,7 @@ async function subscribe(
     detach();
     // Skips onConnect if the factory is still running; the slot comes back when it settles.
     end();
-    void connecting.finally(() => runtime.ws.closeStream(connection));
+    void connecting.finally(() => runtime.streams.closeStream(connection));
     throw new ServiceUnavailableException(
       accepted === 'timeout'
         ? 'The subscription did not start within connectionInitTimeout.'

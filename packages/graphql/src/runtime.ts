@@ -23,6 +23,7 @@ import {
   LOGGER,
   ROUTE_META,
   resolveGuard,
+  StreamRegistry,
   WsRegistry,
   type WsSocket,
 } from '@knead-js/http';
@@ -721,6 +722,7 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
   readonly logger = inject(LOGGER);
   readonly #modules = inject(MODULES);
   readonly #ws = inject(WsRegistry);
+  readonly #streams = inject(StreamRegistry);
   /** @internal The open SSE subscription streams. */
   readonly sse = new SseConnections(this);
   #schema: GraphQLSchema | undefined;
@@ -756,9 +758,14 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  /** @internal The registry SSE streams take their connection slots from (shared with WebSocket). */
+  /** @internal The registry of subscription sockets (and their slot holds). */
   get ws(): WsRegistry {
     return this.#ws;
+  }
+
+  /** @internal The registry SSE streams take their connection slots from (shared with WebSocket). */
+  get streams(): StreamRegistry {
+    return this.#streams;
   }
 
   /** `listen({ websocket: { maxPendingRevocations } })`, also the per-socket deferral cap. */
@@ -825,13 +832,13 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
     }
     const sse = this.options.sse;
     if (sse !== false && this.#schema.getSubscriptionType()) {
-      this.#ws.expectLongLivedStreams(`GraphQL SSE subscriptions at ${this.options.path}`);
+      this.#streams.expectLongLivedStreams(`GraphQL SSE subscriptions at ${this.options.path}`);
     }
     if (sse !== false && sse.explicit && this.#schema.getSubscriptionType()) {
       // Checked at listen(): Bun closes a stream quiet for longer than its idleTimeout. Without an
       // explicit interval, streams derive one below the idle timeout (sse.ts), and an app with no
       // Subscription type opens no long-lived stream.
-      this.#ws.requireKeepAliveBelowIdle(
+      this.#streams.requireKeepAliveBelowIdle(
         'GraphQL SSE (subscriptions.sse.keepAliveInterval)',
         sse.keepAliveInterval,
       );

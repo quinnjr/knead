@@ -34,6 +34,7 @@ export { DEFAULT_MAX_PARAMS, requestUrl } from './request.js';
 export { assertGuardRef, resolveGuard } from './resolve.js';
 export { isHeaderValue, withHeaders } from './response.js';
 export { checkBunVersion, compareVersions, MIN_BUN_VERSION } from './runtime-version.js';
+export { StreamRegistry } from './streams.js';
 export * from './tokens.js';
 export type * from './types.js';
 export {

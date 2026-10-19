@@ -1,15 +1,11 @@
 import { Injectable, inject } from '@knead-js/core';
 import type { ServerWebSocket, WebSocketHandler } from 'bun';
 import { logError } from './error-log.js';
-import {
-  ForbiddenException,
-  HttpConfigError,
-  ServiceUnavailableException,
-  TooManyRequestsException,
-} from './exceptions.js';
+import { ForbiddenException, HttpConfigError } from './exceptions.js';
 import { LOGGER, logValue } from './logger.js';
-import { isIpv6Prefix, maskIp } from './net.js';
+import { isIpv6Prefix } from './net.js';
 import { joinPaths } from './path.js';
+import { ConnectionSlots } from './slots.js';
 import { HTTP_DEVELOPMENT } from './tokens.js';
 import type { Ctx } from './types.js';
 
@@ -315,6 +311,9 @@ function copyOwn(meta: object): Record<PropertyKey, unknown> {
   return out;
 }
 
+/** Set by WsRegistry's static block: reads a registry's private connection slots. */
+let slotsOf: (registry: WsRegistry) => ConnectionSlots;
+
 /** Bun allows one websocket handler per server; modules register endpoints here instead. */
 @Injectable()
 export class WsRegistry {
@@ -325,29 +324,13 @@ export class WsRegistry {
   readonly #sockets = new Map<WsSocket, SocketState>();
   /** Sockets whose endpoint saw open: only those get message, drain and close. */
   readonly #opened = new WeakSet<WsSocket>();
-  /** Upgrade data objects holding a connection slot, with the IP they count against. */
-  readonly #reserved = new WeakMap<object, string | undefined>();
-  /** Pending holdSlot() calls per socket data: release() keeps the slot until they are done. */
-  readonly #holds = new WeakMap<object, number>();
-  /** Socket data released while held: the last hold to finish returns the slot. */
-  readonly #releasedWhileHeld = new WeakSet<object>();
-  readonly #perIp = new Map<string, number>();
-  #reservedTotal = 0;
-  /** Open streams holding a connection slot, keyed by their data, with the end() for shutdown. */
-  readonly #streams = new Map<object, () => void>();
-  /** Set by endStreams() (shutdown): later streams are refused, until the next configure(). */
-  #streamsEnded = false;
-  /** The HTTP idleTimeout (seconds) recorded by the last configure(); Bun's default is 10. */
-  #httpIdleTimeout = 10;
-  /** Keep-alive intervals (ms) by label, checked against the HTTP idle timeout at configure(). */
-  readonly #keepAlives = new Map<string, number>();
-  /** Labels of the long-lived streams announced by expectLongLivedStreams(). */
-  readonly #longLivedStreams: string[] = [];
   readonly #log = {
     logger: inject(LOGGER),
     development: inject(HTTP_DEVELOPMENT),
   };
   #server: ResolvedServerOptions = resolveServerOptions({});
+  /** Connection slots of sockets, shared with StreamRegistry's streams (connectionSlotsOf()). */
+  readonly #slots = new ConnectionSlots(this.#server);
   #sealed = false;
   /**
    * Upgrades in progress (from the upgrade request until the socket opens or the upgrade
@@ -421,94 +404,12 @@ export class WsRegistry {
   }
 
   /**
-   * @internal Called by HttpApplication.listen() with `listen({ websocket })` and its
-   * `idleTimeout`. Throws when a keep-alive recorded by `requireKeepAliveBelowIdle()` is more
-   * than half a non-zero idle timeout (Bun's default is 10s): Bun checks idle connections on a
-   * coarse tick, so a quiet connection can be closed before the full idleTimeout. Logs one
-   * warning when long-lived streams were announced (`expectLongLivedStreams()`) and the idle
-   * timeout is 1 to 4 s, where Bun may close any quiet stream at its next tick.
+   * @internal Called by HttpApplication.listen() with `listen({ websocket })`: the socket limits,
+   * and the connection limits shared with StreamRegistry's streams.
    */
-  configure(options: WsServerOptions, http?: { idleTimeout?: number }): void {
-    const idleTimeout = http?.idleTimeout ?? 10;
-    if (idleTimeout !== 0) {
-      for (const [label, intervalMs] of this.#keepAlives) {
-        if (intervalMs > (idleTimeout * 1000) / 2) {
-          throw new HttpConfigError(
-            `${label} keep-alive interval (${intervalMs} ms) must be at most half the HTTP ` +
-              `idleTimeout (${idleTimeout} s, so at most ${(idleTimeout * 1000) / 2} ms), or ` +
-              'idle streams can be closed before a keep-alive is sent.',
-          );
-        }
-      }
-    }
-    if (idleTimeout >= 1 && idleTimeout <= 4 && this.#longLivedStreams.length > 0) {
-      this.#log.logger.warn(
-        `${this.#longLivedStreams.join(', ')}: with an HTTP idleTimeout of ${idleTimeout} s, Bun ` +
-          'may close quiet streams early whatever keep-alive they send. Use idleTimeout >= 5 ' +
-          '(or 0), or turn the streams off (subscriptions.sse: false for GraphQL SSE).',
-      );
-    }
+  configure(options: WsServerOptions): void {
     this.#server = resolveServerOptions(options);
-    this.#streamsEnded = false;
-    this.#httpIdleTimeout = idleTimeout;
-  }
-
-  /** @internal The HTTP idleTimeout in seconds recorded by `configure()` (0: none; default 10). */
-  get httpIdleTimeout(): number {
-    return this.#httpIdleTimeout;
-  }
-
-  /**
-   * @internal Records a stream keep-alive interval that the next `configure()` checks against
-   * the HTTP idle timeout. Recording a label again replaces its interval.
-   */
-  requireKeepAliveBelowIdle(label: string, intervalMs: number): void {
-    this.#keepAlives.set(label, intervalMs);
-  }
-
-  /**
-   * @internal Announces long-lived streaming responses (named by `label`), so `configure()` warns
-   * when the HTTP idle timeout is too short for Bun to keep them open.
-   */
-  expectLongLivedStreams(label: string): void {
-    if (!this.#longLivedStreams.includes(label)) this.#longLivedStreams.push(label);
-  }
-
-  /**
-   * @internal Takes a connection slot for a streaming response, shared with WebSocket
-   * connections, or throws 429 (per-IP limit) / 503 (total limit). `end` is called by
-   * `endStreams()` at shutdown; `closeStream()` returns the slot. After `endStreams()` (a stream
-   * set up while the server shuts down) it throws 503, so no stream outlives shutdown.
-   */
-  openStream(data: object, ip: string | undefined, end: () => void): void {
-    // A second slot under the same key would be counted twice and returned once.
-    if (this.#reserved.has(data)) {
-      throw new Error('openStream: this data object already holds a connection slot.');
-    }
-    if (this.#streamsEnded) throw new ServiceUnavailableException('The server is shutting down.');
-    this.#take(data, this.#ipKey(ip), 'streaming');
-    this.#streams.set(data, end);
-  }
-
-  /** @internal Returns a stream's slot and forgets its `end` (no-op if already closed). */
-  closeStream(data: object): void {
-    if (!this.#streams.delete(data)) return;
-    this.#giveBack(data);
-  }
-
-  /** @internal Calls `end` of every open stream once (at shutdown); a throw is logged. */
-  endStreams(): void {
-    this.#streamsEnded = true;
-    const streams = [...this.#streams];
-    this.#streams.clear();
-    for (const [data, end] of streams) {
-      this.#giveBack(data);
-      try {
-        end();
-      } catch (error) {
-        logError(this.#log, 'Ending a stream at shutdown failed', error);
-      }
-    }
+    this.#slots.configure(this.#server);
   }
 
   /**
@@ -530,7 +431,7 @@ export class WsRegistry {
    * within 30s); a socket that opens after that takes a slot again, or is closed with 1013.
    */
   reserve(data: object, ip: string | undefined, ctx?: object): void {
-    this.#take(data, this.#ipKey(ip), 'WebSocket');
+    this.#slots.take(data, this.#slots.keyOf(ip), 'WebSocket');
     // The in-progress upgrade now follows its socket data, until the socket opens.
     if (ctx === undefined) return;
     const entry = this.#upgrades.get(ctx);
@@ -549,42 +450,6 @@ export class WsRegistry {
       const revived: UpgradeEntry = { ...expired, at: Date.now(), hasData: true };
       this.#upgrades.set(data, revived);
       this.#withData.set(data, revived);
-    }
-  }
-
-  /** The key a connection from `ip` counts against: its masked IP, or none when unlimited. */
-  #ipKey(ip: string | undefined): string | undefined {
-    if (this.#server.maxConnectionsPerIp === false || ip === undefined) return undefined;
-    return maskIp(ip, this.#server.ipv6Subnet);
-  }
-
-  /**
-   * Takes a slot counted against `key` (the masked IP, if limited), or throws 429 / 503 naming
-   * the `kind` of connection.
-   */
-  #take(data: object, key: string | undefined, kind: 'WebSocket' | 'streaming'): void {
-    const { maxConnections, maxConnectionsPerIp } = this.#server;
-    if (maxConnections !== undefined && this.#reservedTotal >= maxConnections) {
-      throw new ServiceUnavailableException(`Too many ${kind} connections.`);
-    }
-    if (key !== undefined && (this.#perIp.get(key) ?? 0) >= (maxConnectionsPerIp as number)) {
-      throw new TooManyRequestsException(`Too many ${kind} connections from this address.`);
-    }
-    this.#reservedTotal++;
-    if (key !== undefined) this.#perIp.set(key, (this.#perIp.get(key) ?? 0) + 1);
-    this.#reserved.set(data, key);
-  }
-
-  /** Returns the slot held by `data`, if any. */
-  #giveBack(data: object): void {
-    if (!this.#reserved.has(data)) return;
-    const key = this.#reserved.get(data);
-    this.#reserved.delete(data);
-    this.#reservedTotal--;
-    if (key !== undefined) {
-      const count = (this.#perIp.get(key) ?? 1) - 1;
-      if (count > 0) this.#perIp.set(key, count);
-      else this.#perIp.delete(key);
     }
   }
 
@@ -636,9 +501,9 @@ export class WsRegistry {
       this.#expiredUpgrades.set(key, entry);
       // Its socket never opened: the slot is returned, so aborted upgrades cannot exhaust the
       // limits. A late open takes one again (#retake).
-      if (entry.hasData && this.#reserved.has(key)) {
-        this.#expiredSlots.set(key, this.#reserved.get(key));
-        this.#giveBack(key);
+      if (entry.hasData && this.#slots.has(key)) {
+        this.#expiredSlots.set(key, this.#slots.keyHeldBy(key));
+        this.#slots.giveBack(key);
       }
     }
   }
@@ -653,7 +518,7 @@ export class WsRegistry {
     const key = this.#expiredSlots.get(data);
     this.#expiredSlots.delete(data);
     try {
-      this.#take(data, key, 'WebSocket');
+      this.#slots.take(data, key, 'WebSocket');
       return true;
     } catch {
       ws.close(1013, 'Too many WebSocket connections');
@@ -668,11 +533,7 @@ export class WsRegistry {
   release(data: object): void {
     this.endUpgrade(data);
     this.#expiredSlots.delete(data);
-    if (this.#holds.has(data)) {
-      this.#releasedWhileHeld.add(data);
-      return;
-    }
-    this.#giveBack(data);
+    this.#slots.release(data);
   }
 
   /**
@@ -682,19 +543,7 @@ export class WsRegistry {
    * (idempotent); a socket that closed meanwhile then gives its slot back.
    */
   holdSlot(data: object): () => void {
-    this.#holds.set(data, (this.#holds.get(data) ?? 0) + 1);
-    let done = false;
-    return () => {
-      if (done) return;
-      done = true;
-      const left = (this.#holds.get(data) ?? 1) - 1;
-      if (left > 0) {
-        this.#holds.set(data, left);
-        return;
-      }
-      this.#holds.delete(data);
-      if (this.#releasedWhileHeld.delete(data)) this.#giveBack(data);
-    };
+    return this.#slots.hold(data);
   }
 
   get(path: string): WsEndpoint | undefined {
@@ -996,4 +845,16 @@ export class WsRegistry {
       return false;
     }
   }
+
+  static {
+    slotsOf = (registry) => registry.#slots;
+  }
+}
+
+/**
+ * @internal The connection slots of `registry`, which StreamRegistry shares. Exported from this
+ * module only (not from the package), so applications cannot reach the slots.
+ */
+export function connectionSlotsOf(registry: WsRegistry): ConnectionSlots {
+  return slotsOf(registry);
 }

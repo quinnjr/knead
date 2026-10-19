@@ -41,8 +41,8 @@ bootstrapped providers run here.
 
 ### HttpCoreModule
 
-The global module `KneadFactory` registers. It provides and exports `WsRegistry` and `ErrorLog` to
-every module. `HTTP_DEVELOPMENT` (the same token as core's `DEVELOPMENT`) is provided to every
+The global module `KneadFactory` registers. It provides and exports `WsRegistry`, `ErrorLog` and
+the framework-internal `StreamRegistry` to every module. `HTTP_DEVELOPMENT` (the same token as core's `DEVELOPMENT`) is provided to every
 module by the application context, from the `development` option. You never import it yourself.
 
 ### HttpApplication
@@ -398,6 +398,19 @@ modules register endpoints here). Inject it with `inject(WsRegistry)`.
 | `get(path)` | The endpoint registered at `path`, or `undefined`. |
 | `entries()` | An iterator of `[path, endpoint]` pairs. |
 | `handler()` | The Bun `WebSocketHandler` passed to `Bun.serve`, with the configured limits. Used by `listen()`. |
+
+### StreamRegistry
+
+Framework-internal: do not use it from application code. `StreamRegistry` holds the long-lived
+streaming responses of Knead's own transports (GraphQL SSE subscriptions): each open stream takes
+a connection slot shared with WebSocket connections, so `listen({ websocket })`'s
+`maxConnectionsPerIp` (`429`) and `maxConnections` (`503`) count sockets and streams together.
+`listen()` checks the keep-alive intervals transports declare against the HTTP `idleTimeout`
+(at most half of it) and warns when it is 1 to 4 seconds; `close()` ends every open stream before
+it waits for in-flight requests and refuses new ones with `503`. It is exported only so that
+`@knead-js/graphql` can inject it; its members are `@internal` and may change in any release. A
+stream opened from application code would not be ended by the transport that owns it, and the
+connection slots themselves are not exported.
 
 ### WebSocket types
 

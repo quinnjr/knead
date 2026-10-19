@@ -4,13 +4,18 @@ import { KneadFactory } from '../src/application.js';
 import { Controller, Get } from '../src/decorators.js';
 import { HttpConfigError, HttpException } from '../src/exceptions.js';
 import { LOGGER, MemoryLogger } from '../src/logger.js';
+import { StreamRegistry } from '../src/streams.js';
 import { WsRegistry } from '../src/ws.js';
 import { start } from './helpers.js';
 
-async function registry(logger = new MemoryLogger()): Promise<WsRegistry> {
-  @Module({ providers: [{ provide: LOGGER, useValue: logger }, WsRegistry] })
+/** A WsRegistry and the StreamRegistry sharing its connection slots. */
+async function registries(
+  logger = new MemoryLogger(),
+): Promise<{ ws: WsRegistry; streams: StreamRegistry }> {
+  @Module({ providers: [{ provide: LOGGER, useValue: logger }, WsRegistry, StreamRegistry] })
   class M {}
-  return (await ApplicationContext.create(M)).get(WsRegistry);
+  const context = await ApplicationContext.create(M);
+  return { ws: context.get(WsRegistry), streams: context.get(StreamRegistry) };
 }
 
 function statusOf(fn: () => void): number | undefined {
@@ -22,15 +27,15 @@ function statusOf(fn: () => void): number | undefined {
   return undefined;
 }
 
-describe('WsRegistry stream slots', () => {
+describe('StreamRegistry stream slots', () => {
   test('openStream counts against maxConnectionsPerIp shared with sockets', async () => {
-    const ws = await registry();
+    const { ws, streams } = await registries();
     ws.configure({ maxConnectionsPerIp: 1 });
     const first = {};
-    ws.openStream(first, '1.2.3.4', () => {});
+    streams.openStream(first, '1.2.3.4', () => {});
     let message = '';
     try {
-      ws.openStream({}, '1.2.3.4', () => {});
+      streams.openStream({}, '1.2.3.4', () => {});
     } catch (error) {
       expect((error as HttpException).status).toBe(429);
       message = (error as Error).message;
@@ -38,12 +43,12 @@ describe('WsRegistry stream slots', () => {
     expect(message).toBe('Too many streaming connections from this address.');
     // A WebSocket upgrade from the same address shares the slot.
     expect(statusOf(() => ws.reserve({}, '1.2.3.4'))).toBe(429);
-    ws.closeStream(first);
-    expect(statusOf(() => ws.openStream({}, '1.2.3.4', () => {}))).toBeUndefined();
+    streams.closeStream(first);
+    expect(statusOf(() => streams.openStream({}, '1.2.3.4', () => {}))).toBeUndefined();
   });
 
   test('the socket messages are unchanged', async () => {
-    const ws = await registry();
+    const { ws } = await registries();
     ws.configure({ maxConnectionsPerIp: 1 });
     ws.reserve({}, '1.2.3.4');
     expect(() => ws.reserve({}, '1.2.3.4')).toThrow(
@@ -52,12 +57,12 @@ describe('WsRegistry stream slots', () => {
   });
 
   test('openStream respects maxConnections with 503', async () => {
-    const ws = await registry();
+    const { ws, streams } = await registries();
     ws.configure({ maxConnections: 1 });
-    ws.openStream({}, '1.2.3.4', () => {});
+    streams.openStream({}, '1.2.3.4', () => {});
     let message = '';
     try {
-      ws.openStream({}, '5.6.7.8', () => {});
+      streams.openStream({}, '5.6.7.8', () => {});
     } catch (error) {
       expect((error as HttpException).status).toBe(503);
       message = (error as Error).message;
@@ -66,31 +71,31 @@ describe('WsRegistry stream slots', () => {
   });
 
   test('closeStream twice is a no-op', async () => {
-    const ws = await registry();
+    const { ws, streams } = await registries();
     ws.configure({ maxConnections: 1 });
     const data = {};
-    ws.openStream(data, '1.2.3.4', () => {});
-    ws.closeStream(data);
-    ws.closeStream(data);
-    ws.openStream({}, '1.2.3.4', () => {});
+    streams.openStream(data, '1.2.3.4', () => {});
+    streams.closeStream(data);
+    streams.closeStream(data);
+    streams.openStream({}, '1.2.3.4', () => {});
     // The counter did not go negative: the limit of 1 still holds.
-    expect(statusOf(() => ws.openStream({}, '5.6.7.8', () => {}))).toBe(503);
+    expect(statusOf(() => streams.openStream({}, '5.6.7.8', () => {}))).toBe(503);
   });
 
   test('endStreams calls each end once and survives a throwing end', async () => {
     const logger = new MemoryLogger();
-    const ws = await registry(logger);
+    const { streams } = await registries(logger);
     const calls: string[] = [];
-    ws.openStream({}, '1.2.3.4', () => {
+    streams.openStream({}, '1.2.3.4', () => {
       calls.push('a');
       throw new Error('boom');
     });
-    ws.openStream({}, '1.2.3.4', () => calls.push('b'));
+    streams.openStream({}, '1.2.3.4', () => calls.push('b'));
     const closed = {};
-    ws.openStream(closed, '1.2.3.4', () => calls.push('closed'));
-    ws.closeStream(closed);
-    ws.endStreams();
-    ws.endStreams();
+    streams.openStream(closed, '1.2.3.4', () => calls.push('closed'));
+    streams.closeStream(closed);
+    streams.endStreams();
+    streams.endStreams();
     expect(calls).toEqual(['a', 'b']);
     const errors = logger.entries.filter((e) => e.level === 'error');
     expect(errors).toHaveLength(1);
@@ -98,12 +103,12 @@ describe('WsRegistry stream slots', () => {
   });
 
   test('openStream after endStreams is refused with 503, until the next configure', async () => {
-    const ws = await registry();
-    ws.endStreams();
+    const { ws, streams } = await registries();
+    streams.endStreams();
     let ended = false;
     let message = '';
     try {
-      ws.openStream({}, '1.2.3.4', () => {
+      streams.openStream({}, '1.2.3.4', () => {
         ended = true;
       });
     } catch (error) {
@@ -112,33 +117,34 @@ describe('WsRegistry stream slots', () => {
     }
     expect(message).toBe('The server is shutting down.');
     expect(ended).toBe(false);
+    streams.configure();
     ws.configure({ maxConnectionsPerIp: 1 });
     const data = {};
-    ws.openStream(data, '1.2.3.4', () => {});
+    streams.openStream(data, '1.2.3.4', () => {});
     // The refused stream took no slot.
-    ws.closeStream(data);
-    expect(statusOf(() => ws.openStream({}, '1.2.3.4', () => {}))).toBeUndefined();
+    streams.closeStream(data);
+    expect(statusOf(() => streams.openStream({}, '1.2.3.4', () => {}))).toBeUndefined();
   });
 
   test('openStream refuses a data object that already holds a slot', async () => {
-    const ws = await registry();
+    const { ws, streams } = await registries();
     ws.configure({ maxConnections: 2 });
     const data = {};
-    ws.openStream(data, '1.2.3.4', () => {});
-    expect(() => ws.openStream(data, '1.2.3.4', () => {})).toThrow(
+    streams.openStream(data, '1.2.3.4', () => {});
+    expect(() => streams.openStream(data, '1.2.3.4', () => {})).toThrow(
       'openStream: this data object already holds a connection slot.',
     );
     const reserved = {};
     ws.reserve(reserved, '1.2.3.4');
-    expect(() => ws.openStream(reserved, '1.2.3.4', () => {})).toThrow('already holds');
+    expect(() => streams.openStream(reserved, '1.2.3.4', () => {})).toThrow('already holds');
     // Neither refused call took a slot: one closeStream frees room for one more.
-    ws.closeStream(data);
-    expect(statusOf(() => ws.openStream({}, '5.6.7.8', () => {}))).toBeUndefined();
-    expect(statusOf(() => ws.openStream({}, '5.6.7.8', () => {}))).toBe(503);
+    streams.closeStream(data);
+    expect(statusOf(() => streams.openStream({}, '5.6.7.8', () => {}))).toBeUndefined();
+    expect(statusOf(() => streams.openStream({}, '5.6.7.8', () => {}))).toBe(503);
   });
 
   test('holdSlot keeps a released socket slot until every hold is done', async () => {
-    const ws = await registry();
+    const { ws } = await registries();
     ws.configure({ maxConnectionsPerIp: 1 });
     const data = {};
     ws.reserve(data, '1.2.3.4');
@@ -160,44 +166,63 @@ describe('WsRegistry stream slots', () => {
   });
 
   test('httpIdleTimeout records the idleTimeout of the last configure (default 10)', async () => {
-    const ws = await registry();
-    expect(ws.httpIdleTimeout).toBe(10);
-    ws.configure({}, { idleTimeout: 4 });
-    expect(ws.httpIdleTimeout).toBe(4);
-    ws.configure({}, { idleTimeout: 0 });
-    expect(ws.httpIdleTimeout).toBe(0);
-    ws.configure({});
-    expect(ws.httpIdleTimeout).toBe(10);
+    const { streams } = await registries();
+    expect(streams.httpIdleTimeout).toBe(10);
+    streams.configure({ idleTimeout: 4 });
+    expect(streams.httpIdleTimeout).toBe(4);
+    streams.configure({ idleTimeout: 0 });
+    expect(streams.httpIdleTimeout).toBe(0);
+    streams.configure({});
+    expect(streams.httpIdleTimeout).toBe(10);
+  });
+
+  test('maxKeepAliveMs is half the recorded idle timeout, undefined without one', async () => {
+    const { streams } = await registries();
+    expect(streams.maxKeepAliveMs).toBe(5000);
+    streams.configure({ idleTimeout: 3 });
+    expect(streams.maxKeepAliveMs).toBe(1500);
+    streams.configure({ idleTimeout: 0 });
+    expect(streams.maxKeepAliveMs).toBeUndefined();
+  });
+
+  test('the connection slots are not part of the public API', async () => {
+    const http = await import('../src/index.js');
+    expect('ConnectionSlots' in http).toBe(false);
+    expect('connectionSlotsOf' in http).toBe(false);
+    const { ws } = await registries();
+    for (const name of ['openStream', 'closeStream', 'endStreams', 'httpIdleTimeout']) {
+      expect(name in ws).toBe(false);
+    }
   });
 });
 
-describe('WsRegistry keep-alive check', () => {
+describe('StreamRegistry keep-alive check', () => {
   test('configure rejects a keep-alive above half the HTTP idle timeout', async () => {
-    const ws = await registry();
-    ws.requireKeepAliveBelowIdle('GraphQL SSE', 10_000);
-    expect(() => ws.configure({}, {})).toThrow(HttpConfigError);
-    expect(() => ws.configure({}, {})).toThrow(
+    const { streams } = await registries();
+    streams.requireKeepAliveBelowIdle('GraphQL SSE', 10_000);
+    expect(() => streams.configure({})).toThrow(HttpConfigError);
+    expect(() => streams.configure({})).toThrow(
       'GraphQL SSE keep-alive interval (10000 ms) must be at most half the HTTP idleTimeout ' +
         '(10 s, so at most 5000 ms)',
     );
-    expect(() => ws.configure({}, { idleTimeout: 19 })).toThrow(HttpConfigError);
-    expect(() => ws.configure({}, { idleTimeout: 20 })).not.toThrow();
-    expect(() => ws.configure({}, { idleTimeout: 0 })).not.toThrow();
-    const half = await registry();
+    expect(() => streams.configure({ idleTimeout: 19 })).toThrow(HttpConfigError);
+    expect(() => streams.configure({ idleTimeout: 20 })).not.toThrow();
+    expect(() => streams.configure({ idleTimeout: 0 })).not.toThrow();
+    const { streams: half } = await registries();
     half.requireKeepAliveBelowIdle('GraphQL SSE', 5_000);
-    expect(() => half.configure({}, {})).not.toThrow();
-    const over = await registry();
+    expect(() => half.configure({})).not.toThrow();
+    const { streams: over } = await registries();
     over.requireKeepAliveBelowIdle('GraphQL SSE', 5_001);
-    expect(() => over.configure({}, {})).toThrow(HttpConfigError);
+    expect(() => over.configure({})).toThrow(HttpConfigError);
   });
 
   test('a label recorded again replaces its keep-alive instead of adding one', async () => {
-    const ws = await registry();
-    ws.requireKeepAliveBelowIdle('GraphQL SSE', 10_000);
-    ws.requireKeepAliveBelowIdle('GraphQL SSE', 1_000);
-    expect(() => ws.configure({}, {})).not.toThrow();
-    ws.requireKeepAliveBelowIdle('GraphQL SSE', 10_000);
-    expect(() => ws.configure({}, {})).toThrow('(10000 ms)');
+    const { streams } = await registries();
+    streams.requireKeepAliveBelowIdle('GraphQL SSE', 10_000);
+    streams.requireKeepAliveBelowIdle('GraphQL SSE', 1_000);
+    expect(() => streams.configure({})).not.toThrow();
+    streams.requireKeepAliveBelowIdle('GraphQL SSE', 10_000);
+    expect(() => streams.configure({})).toThrow('(10000 ms)');
   });
 
   test('configure warns once for long-lived streams with an idleTimeout of 1 to 4 s', async () => {
@@ -205,23 +230,23 @@ describe('WsRegistry keep-alive check', () => {
       logger.entries.filter((e) => e.level === 'warn' && e.message.includes('idleTimeout'));
     for (const idleTimeout of [1, 3, 4]) {
       const logger = new MemoryLogger();
-      const ws = await registry(logger);
-      ws.expectLongLivedStreams('GraphQL SSE subscriptions at /graphql');
-      ws.expectLongLivedStreams('GraphQL SSE subscriptions at /graphql');
-      ws.configure({}, { idleTimeout });
+      const { streams } = await registries(logger);
+      streams.expectLongLivedStreams('GraphQL SSE subscriptions at /graphql');
+      streams.expectLongLivedStreams('GraphQL SSE subscriptions at /graphql');
+      streams.configure({ idleTimeout });
       expect(warnings(logger)).toHaveLength(1);
       expect(warnings(logger)[0]!.message).toContain('GraphQL SSE subscriptions at /graphql');
     }
     for (const idleTimeout of [0, 5, undefined]) {
       const logger = new MemoryLogger();
-      const ws = await registry(logger);
-      ws.expectLongLivedStreams('GraphQL SSE subscriptions at /graphql');
-      ws.configure({}, { idleTimeout });
+      const { streams } = await registries(logger);
+      streams.expectLongLivedStreams('GraphQL SSE subscriptions at /graphql');
+      streams.configure({ idleTimeout });
       expect(warnings(logger)).toHaveLength(0);
     }
     const logger = new MemoryLogger();
-    const ws = await registry(logger);
-    ws.configure({}, { idleTimeout: 3 });
+    const { streams } = await registries(logger);
+    streams.configure({ idleTimeout: 3 });
     expect(warnings(logger)).toHaveLength(0);
   });
 
@@ -229,7 +254,7 @@ describe('WsRegistry keep-alive check', () => {
     @Module({})
     class M {}
     const app = await KneadFactory.create(M, { logger: new MemoryLogger(), development: false });
-    app.get(WsRegistry).requireKeepAliveBelowIdle('GraphQL SSE', 5_000);
+    app.get(StreamRegistry).requireKeepAliveBelowIdle('GraphQL SSE', 5_000);
     await expect(app.listen({ port: 0, hostname: '127.0.0.1', idleTimeout: 5 })).rejects.toThrow(
       HttpConfigError,
     );
@@ -242,7 +267,7 @@ describe('application shutdown', () => {
     let ended = 0;
     @Controller('/')
     class StreamController {
-      readonly #ws = inject(WsRegistry);
+      readonly #streams = inject(StreamRegistry);
 
       @Get('stream')
       stream(): Response {
@@ -254,9 +279,9 @@ describe('application shutdown', () => {
             c.enqueue(new TextEncoder().encode(': open\n\n'));
           },
         });
-        this.#ws.openStream(data, undefined, () => {
+        this.#streams.openStream(data, undefined, () => {
           ended++;
-          this.#ws.closeStream(data);
+          this.#streams.closeStream(data);
           controller.close();
         });
         return new Response(body, { headers: { 'content-type': 'text/event-stream' } });

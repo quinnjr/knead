@@ -24,7 +24,7 @@ are:
 | `overrides` | `Iterable<readonly [Token, Provider]>` | none | Replaces non-multi providers by token, in every module. A `LOGGER` entry here wins over `logger`. Used by [testing](/guide/testing/). |
 
 The factory also registers `HttpCoreModule`, a global module that provides `WsRegistry` and
-`ErrorLog` to every module; `HTTP_DEVELOPMENT` comes from the application context. See [logging](/guide/logging/) for loggers.
+`ErrorLog` (and the framework-internal `StreamRegistry`) to every module; `HTTP_DEVELOPMENT` comes from the application context. See [logging](/guide/logging/) for loggers.
 
 ## Listening
 

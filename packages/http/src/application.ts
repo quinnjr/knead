@@ -28,6 +28,7 @@ import { DEFAULT_MAX_PARAMS, requestUrl } from './request.js';
 import { resolveFilter, resolveGuard, resolveMiddleware } from './resolve.js';
 import { isHeaderValue } from './response.js';
 import { checkBunVersion } from './runtime-version.js';
+import { StreamRegistry } from './streams.js';
 import { APP_FILTER, APP_GUARD, APP_MIDDLEWARE } from './tokens.js';
 import type { FilterRef, GlobalMiddleware, GuardRef, MiddlewareRef } from './types.js';
 import type { ValidationOptions } from './validation.js';
@@ -40,7 +41,8 @@ const MAX_TIMEOUT = 2 ** 31 - 1;
 export const DEFAULT_MAX_REQUEST_BODY_SIZE = 1024 * 1024;
 
 /**
- * Global module the factory registers: provides WsRegistry and ErrorLog everywhere.
+ * Global module the factory registers: provides WsRegistry, StreamRegistry (framework-internal)
+ * and ErrorLog everywhere.
  * HTTP_DEVELOPMENT (core's DEVELOPMENT) is provided by the ApplicationContext, from the
  * `development` option. LOGGER comes from @knead-js/core's default (a ConsoleLogger), unless a
  * global module such as LoggingModule provides one, or the `logger` option replaces it.
@@ -126,8 +128,8 @@ export class KneadFactory {
     const core = {
       module: HttpCoreModule,
       global: true,
-      providers: [WsRegistry, ErrorLog],
-      exports: [WsRegistry, ErrorLog],
+      providers: [WsRegistry, StreamRegistry, ErrorLog],
+      exports: [WsRegistry, StreamRegistry, ErrorLog],
     };
     // Overrides apply to every LOGGER provider, so the logger option is the LOGGER everywhere.
     const overrides: (readonly [Token, Provider])[] = options.logger
@@ -430,7 +432,7 @@ export class HttpApplication {
           logError(this, 'Stopping the redirect listener failed', error);
         });
         // Open streams would hold their requests pending until the deadline: end them first.
-        this.context.get(WsRegistry).endStreams();
+        this.context.get(StreamRegistry).endStreams();
         const deadline = Date.now() + this.shutdownTimeout;
         const pending = () => servers.reduce((n, server) => n + server.pendingRequests, 0);
         while (pending() > 0 && Date.now() < deadline) await Bun.sleep(10);
@@ -513,7 +515,9 @@ export class HttpApplication {
       .map((item, index) => ({ ...item, index }))
       .sort((a, b) => (b.entry.priority ?? 0) - (a.entry.priority ?? 0) || a.index - b.index);
     const ws = this.context.get(WsRegistry);
-    ws.configure(options.websocket ?? {}, { idleTimeout });
+    // Streams first: a keep-alive above the idle timeout is reported before the socket options.
+    this.context.get(StreamRegistry).configure({ idleTimeout });
+    ws.configure(options.websocket ?? {});
     // Transients built for the routes here (guards, middleware, filters) are startup instances:
     // tracked, so initializeLate() below gives them init hooks and close() shutdown hooks.
     const compiled = this.context.trackConstructed(() =>
