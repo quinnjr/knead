@@ -643,6 +643,111 @@ describe('GraphQL over SSE', () => {
     s = undefined;
   });
 
+  test('an aborted request keeps its slot until its onConnect settles', async () => {
+    let calls = 0;
+    let pending = 0;
+    let most = 0;
+    const settles: Array<(value: boolean) => void> = [];
+    await start(
+      {
+        subscriptions: {
+          onConnect: () => {
+            calls++;
+            pending++;
+            most = Math.max(most, pending);
+            return new Promise<boolean>((resolve) => {
+              settles.push((value) => {
+                pending--;
+                resolve(value);
+              });
+            });
+          },
+        },
+      },
+      [],
+      { websocket: { maxConnectionsPerIp: 1 } },
+    );
+    // Open and abort 20 times: only the first reaches onConnect, the rest are refused with 429.
+    const statuses: number[] = [];
+    for (let i = 0; i < 20; i++) {
+      const abort = new AbortController();
+      const res = send('subscription { t }', { signal: abort.signal }).then(
+        (r) => r.status,
+        () => 0,
+      );
+      if (i === 0) await until(() => calls === 1);
+      else statuses.push(await res);
+      abort.abort();
+      await res;
+    }
+    expect(most).toBe(1);
+    expect(calls).toBe(1);
+    expect(statuses.every((status) => status === 429)).toBe(true);
+    // Settling the pending onConnect returns the slot.
+    settles[0]!(true);
+    await until(() => pending === 0);
+    const next = send('subscription { t }');
+    await until(() => calls === 2);
+    settles[1]!(false);
+    expect((await next).status).toBe(403);
+  });
+
+  test('onConnect is skipped for a request aborted while the context factory runs', async () => {
+    let connects = 0;
+    let factories = 0;
+    const gate = Promise.withResolvers<void>();
+    await start({
+      context: async () => {
+        factories++;
+        await gate.promise;
+        return {};
+      },
+      subscriptions: {
+        onConnect: () => {
+          connects++;
+          return true;
+        },
+      },
+    });
+    const abort = new AbortController();
+    const res = send('subscription { t }', { signal: abort.signal }).catch(() => undefined);
+    await until(() => factories === 1);
+    abort.abort();
+    await res;
+    await Bun.sleep(20);
+    gate.resolve();
+    await Bun.sleep(20);
+    expect(connects).toBe(0);
+  });
+
+  test('a pending onConnect past connectionInitTimeout answers 503 and keeps its slot', async () => {
+    let calls = 0;
+    const settle = Promise.withResolvers<boolean>();
+    await start(
+      {
+        subscriptions: {
+          connectionInitTimeout: 100,
+          onConnect: () => {
+            calls++;
+            return calls === 1 ? settle.promise : true;
+          },
+        },
+      },
+      [],
+      { websocket: { maxConnectionsPerIp: 1 } },
+    );
+    const started = Date.now();
+    const timedOut = await send('subscription { t }');
+    expect(timedOut.status).toBe(503);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(90);
+    // The slot is held until onConnect settles.
+    expect((await send('subscription { t }')).status).toBe(429);
+    settle.resolve(true);
+    await until(async () => (await upgradeStatus(s!.app)) === 101);
+    const events = await open('subscription { t }', 't');
+    await events.return!();
+  });
+
   test('onConnect false gives the slot back', async () => {
     let allow = false;
     await start({ subscriptions: { onConnect: () => allow } }, [], {

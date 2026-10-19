@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { ApplicationContext, inject, Module } from '@knead-js/core';
+import { KneadFactory } from '../src/application.js';
 import { Controller, Get } from '../src/decorators.js';
 import { HttpConfigError, HttpException } from '../src/exceptions.js';
 import { LOGGER, MemoryLogger } from '../src/logger.js';
@@ -91,7 +92,9 @@ describe('WsRegistry stream slots', () => {
     ws.endStreams();
     ws.endStreams();
     expect(calls).toEqual(['a', 'b']);
-    expect(logger.entries.some((e) => e.level === 'error')).toBe(true);
+    const errors = logger.entries.filter((e) => e.level === 'error');
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.message).toContain('Ending a stream at shutdown failed');
   });
 
   test('openStream after endStreams is refused with 503, until the next configure', async () => {
@@ -115,6 +118,45 @@ describe('WsRegistry stream slots', () => {
     // The refused stream took no slot.
     ws.closeStream(data);
     expect(statusOf(() => ws.openStream({}, '1.2.3.4', () => {}))).toBeUndefined();
+  });
+
+  test('openStream refuses a data object that already holds a slot', async () => {
+    const ws = await registry();
+    ws.configure({ maxConnections: 2 });
+    const data = {};
+    ws.openStream(data, '1.2.3.4', () => {});
+    expect(() => ws.openStream(data, '1.2.3.4', () => {})).toThrow(
+      'openStream: this data object already holds a connection slot.',
+    );
+    const reserved = {};
+    ws.reserve(reserved, '1.2.3.4');
+    expect(() => ws.openStream(reserved, '1.2.3.4', () => {})).toThrow('already holds');
+    // Neither refused call took a slot: one closeStream frees room for one more.
+    ws.closeStream(data);
+    expect(statusOf(() => ws.openStream({}, '5.6.7.8', () => {}))).toBeUndefined();
+    expect(statusOf(() => ws.openStream({}, '5.6.7.8', () => {}))).toBe(503);
+  });
+
+  test('holdSlot keeps a released socket slot until every hold is done', async () => {
+    const ws = await registry();
+    ws.configure({ maxConnectionsPerIp: 1 });
+    const data = {};
+    ws.reserve(data, '1.2.3.4');
+    const first = ws.holdSlot(data);
+    const second = ws.holdSlot(data);
+    // The socket closed: its slot stays taken while onConnect work is pending.
+    ws.release(data);
+    expect(statusOf(() => ws.reserve({}, '1.2.3.4'))).toBe(429);
+    first();
+    first();
+    expect(statusOf(() => ws.reserve({}, '1.2.3.4'))).toBe(429);
+    second();
+    const next = {};
+    expect(statusOf(() => ws.reserve(next, '1.2.3.4'))).toBeUndefined();
+    // A hold that ends before the socket closes changes nothing: release() frees the slot.
+    ws.holdSlot(next)();
+    ws.release(next);
+    expect(statusOf(() => ws.reserve({}, '1.2.3.4'))).toBeUndefined();
   });
 
   test('httpIdleTimeout records the idleTimeout of the last configure (default 10)', async () => {
@@ -149,6 +191,15 @@ describe('WsRegistry keep-alive check', () => {
     expect(() => over.configure({}, {})).toThrow(HttpConfigError);
   });
 
+  test('a label recorded again replaces its keep-alive instead of adding one', async () => {
+    const ws = await registry();
+    ws.requireKeepAliveBelowIdle('GraphQL SSE', 10_000);
+    ws.requireKeepAliveBelowIdle('GraphQL SSE', 1_000);
+    expect(() => ws.configure({}, {})).not.toThrow();
+    ws.requireKeepAliveBelowIdle('GraphQL SSE', 10_000);
+    expect(() => ws.configure({}, {})).toThrow('(10000 ms)');
+  });
+
   test('configure warns once for long-lived streams with an idleTimeout of 1 to 4 s', async () => {
     const warnings = (logger: MemoryLogger) =>
       logger.entries.filter((e) => e.level === 'warn' && e.message.includes('idleTimeout'));
@@ -177,7 +228,6 @@ describe('WsRegistry keep-alive check', () => {
   test('listen() rejects a keep-alive above half the idleTimeout', async () => {
     @Module({})
     class M {}
-    const { KneadFactory } = await import('../src/application.js');
     const app = await KneadFactory.create(M, { logger: new MemoryLogger(), development: false });
     app.get(WsRegistry).requireKeepAliveBelowIdle('GraphQL SSE', 5_000);
     await expect(app.listen({ port: 0, hostname: '127.0.0.1', idleTimeout: 5 })).rejects.toThrow(

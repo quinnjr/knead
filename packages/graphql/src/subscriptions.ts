@@ -8,7 +8,11 @@ import {
 import type { ServerWebSocket } from 'bun';
 import type { OperationContext } from './context.js';
 import { logInternalError, toSafeError } from './errors.js';
-import { queryTooLongMessage, type SubscriptionOptions } from './options.js';
+import {
+  DEFAULT_CONNECTION_INIT_TIMEOUT,
+  queryTooLongMessage,
+  type SubscriptionOptions,
+} from './options.js';
 import { leavenLogger } from './pubsub.js';
 import type { GraphQLRuntime } from './runtime.js';
 
@@ -39,6 +43,8 @@ interface PendingSubscribe {
 
 interface SocketState {
   http: Ctx;
+  /** The WsRegistry socket data, whose connection slot onConnect holds while it is pending. */
+  slot: object;
   extra: object | undefined;
   /** The `context(http)` factory result, computed once when the connection initializes. */
   base: object | undefined;
@@ -261,6 +267,62 @@ export function createSubscriptionEndpoint(
       return track(entry.state, entry.pending.id, result);
     },
   });
+  /** connection_init: the context factory, then onConnect, then kept revocations. */
+  const initialize = async (
+    socket: ServerWebSocket<WebSocketContext>,
+    state: SocketState,
+    params: Parameters<NonNullable<WebSocketHandlerConfig<OperationContext>['onConnect']>>[1],
+  ): Promise<boolean> => {
+    let accepted = true;
+    if (runtime.options.context) {
+      try {
+        state.base = await runtime.options.context(state.http);
+      } catch (error) {
+        // Fail closed: a connection accepted without its identity could slip past closeWhere
+        // predicates while its later operations (which call the factory again) succeed.
+        logInternalError(
+          runtime.masking,
+          'GraphQL context factory threw at connection_init; rejecting the connection',
+          error,
+        );
+        accepted = false;
+      }
+    }
+    // The socket closed while the factory ran (client gone, init timeout): no onConnect work.
+    if (state.closed) accepted = false;
+    if (accepted && options.onConnect) {
+      try {
+        const result = await options.onConnect(state.http, params ?? {});
+        if (result === false) accepted = false;
+        else if (typeof result === 'object' && result !== null) state.extra = result;
+      } catch (error) {
+        logInternalError(
+          runtime.masking,
+          'GraphQL subscriptions onConnect threw; rejecting the connection',
+          error,
+        );
+        accepted = false;
+      }
+    }
+    state.initDone = true;
+    const deferred = state.deferred.splice(0);
+    if (!accepted) return false;
+    // A revocation issued while onConnect was pending must not miss this socket.
+    const connection = connectionOf(state);
+    for (const revocation of deferred) {
+      let matches = false;
+      try {
+        matches = revocation.predicate(connection);
+      } catch (error) {
+        logInternalError(runtime.masking, 'GraphQLSubscriptions.closeWhere predicate threw', error);
+      }
+      if (matches) {
+        (socket as unknown as SocketFacade).close(revocation.code, revocation.reason);
+        return false;
+      }
+    }
+    return true;
+  };
   const handler = createHandler({
     schema: runtime.schema,
     logger: leavenLogger(runtime.logger, runtime.development),
@@ -284,57 +346,23 @@ export function createSubscriptionEndpoint(
     },
     onConnect: async (socket, params) => {
       const state = stateOf(socket);
-      let accepted = true;
-      if (runtime.options.context) {
-        try {
-          state.base = await runtime.options.context(state.http);
-        } catch (error) {
-          // Fail closed: a connection accepted without its identity could slip past closeWhere
-          // predicates while its later operations (which call the factory again) succeed.
-          logInternalError(
-            runtime.masking,
-            'GraphQL context factory threw at connection_init; rejecting the connection',
-            error,
-          );
-          accepted = false;
+      if (state.closed) return false;
+      // The socket's slot stays taken until the factory and onConnect settle, even if the client
+      // closes meanwhile, so pending connection_init work is bounded by the connection limits.
+      const done = runtime.ws.holdSlot(state.slot);
+      // Leaven stops its init timer at connection_init: a pending factory or onConnect is bounded
+      // by connectionInitTimeout too, closing the socket with 4408 as Leaven does before init.
+      const timer = setTimeout(() => {
+        if (!state.initDone) {
+          (socket as unknown as SocketFacade).close(4408, 'Connection initialization timeout');
         }
+      }, options.connectionInitTimeout ?? DEFAULT_CONNECTION_INIT_TIMEOUT);
+      try {
+        return await initialize(socket, state, params);
+      } finally {
+        clearTimeout(timer);
+        done();
       }
-      if (accepted && options.onConnect) {
-        try {
-          const result = await options.onConnect(state.http, params ?? {});
-          if (result === false) accepted = false;
-          else if (typeof result === 'object' && result !== null) state.extra = result;
-        } catch (error) {
-          logInternalError(
-            runtime.masking,
-            'GraphQL subscriptions onConnect threw; rejecting the connection',
-            error,
-          );
-          accepted = false;
-        }
-      }
-      state.initDone = true;
-      const deferred = state.deferred.splice(0);
-      if (!accepted) return false;
-      // A revocation issued while onConnect was pending must not miss this socket.
-      const connection = connectionOf(state);
-      for (const revocation of deferred) {
-        let matches = false;
-        try {
-          matches = revocation.predicate(connection);
-        } catch (error) {
-          logInternalError(
-            runtime.masking,
-            'GraphQLSubscriptions.closeWhere predicate threw',
-            error,
-          );
-        }
-        if (matches) {
-          (socket as unknown as SocketFacade).close(revocation.code, revocation.reason);
-          return false;
-        }
-      }
-      return true;
     },
     context: async (socket, request) => {
       const state = stateOf(socket);
@@ -420,6 +448,7 @@ export function createSubscriptionEndpoint(
       facades.set(ws, facade);
       states.set(facade, {
         http,
+        slot: ws.data,
         extra: undefined,
         base: undefined,
         closed: false,

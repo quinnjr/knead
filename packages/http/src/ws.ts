@@ -310,6 +310,10 @@ export class WsRegistry {
   readonly #opened = new WeakSet<WsSocket>();
   /** Upgrade data objects holding a connection slot, with the IP they count against. */
   readonly #reserved = new WeakMap<object, string | undefined>();
+  /** Pending holdSlot() calls per socket data: release() keeps the slot until they are done. */
+  readonly #holds = new WeakMap<object, number>();
+  /** Socket data released while held: the last hold to finish returns the slot. */
+  readonly #releasedWhileHeld = new WeakSet<object>();
   readonly #perIp = new Map<string, number>();
   #reservedTotal = 0;
   /** Open streams holding a connection slot, keyed by their data, with the end() for shutdown. */
@@ -318,8 +322,8 @@ export class WsRegistry {
   #streamsEnded = false;
   /** The HTTP idleTimeout (seconds) recorded by the last configure(); Bun's default is 10. */
   #httpIdleTimeout = 10;
-  /** Keep-alive intervals checked against the HTTP idle timeout at the next configure(). */
-  readonly #keepAlives: { label: string; intervalMs: number }[] = [];
+  /** Keep-alive intervals (ms) by label, checked against the HTTP idle timeout at configure(). */
+  readonly #keepAlives = new Map<string, number>();
   /** Labels of the long-lived streams announced by expectLongLivedStreams(). */
   readonly #longLivedStreams: string[] = [];
   readonly #log = {
@@ -415,7 +419,7 @@ export class WsRegistry {
   configure(options: WsServerOptions, http?: { idleTimeout?: number }): void {
     const idleTimeout = http?.idleTimeout ?? 10;
     if (idleTimeout !== 0) {
-      for (const { label, intervalMs } of this.#keepAlives) {
+      for (const [label, intervalMs] of this.#keepAlives) {
         if (intervalMs > (idleTimeout * 1000) / 2) {
           throw new HttpConfigError(
             `${label} keep-alive interval (${intervalMs} ms) must be at most half the HTTP ` +
@@ -444,10 +448,10 @@ export class WsRegistry {
 
   /**
    * @internal Records a stream keep-alive interval that the next `configure()` checks against
-   * the HTTP idle timeout.
+   * the HTTP idle timeout. Recording a label again replaces its interval.
    */
   requireKeepAliveBelowIdle(label: string, intervalMs: number): void {
-    this.#keepAlives.push({ label, intervalMs });
+    this.#keepAlives.set(label, intervalMs);
   }
 
   /**
@@ -465,6 +469,10 @@ export class WsRegistry {
    * set up while the server shuts down) it throws 503, so no stream outlives shutdown.
    */
   openStream(data: object, ip: string | undefined, end: () => void): void {
+    // A second slot under the same key would be counted twice and returned once.
+    if (this.#reserved.has(data)) {
+      throw new Error('openStream: this data object already holds a connection slot.');
+    }
     if (this.#streamsEnded) throw new ServiceUnavailableException('The server is shutting down.');
     this.#take(data, this.#ipKey(ip), 'streaming');
     this.#streams.set(data, end);
@@ -641,11 +649,40 @@ export class WsRegistry {
     }
   }
 
-  /** @internal Returns the connection slot held by an upgrade's data object, if any. */
+  /**
+   * @internal Returns the connection slot held by an upgrade's data object, if any. While a
+   * holdSlot() of it is pending, the slot is returned only when the last hold is done.
+   */
   release(data: object): void {
     this.endUpgrade(data);
     this.#expiredSlots.delete(data);
+    if (this.#holds.has(data)) {
+      this.#releasedWhileHeld.add(data);
+      return;
+    }
     this.#giveBack(data);
+  }
+
+  /**
+   * @internal Keeps the slot of a socket's data taken while work for the socket is pending (an
+   * endpoint's connection handshake), even after the socket closes, so clients that disconnect
+   * cannot pile up that work past the connection limits. Returns `done`, which ends the hold
+   * (idempotent); a socket that closed meanwhile then gives its slot back.
+   */
+  holdSlot(data: object): () => void {
+    this.#holds.set(data, (this.#holds.get(data) ?? 0) + 1);
+    let done = false;
+    return () => {
+      if (done) return;
+      done = true;
+      const left = (this.#holds.get(data) ?? 1) - 1;
+      if (left > 0) {
+        this.#holds.set(data, left);
+        return;
+      }
+      this.#holds.delete(data);
+      if (this.#releasedWhileHeld.delete(data)) this.#giveBack(data);
+    };
   }
 
   get(path: string): WsEndpoint | undefined {

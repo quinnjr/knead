@@ -12,7 +12,7 @@ import { getOperationAST } from 'graphql';
 import type { OperationContext, OperationKind } from './context.js';
 import { type ErrorMaskingOptions, logInternalError, toSafeError } from './errors.js';
 import { acceptQuality, GRAPHQL_RESPONSE_JSON, jsonHeaders, noDataStatus } from './http.js';
-import type { ConnectionParams } from './options.js';
+import { type ConnectionParams, DEFAULT_CONNECTION_INIT_TIMEOUT } from './options.js';
 import { type GraphQLRuntime, rejectionMessage } from './runtime.js';
 import type { GraphQLConnection } from './subscriptions.js';
 
@@ -237,11 +237,12 @@ export async function handleSse(
 /**
  * The connection identity of an SSE subscription, computed as for a WebSocket connection_init:
  * the `context(http)` factory, then `onConnect(http, {})`. `false` when either refuses (a throw
- * fails closed and is logged).
+ * fails closed and is logged). Neither runs once `signal` is aborted (the stream has ended).
  */
 async function connect(
   runtime: GraphQLRuntime,
   ctx: Ctx,
+  signal: AbortSignal,
 ): Promise<{ base: object | undefined; extra: object | undefined } | false> {
   const { options } = runtime;
   let base: object | undefined;
@@ -259,6 +260,8 @@ async function connect(
   }
   let extra: object | undefined;
   const onConnect = options.subscriptions === false ? undefined : options.subscriptions.onConnect;
+  // The stream ended (client gone, revoked, shutdown) while the factory ran: no onConnect work.
+  if (signal.aborted) return false;
   if (onConnect) {
     try {
       const result = await onConnect(ctx, {} as ConnectionParams);
@@ -285,8 +288,9 @@ async function subscribe(
   const abort = new AbortController();
   const end = () => abort.abort();
   const connection: SseConnection = { http: ctx, context: EMPTY_CONTEXT, end, initDone: false };
-  // The slot is taken before onConnect, as a WebSocket upgrade reserves one, so pending onConnect
-  // calls are bounded by the connection limits. Throws 429 / 503 past them.
+  // The slot is taken before onConnect, as a WebSocket upgrade reserves one, and returned only
+  // once onConnect has settled, so pending onConnect calls are bounded by the connection limits
+  // even when clients abort. Throws 429 / 503 past them.
   runtime.ws.openStream(connection, ctx.ip, end);
   runtime.sse.add(connection);
   const { subscriptions } = runtime.options;
@@ -295,28 +299,51 @@ async function subscribe(
   // again; counted from the slot, as a WebSocket's lifetime is from open.
   const expiry = lifetime === undefined ? undefined : setTimeout(end, lifetime);
   const signal = ctx.req.signal;
-  let released = false;
-  const release = () => {
-    if (released) return;
-    released = true;
+  let detached = false;
+  /** Forgets the stream (timers, listener, revocation); its slot is returned separately. */
+  const detach = () => {
+    if (detached) return;
+    detached = true;
     clearTimeout(expiry);
     signal.removeEventListener('abort', end);
-    runtime.ws.closeStream(connection);
     runtime.sse.delete(connection);
+  };
+  const release = () => {
+    detach();
+    runtime.ws.closeStream(connection);
   };
   // The client going away ends the stream, also while the subscription is being set up.
   signal.addEventListener('abort', end, { once: true });
   if (signal.aborted) end();
-  // connect() never throws: a refusing or throwing factory or onConnect is `false`. A pending
-  // onConnect does not hold the request once the stream is ended (shutdown, client gone).
-  const ended = new Promise<'ended'>((resolve) => {
-    if (abort.signal.aborted) resolve('ended');
-    else abort.signal.addEventListener('abort', () => resolve('ended'), { once: true });
-  });
-  const accepted = await Promise.race([connect(runtime, ctx), ended]);
-  if (accepted === 'ended') {
+  if (abort.signal.aborted) {
+    // Already gone: no context factory or onConnect work for it.
     release();
     throw new ServiceUnavailableException('The subscription ended before it started.');
+  }
+  // connect() never throws: a refusing or throwing factory or onConnect is `false`. A pending
+  // onConnect does not hold the request once the stream is ended (shutdown, client gone) or
+  // after connectionInitTimeout, but it keeps the slot until it settles.
+  const connecting = connect(runtime, ctx, abort.signal);
+  const initTimeout =
+    (subscriptions === false ? undefined : subscriptions.connectionInitTimeout) ??
+    DEFAULT_CONNECTION_INIT_TIMEOUT;
+  let initTimer: ReturnType<typeof setTimeout> | undefined;
+  const stopped = new Promise<'ended' | 'timeout'>((resolve) => {
+    abort.signal.addEventListener('abort', () => resolve('ended'), { once: true });
+    initTimer = setTimeout(() => resolve('timeout'), initTimeout);
+  });
+  const accepted = await Promise.race([connecting, stopped]);
+  clearTimeout(initTimer);
+  if (accepted === 'ended' || accepted === 'timeout') {
+    detach();
+    // Skips onConnect if the factory is still running; the slot comes back when it settles.
+    end();
+    void connecting.finally(() => runtime.ws.closeStream(connection));
+    throw new ServiceUnavailableException(
+      accepted === 'timeout'
+        ? 'The subscription did not start within connectionInitTimeout.'
+        : 'The subscription ended before it started.',
+    );
   }
   if (accepted) connection.context = Object.freeze({ ...accepted.base, ...accepted.extra });
   connection.initDone = true;

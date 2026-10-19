@@ -66,7 +66,10 @@ export interface SubscriptionOptions {
     http: Ctx;
     context: Readonly<Record<PropertyKey, unknown>>;
   }) => ConnectContext | false | Promise<ConnectContext | false>;
-  /** ms to wait for `connection_init`, an integer from 1 to 2^31 - 1 (Leaven default 3000). */
+  /**
+   * ms to wait for `connection_init`, and then for the context factory and `onConnect` to settle
+   * (over SSE, from the request), an integer from 1 to 2^31 - 1 (default 3000).
+   */
   connectionInitTimeout?: number;
   /** ms between server pings, an integer up to 2^31 - 1; 0 disables (Leaven default 12000). */
   keepAliveInterval?: number;
@@ -240,6 +243,12 @@ export const GRAPHQL_LIMITS = Object.freeze({
   maxFields: 1000,
   maxIntrospectionDepth: 20,
 });
+
+/**
+ * Leaven's default `subscriptions.connectionInitTimeout` (ms), also the bound on a pending
+ * context factory and `onConnect` over WebSocket and SSE.
+ */
+export const DEFAULT_CONNECTION_INIT_TIMEOUT = 3000;
 
 /** Default Leaven document cache: at most 100 parsed documents. */
 export const DEFAULT_DOCUMENT_CACHE = Object.freeze({ maxSize: 100 });

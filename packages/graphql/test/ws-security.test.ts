@@ -247,4 +247,123 @@ describe('graphql-transport-ws handshake', () => {
     expect(await socket.closed).toEqual({ code: 4409, reason: 'Subscriber for 1 already exists' });
     expect(socket.messages).toEqual([{ type: 'connection_ack' }]);
   });
+
+  test('a socket closed during onConnect keeps its slot until onConnect settles', async () => {
+    let calls = 0;
+    let pending = 0;
+    let most = 0;
+    const settles: Array<(value: boolean) => void> = [];
+    s = await startGraphQL(
+      [M],
+      {
+        subscriptions: {
+          onConnect: () => {
+            calls++;
+            pending++;
+            most = Math.max(most, pending);
+            return new Promise<boolean>((resolve) => {
+              settles.push((value) => {
+                pending--;
+                resolve(value);
+              });
+            });
+          },
+        },
+      },
+      [],
+      { websocket: { maxConnectionsPerIp: 1 } },
+    );
+    const url = new URL('/graphql', s.app.url);
+    url.protocol = 'ws:';
+    const ws = new WebSocket(url, 'graphql-transport-ws');
+    await new Promise((resolve, reject) => {
+      ws.onopen = resolve;
+      ws.onerror = reject;
+    });
+    ws.send(JSON.stringify({ type: 'connection_init', payload: {} }));
+    await until(() => calls === 1);
+    const closed = new Promise((resolve) => {
+      ws.onclose = resolve;
+    });
+    ws.close();
+    await closed;
+    // Open-and-close cycles cannot pile up onConnect calls: the closed socket still holds the slot.
+    for (let i = 0; i < 20; i++) expect(await upgradeStatus(s.app)).toBe(429);
+    expect(most).toBe(1);
+    expect(calls).toBe(1);
+    settles[0]!(true);
+    await until(async () => (await upgradeStatus(s!.app)) === 101);
+  });
+
+  test('a socket closed by connectionInitTimeout keeps its slot until onConnect settles', async () => {
+    const settle = Promise.withResolvers<boolean>();
+    let calls = 0;
+    s = await startGraphQL(
+      [M],
+      {
+        subscriptions: {
+          connectionInitTimeout: 100,
+          onConnect: () => {
+            calls++;
+            return settle.promise;
+          },
+        },
+      },
+      [],
+      { websocket: { maxConnectionsPerIp: 1 } },
+    );
+    const url = new URL('/graphql', s.app.url);
+    url.protocol = 'ws:';
+    const ws = new WebSocket(url, 'graphql-transport-ws');
+    await new Promise((resolve, reject) => {
+      ws.onopen = resolve;
+      ws.onerror = reject;
+    });
+    const code = new Promise<number>((resolve) => {
+      ws.onclose = (event) => resolve(event.code);
+    });
+    ws.send(JSON.stringify({ type: 'connection_init', payload: {} }));
+    expect(await code).toBe(4408);
+    expect(calls).toBe(1);
+    expect(await upgradeStatus(s.app)).toBe(429);
+    settle.resolve(true);
+    await until(async () => (await upgradeStatus(s!.app)) === 101);
+  });
+
+  test('onConnect is skipped for a socket closed while the context factory runs', async () => {
+    let factories = 0;
+    let connects = 0;
+    const gate = Promise.withResolvers<void>();
+    s = await startGraphQL([M], {
+      context: async () => {
+        factories++;
+        await gate.promise;
+        return {};
+      },
+      subscriptions: {
+        onConnect: () => {
+          connects++;
+          return true;
+        },
+      },
+    });
+    const url = new URL('/graphql', s.app.url);
+    url.protocol = 'ws:';
+    const ws = new WebSocket(url, 'graphql-transport-ws');
+    await new Promise((resolve, reject) => {
+      ws.onopen = resolve;
+      ws.onerror = reject;
+    });
+    ws.send(JSON.stringify({ type: 'connection_init', payload: {} }));
+    await until(() => factories === 1);
+    const closed = new Promise((resolve) => {
+      ws.onclose = resolve;
+    });
+    ws.close();
+    await closed;
+    await Bun.sleep(20);
+    gate.resolve();
+    await Bun.sleep(20);
+    expect(connects).toBe(0);
+  });
 });
