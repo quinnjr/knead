@@ -38,7 +38,8 @@ mutation as one `next` and `complete`. Clients that send `*/*` or prefer JSON ar
   `maxPendingRevocations` cap is counted as a socket closed there is (only when the predicate
   matches its empty context). A `subscription` on a schema without a Subscription type is refused
   as over JSON (`400` over `POST`, `405` over `GET`), without running `onConnect`. The rejection
-  message for a subscription over JSON now names SSE when it is on. The context factory and
+  message for a subscription over JSON now names SSE when it is on and the schema has a
+  Subscription type. The context factory and
   `onConnect` failure logs name the transport (`... rejecting the WebSocket connection`).
 - **WebSocket slot change.** A subscription socket that closes while its `context` factory or
   `onConnect` is pending now keeps its connection slot until they settle (it used to return it at

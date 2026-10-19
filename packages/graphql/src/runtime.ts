@@ -264,7 +264,7 @@ export function buildHooks(
   user: ExecutionHooks | undefined,
   masking: ErrorMaskingOptions,
   limits: DocumentLimits = {},
-  /** Whether GraphQL over SSE is on (for the rejection message). */
+  /** Whether GraphQL over SSE carries subscriptions (sseCarriesSubscriptions), for the message. */
   sse = false,
 ): ExecutionHooks {
   const {
@@ -749,6 +749,14 @@ export function sseConnectionsOf(runtime: GraphQLRuntime): SseConnections {
   return sseConnectionsOfRuntime(runtime);
 }
 
+/**
+ * @internal Whether GraphQL over SSE is on and the schema has a Subscription type, so that a
+ * subscription refused on another HTTP request can be pointed at `Accept: text/event-stream`.
+ */
+export function sseCarriesSubscriptions(runtime: GraphQLRuntime): boolean {
+  return runtime.options.sse !== false && Boolean(runtime.schema.getSubscriptionType());
+}
+
 /** Owns the schema, the Leaven executor and the subscription endpoint. */
 @Injectable()
 export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
@@ -862,7 +870,7 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
             maxFields: this.options.maxFields,
             maxIntrospectionDepth: this.options.maxIntrospectionDepth,
           },
-          this.options.sse !== false,
+          sseCarriesSubscriptions(this),
         ),
         formatExecutionError: createErrorFormatter(this.masking),
       },

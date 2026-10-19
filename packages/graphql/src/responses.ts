@@ -50,8 +50,9 @@ export function jsonHeaders(
 }
 
 /**
- * Messages for an operation the transport does not carry. `sse` is whether GraphQL over SSE is on
- * (it carries subscriptions too).
+ * Messages for an operation the transport does not carry. `sse` is whether to point the client at
+ * GraphQL over SSE: it is on, the schema has a Subscription type and the request did not already
+ * ask for it (sseCarriesSubscriptions, false on the SSE path).
  */
 export function rejectionMessage(
   operation: OperationKind,

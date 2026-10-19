@@ -19,7 +19,7 @@ import {
   noDataStatus,
   throwRejected,
 } from './responses.js';
-import { GraphQLRuntime } from './runtime.js';
+import { GraphQLRuntime, sseCarriesSubscriptions } from './runtime.js';
 import { assertSseOrigin, handleSse, wantsEventStream } from './sse.js';
 
 /**
@@ -118,7 +118,7 @@ async function execute(
   op.operationName = request.operationName;
   const { response } = await runtime.executor.execute(request, op);
   // The operation type is checked by a Leaven onExecute hook on the document Leaven parsed.
-  throwRejected(op.rejectedOperation, allowed, ctx.req.method, runtime.options.sse !== false);
+  throwRejected(op.rejectedOperation, allowed, ctx.req.method, sseCarriesSubscriptions(runtime));
   const graphqlJson = prefersGraphQLResponse(ctx.req.headers.get('accept'));
   // application/json: always 200. application/graphql-response+json: no data entry is 400 for
   // a request error and 500 only for a server failure (INTERNAL_SERVER_ERROR). normalizeResponse

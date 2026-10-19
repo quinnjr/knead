@@ -445,7 +445,8 @@ once, when the operation subscribes.
 Subscriptions use the `graphql-transport-ws` protocol on the GraphQL path. The socket runs
 subscription operations only: a query or mutation sent over it gets the error
 `Only subscription operations are allowed over WebSocket.` and never executes. Over HTTP (without
-[SSE](#subscriptions-over-sse)), a subscription is a `400`.
+[SSE](#subscriptions-over-sse)), a subscription is a `400`; when SSE is on and the schema has a
+Subscription type, its message also points at `Accept: text/event-stream`.
 
 Browsers cannot set an `Authorization` header on a WebSocket, so a client sends its credentials as
 `connectionParams` in `connection_init`. `subscriptions.onConnect(http, params)` receives them:

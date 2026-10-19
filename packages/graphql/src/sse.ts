@@ -224,7 +224,8 @@ export async function handleSse(
   };
   const { response } = await runtime.executor.execute(request, op);
   if (failure) throw failure.error;
-  throwRejected(op.rejectedOperation, allowed, method, true);
+  // The request already asked for SSE: the message does not point it there.
+  throwRejected(op.rejectedOperation, allowed, method, false);
   if (subscription) return subscribe(runtime, ctx, request, keepAliveInterval);
   if (runtime.executor.isRequestError(response)) return requestError(runtime, response);
   return sseResponse(runtime, createEventStreamResponse(response, { keepAliveInterval }));

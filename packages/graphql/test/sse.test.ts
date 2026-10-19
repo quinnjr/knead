@@ -1106,6 +1106,37 @@ describe('SSE responses, origin and dispatch', () => {
     });
     expect(res.status).toBe(json.status);
   });
+
+  test('without a Subscription type, the rejection names neither SSE nor a header the request sent', async () => {
+    @Resolver()
+    class Only {
+      @Query(() => Int) one() {
+        return 1;
+      }
+    }
+    @Module({ providers: [Only] })
+    class OnlyModule {}
+    s = await startGraphQL([OnlyModule]);
+    const message = 'Subscriptions are only available over WebSocket.';
+    const get = await send('subscription { one }', { method: 'GET' });
+    expect(get.status).toBe(405);
+    expect(await detail(get)).toBe(message);
+    const post = await send('subscription { one }');
+    expect(post.status).toBe(400);
+    expect(await detail(post)).toBe(message);
+    const json = await send('subscription { one }', { accept: 'application/json' });
+    expect(json.status).toBe(400);
+    expect(await detail(json)).toBe(message);
+  });
+
+  test('a JSON subscription request on a schema with subscriptions is pointed at SSE', async () => {
+    await start();
+    const res = await send('subscription { t }', { accept: 'application/json' });
+    expect(res.status).toBe(400);
+    expect(await detail(res)).toBe(
+      'Subscriptions are only available over WebSocket or with Accept: text/event-stream.',
+    );
+  });
 });
 
 describe('SSE internals stay private', () => {
