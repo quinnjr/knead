@@ -120,8 +120,7 @@ export function subscribe<TData>(
         message = JSON.parse(String(event.data)) as typeof message;
       } catch {
         const text = String(event.data);
-        const shown = text.length > 1024 ? `${text.slice(0, 1024)}…` : text;
-        const error = new Error(`graphql-transport-ws message is not JSON: ${shown}`);
+        const error = new Error(`graphql-transport-ws message is not JSON: ${capped(text)}`);
         reject(error);
         fail(error);
         socket.close(4400, 'Invalid message');
@@ -222,9 +221,15 @@ export function readSse(res: Response): AsyncIterableIterator<SseEvent> {
   };
 }
 
+/** @internal `text` for an error message: at most 1024 characters, then `…`. */
+export function capped(text: string): string {
+  return text.length > 1024 ? `${text.slice(0, 1024)}…` : text;
+}
+
 /**
  * Subscribes over graphql-sse (a POST that asks for `text/event-stream`). Resolves once the
- * response headers arrive: a non-200 status rejects with an Error naming the status and the body.
+ * response headers arrive: a non-200 status rejects with an Error naming the status and the body,
+ * and so does a 200 that is not `text/event-stream` (naming its content type too).
  */
 export async function subscribeSse<TData>(
   url: URL,
@@ -246,9 +251,18 @@ export async function subscribeSse<TData>(
     ...(options.tls ? { tls: options.tls } : {}),
   });
   if (res.status !== 200) {
-    const text = await res.text();
-    const shown = text.length > 1024 ? `${text.slice(0, 1024)}…` : text;
-    throw new Error(`GraphQL SSE request failed (status ${res.status}): ${shown}`);
+    throw new Error(
+      `GraphQL SSE request failed (status ${res.status}): ${capped(await res.text())}`,
+    );
+  }
+  const type = res.headers.get('content-type') ?? '';
+  if (!/^text\/event-stream\s*(?:;|$)/i.test(type)) {
+    // A JSON answer (SSE turned off, or a server that does not speak graphql-sse) would otherwise
+    // read as a stream that ended without complete.
+    throw new Error(
+      `GraphQL SSE response is not an event stream (status ${res.status}, content-type ` +
+        `${type || 'none'}): ${capped(await res.text())}`,
+    );
   }
   const events = readSse(res);
   let finished = false;
@@ -280,8 +294,7 @@ export async function subscribeSse<TData>(
           try {
             return { value: JSON.parse(value.data) as GraphQLPayload<TData>, done: false };
           } catch {
-            const shown = value.data.length > 1024 ? `${value.data.slice(0, 1024)}…` : value.data;
-            throw new Error(`graphql-sse next event is not JSON: ${shown}`);
+            throw new Error(`graphql-sse next event is not JSON: ${capped(value.data)}`);
           }
         }
       } catch (error) {

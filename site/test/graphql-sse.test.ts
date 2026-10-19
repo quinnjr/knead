@@ -485,6 +485,13 @@ describe('guide: subscriptions over SSE', () => {
     GraphQLModule.forRoot({ subscriptions: { allowedOrigins: ['https://App.Example'] } });
   });
 
+  test('subscribeSse rejects a 200 that is not an event stream (SSE turned off)', async () => {
+    const app = await blog({ subscriptions: { sse: false } });
+    await expect(app.subscribeSse('{ __typename }')).rejects.toThrow(
+      'GraphQL SSE response is not an event stream (status 200, content-type application/json',
+    );
+  });
+
   test('closeWhere ends a matching stream without complete', async () => {
     const app = await boot([AppModule, SessionModule], { providers: [SignOutService] });
     const sub = await app.subscribeSse(MESSAGE, {

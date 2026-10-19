@@ -51,6 +51,14 @@ class FakeSse {
         headers: { 'content-type': 'application/problem+json' },
       });
     }
+    if (body.query.includes('json')) {
+      return new Response(JSON.stringify({ data: { n: 1 } }), {
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    if (body.query.includes('long')) {
+      return new Response('x'.repeat(2000), { status: 400 });
+    }
     if (body.query.includes('cut')) {
       return sseResponse(sseBody([':\n\n', `event: next\ndata: {"data":{"n":1}}\n\n`]));
     }
@@ -193,6 +201,27 @@ describe('TestApp.subscribeSse', () => {
       .subscribeSse('subscription { forbidden }', opts)
       .catch((e: unknown) => e)) as Error;
     expect(error.message).toBe('GraphQL SSE request failed (status 403): {"title":"Forbidden"}');
+  });
+
+  test('a 200 that is not an event stream rejects naming the status, type and body', async () => {
+    mod = await Test.createModule({ imports: [FakeModule] }).compile();
+    const app = await mod.createApp();
+    const error = (await app
+      .subscribeSse('subscription { json }', opts)
+      .catch((e: unknown) => e)) as Error;
+    expect(error.message).toBe(
+      'GraphQL SSE response is not an event stream (status 200, content-type ' +
+        'application/json): {"data":{"n":1}}',
+    );
+  });
+
+  test('a failure body is capped at 1024 characters', async () => {
+    mod = await Test.createModule({ imports: [FakeModule] }).compile();
+    const app = await mod.createApp();
+    const error = (await app
+      .subscribeSse('subscription { long }', opts)
+      .catch((e: unknown) => e)) as Error;
+    expect(error.message).toBe(`GraphQL SSE request failed (status 400): ${'x'.repeat(1024)}…`);
   });
 
   test('close() aborts the stream', async () => {

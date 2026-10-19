@@ -11,6 +11,7 @@ import {
   type Middleware,
 } from '@knead-js/http';
 import {
+  capped,
   type GraphQLRequestOptions,
   type GraphQLResult,
   type GraphQLSubscribeOptions,
@@ -195,8 +196,7 @@ export class TestApp {
     try {
       body = JSON.parse(text) as Omit<GraphQLResult<TData>, 'status' | 'headers'>;
     } catch {
-      const shown = text.length > 1024 ? `${text.slice(0, 1024)}…` : text;
-      throw new Error(`GraphQL response is not JSON (status ${res.status}): ${shown}`);
+      throw new Error(`GraphQL response is not JSON (status ${res.status}): ${capped(text)}`);
     }
     return { ...body, status: res.status, headers: res.headers };
   }
