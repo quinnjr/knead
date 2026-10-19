@@ -194,6 +194,8 @@ function sseEvent(block: string): SseEvent | undefined {
 export function readSse(res: Response): AsyncIterableIterator<SseEvent> {
   const reader = res.body?.pipeThrough(new TextDecoderStream()).getReader();
   let buffer = '';
+  /** A trailing `\r` held back until the next chunk shows whether it starts a `\r\n`. */
+  let heldCr = false;
   const finish = async (): Promise<IteratorResult<SseEvent>> => {
     await reader?.cancel().catch(() => {});
     return { value: undefined, done: true };
@@ -213,8 +215,16 @@ export function readSse(res: Response): AsyncIterableIterator<SseEvent> {
           continue;
         }
         const { value, done } = await reader.read();
-        if (done) return { value: undefined, done: true };
-        buffer += value.replaceAll('\r\n', '\n');
+        if (done) {
+          if (!heldCr) return { value: undefined, done: true };
+          heldCr = false;
+          buffer += '\n';
+          continue;
+        }
+        let chunk = (heldCr ? '\r' : '') + value;
+        heldCr = chunk.endsWith('\r');
+        if (heldCr) chunk = chunk.slice(0, -1);
+        buffer += chunk.replace(/\r\n?/g, '\n');
       }
     },
     return: finish,
@@ -251,17 +261,17 @@ export async function subscribeSse<TData>(
     ...(options.tls ? { tls: options.tls } : {}),
   });
   if (res.status !== 200) {
-    throw new Error(
-      `GraphQL SSE request failed (status ${res.status}): ${capped(await res.text())}`,
-    );
+    const text = await res.text().catch(() => '<unreadable body>');
+    throw new Error(`GraphQL SSE request failed (status ${res.status}): ${capped(text)}`);
   }
   const type = res.headers.get('content-type') ?? '';
   if (!/^text\/event-stream\s*(?:;|$)/i.test(type)) {
+    const text = await res.text().catch(() => '<unreadable body>');
     // A JSON answer (SSE turned off, or a server that does not speak graphql-sse) would otherwise
     // read as a stream that ended without complete.
     throw new Error(
       `GraphQL SSE response is not an event stream (status ${res.status}, content-type ` +
-        `${type || 'none'}): ${capped(await res.text())}`,
+        `${type || 'none'}): ${capped(text)}`,
     );
   }
   const events = readSse(res);
