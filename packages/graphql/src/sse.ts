@@ -81,7 +81,8 @@ export class SseConnections {
    * Ends (without `complete`) every open stream whose connection matches `predicate` and returns
    * how many. A stream whose onConnect has not settled also keeps the predicate, which settle()
    * applies to its full identity; past maxPendingRevocations kept predicates it is ended instead
-   * (fail closed). A predicate that throws is logged and that stream is skipped.
+   * (fail closed), and counted only when the predicate matches its empty context, as a WebSocket
+   * socket closed at the cap is. A predicate that throws is logged and that stream is skipped.
    */
   closeWhere(predicate: ConnectionPredicate): number {
     let count = 0;
@@ -90,7 +91,9 @@ export class SseConnections {
         const kept = this.#deferred.get(connection) ?? [];
         if (kept.length >= this.#host.maxPendingRevocations) {
           // Too many to keep: end it rather than let one escape.
+          const matches = this.#matches(connection, predicate);
           this.#end(connection);
+          if (matches) count++;
           continue;
         }
         kept.push(predicate);

@@ -92,6 +92,26 @@ describe('redactCredentials', () => {
 
 describe('redactCredentials performance', () => {
   const MB = 1024 * 1024;
+  /** The fastest of five runs, in ms: scheduling noise only ever adds time. */
+  const best = (input: string) => {
+    let fastest = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < 5; i++) {
+      const started = performance.now();
+      redactCredentials(input);
+      fastest = Math.min(fastest, performance.now() - started);
+    }
+    return fastest;
+  };
+  /** 1 MB of ordinary log text: the regexes do about as much work on it as on the inputs below. */
+  const LOG_LINE = 'GET /a?b=c HTTP/1.1 user=ada: ok; ';
+  const ordinary = LOG_LINE.repeat(Math.ceil(MB / LOG_LINE.length)).slice(0, MB);
+  /**
+   * The bound for 1 MB: 50 ms, or 10 times the ordinary text measured in the same test when the
+   * machine is slower than that (a loaded runner slows both alike). A super-linear regex on 1 MB of
+   * pathological input is orders of magnitude slower than either, so this stays a linear-time
+   * guard.
+   */
+  const bound = () => Math.max(50, 10 * best(ordinary));
   test.each([
     ['a://'.repeat(MB / 4)],
     ['a.'.repeat(MB / 2)],
@@ -123,11 +143,9 @@ describe('redactCredentials performance', () => {
     ['{"token":'.repeat(MB / 9)],
     [`${'-'.repeat(MB)}redis://u:p@h`],
     ['-1redis://'.repeat(MB / 10)],
-  ])('pathological input %#: 1 MB in well under 50 ms', (input) => {
+  ])('pathological input %#: 1 MB in linear time', (input) => {
     redactCredentials(input.slice(0, 1000)); // warm up the regex
-    const started = performance.now();
-    redactCredentials(input);
-    expect(performance.now() - started).toBeLessThan(50);
+    expect(best(input)).toBeLessThan(bound());
   });
 });
 

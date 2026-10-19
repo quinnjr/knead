@@ -42,7 +42,9 @@ export async function* subscribe(
     body: JSON.stringify({ query, variables }),
   });
   // A request error, a refusal (403) or a connection limit (429, 503) is JSON, not a stream.
-  if (res.status !== 200) throw new Error(`GraphQL SSE request failed: ${res.status}`);
+  if (res.status !== 200) {
+    throw new Error(`GraphQL SSE request failed: ${res.status} ${await res.text()}`);
+  }
   const reader = res.body!.pipeThrough(new TextDecoderStream()).getReader();
   let buffer = '';
   try {

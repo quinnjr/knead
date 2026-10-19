@@ -174,8 +174,29 @@ describe('SSE revocation and lifetime', () => {
     await until(() => calls === 1);
     closeWhere(() => false);
     closeWhere(() => false);
-    // The third cannot be kept: the stream ends rather than escape it.
+    // The third cannot be kept: the stream ends rather than escape it. As for a WebSocket socket
+    // closed at the cap, it is counted only when the predicate matches (here it does not).
+    expect(closeWhere(() => false)).toBe(0);
+    expect((await pending).status).toBe(503);
+  });
+
+  test('a stream ended at the cap counts when the predicate matches, as a socket does', async () => {
+    let calls = 0;
+    await start(
+      {
+        subscriptions: {
+          onConnect: () => {
+            calls++;
+            return new Promise(() => {});
+          },
+        },
+      },
+      { websocket: { maxPendingRevocations: 1 } },
+    );
+    const pending = send('grace');
+    await until(() => calls === 1);
     closeWhere(() => false);
+    expect(closeWhere(() => true)).toBe(1);
     expect((await pending).status).toBe(503);
   });
 

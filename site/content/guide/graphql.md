@@ -550,8 +550,9 @@ A request error, one rejected before any resolver ran, is answered as JSON
 (`Content-Type: application/json; charset=utf-8`, with `cacheControl`), never as a stream: `400`,
 or `500` when an error is `INTERNAL_SERVER_ERROR`. That covers syntax errors and the parser limits,
 Knead's limits (`maxDepth`, `maxFields`, `maxAliases`, `maxIntrospectionDepth`), validation,
-complexity, operation selection, variables that do not coerce, and an `onParse`, `onParsed`,
-`onValidate` or `onValidated` hook that throws. Everything after execution started is streamed as a
+complexity, operation selection, variables that do not coerce, an `onParse`, `onParsed`,
+`onValidate` or `onValidated` hook that throws, and a document `cache` that throws (the `500`
+case: an `INTERNAL_SERVER_ERROR`, masked). Everything after execution started is streamed as a
 `next` carrying `errors`, then `complete`: a resolver error, an argument `validate` failure, a
 throwing `onExecute` or `onExecuted` hook, or `data: null`. Rejections before GraphQL runs (the
 origin and CSRF checks, a too-long query, a malformed body, the connection limits) are
@@ -609,10 +610,11 @@ Three tools revoke access later:
 
 <<< graphql/revocation.ts#close-where title="sign-out.service.ts"
 
-`closeWhere` closes with code `1008` and reason `Connection revoked` by default and returns how many
-sockets it closed. `connection.context` is the `context` factory result (computed once, when the
-connection initializes) with the `onConnect` result merged over it. A socket still in `onConnect` is
-checked again when `onConnect` completes, so it cannot slip through.
+`closeWhere` closes sockets with code `1008` and reason `Connection revoked` by default and returns
+how many sockets and SSE streams it ended. `connection.context` is the `context` factory result
+(computed once, when the connection initializes) with the `onConnect` result merged over it. A
+socket or stream still in `onConnect` is checked again when `onConnect` completes, so it cannot
+slip through.
 
 ### Several instances
 

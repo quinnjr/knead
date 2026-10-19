@@ -121,9 +121,10 @@ prefers `text/event-stream` strictly over `application/json` and
 result as a `next` event and then `complete`; a query or mutation answers one `next` and
 `complete`; a `GET` mutation is `405` with `Allow: POST`; a `GET` needs the `csrf` header. A request
 error (rejected before any resolver ran: syntax, parser and Knead limits, validation, complexity,
-operation selection, variable coercion, or a throwing `onParse`, `onParsed`, `onValidate` or
-`onValidated` hook) is answered as JSON (`application/json`, with `cacheControl`) at `400`, or `500`
-for an `INTERNAL_SERVER_ERROR`; anything after execution started is streamed. An open subscription
+operation selection, variable coercion, a throwing `onParse`, `onParsed`, `onValidate` or
+`onValidated` hook, or a throwing document `cache`) is answered as JSON (`application/json`, with
+`cacheControl`) at `400`, or `500` for an `INTERNAL_SERVER_ERROR`; anything after execution started
+is streamed. An open subscription
 stream holds one of the `listen({ websocket })` connection slots shared with sockets, taken before
 `onConnect` runs: past `maxConnectionsPerIp` it is `429`, past `maxConnections` `503`, both
 `application/problem+json`. `onConnect` refusing (or the `context` factory throwing) answers `403`
@@ -568,8 +569,9 @@ stream (without `complete`), and returns how many sockets and streams it ended. 
 whose `onConnect` is still pending are checked again when it completes (at most
 `listen({ websocket: { maxPendingRevocations } })` predicates each, default 10000; beyond that the
 socket is closed with `1008` and the stream ended). A pending stream that matches then answers
-`403`; one ended before its `onConnect` completed answers `503`. A predicate that throws for a
-socket or stream is logged and that one skipped. When nothing matched, a debug entry is logged.
+`403`; one ended before its `onConnect` completed answers `503`. A socket or stream ended only
+because it was past that limit counts when the predicate matches its still-empty context. A
+predicate that throws for a socket or stream is logged and that one skipped. When nothing matched, a debug entry is logged.
 
 ### `GraphQLConnection`
 
