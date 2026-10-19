@@ -5,6 +5,7 @@ import {
   HttpConfigError,
   type HttpException,
   isHeaderValue,
+  normalizeAllowedOrigins,
   type WsMessageRate,
 } from '@knead-js/http';
 import type {
@@ -31,7 +32,23 @@ export type ConnectionParams = Readonly<Record<string, unknown>> & {
 /** What onConnect may add to the context: GraphQLContext fields, never the raw params. */
 export type ConnectContext = Partial<GraphQLContext> & { readonly [CONNECTION_PARAMS]?: never };
 
+/** Options of the GraphQL-over-SSE transport (`subscriptions.sse`). */
+export interface SseOptions {
+  /**
+   * ms between keep-alive comments, an integer from 1 to 2^31 - 1. Default: half of
+   * `listen({ idleTimeout })`, at most `SSE_MAX_KEEP_ALIVE` (8000 ms): 5000 at Bun's default
+   * idleTimeout of 10 s, and 8000 with `idleTimeout: 0`. An explicit interval above half a non-zero
+   * idleTimeout makes `listen()` throw.
+   */
+  keepAliveInterval?: number;
+}
+
 export interface SubscriptionOptions {
+  /**
+   * GraphQL over SSE, on by default whenever subscriptions are. `false` turns SSE off while the
+   * WebSocket transport stays on; an object configures it (see `SseOptions`).
+   */
+  sse?: false | SseOptions;
   /**
    * Runs on `connection_init` with the upgrade request's Ctx, after the `context` factory (which
    * closes the socket with 4403 if it throws). `false` closes the socket with 4403; an object is
@@ -55,7 +72,10 @@ export interface SubscriptionOptions {
     http: Ctx;
     context: Readonly<Record<PropertyKey, unknown>>;
   }) => ConnectContext | false | Promise<ConnectContext | false>;
-  /** ms to wait for `connection_init`, an integer from 1 to 2^31 - 1 (Leaven default 3000). */
+  /**
+   * ms to wait for `connection_init`, and then for the context factory and `onConnect` to settle
+   * (over SSE, from the request), an integer from 1 to 2^31 - 1 (default 3000).
+   */
   connectionInitTimeout?: number;
   /** ms between server pings, an integer up to 2^31 - 1; 0 disables (Leaven default 12000). */
   keepAliveInterval?: number;
@@ -198,6 +218,17 @@ export interface ResolvedGraphQLOptions {
   readonly csrf: { readonly requiredHeaders: readonly string[] } | false;
   readonly cacheControl: string | false;
   readonly subscriptions: SubscriptionOptions | false;
+  /**
+   * `false` when `subscriptions` or `subscriptions.sse` is `false`. `keepAliveInterval` is the
+   * application's, or undefined when it set none: each stream then derives its interval from the
+   * HTTP idle timeout, at most `SSE_MAX_KEEP_ALIVE`.
+   */
+  readonly sse: { readonly keepAliveInterval: number | undefined } | false;
+  /**
+   * `subscriptions.allowedOrigins` validated and normalized at bootstrap (whatever the schema):
+   * `'*'`, a Set of origins, or undefined (same origin only). SSE checks requests against it.
+   */
+  readonly allowedOrigins: ReadonlySet<string> | '*' | undefined;
   readonly orphanedTypes: readonly Class[];
   readonly guards: readonly GuardRef<ResolverCtx<any, any>>[];
   readonly defaultDeny: boolean;
@@ -223,6 +254,18 @@ export const GRAPHQL_LIMITS = Object.freeze({
   maxFields: 1000,
   maxIntrospectionDepth: 20,
 });
+
+/**
+ * Leaven's default `subscriptions.connectionInitTimeout` (ms), also the bound on a pending
+ * context factory and `onConnect` over WebSocket and SSE.
+ */
+export const DEFAULT_CONNECTION_INIT_TIMEOUT = 3000;
+
+/**
+ * The longest keep-alive interval (ms) an SSE stream derives from the HTTP idle timeout: Leaven's
+ * own default, used as is when there is no idle timeout.
+ */
+export const SSE_MAX_KEEP_ALIVE = 8000;
 
 /** Default Leaven document cache: at most 100 parsed documents. */
 export const DEFAULT_DOCUMENT_CACHE = Object.freeze({ maxSize: 100 });
@@ -278,6 +321,10 @@ function subscriptionInteger(
     );
   }
 }
+
+/** How allowedOrigins errors name the endpoint. */
+const originSubject = (path: string | undefined) =>
+  `GraphQL endpoint ${normalizePath(path ?? '/graphql')}`;
 
 export function validateGraphQLOptions(options: GraphQLModuleOptions): void {
   if (options.path !== undefined && /[:*]/.test(options.path)) {
@@ -346,6 +393,17 @@ export function validateGraphQLOptions(options: GraphQLModuleOptions): void {
       1,
       MAX_TIMER_DELAY,
     );
+    // Checked whatever the schema: SSE queries and mutations read it without a Subscription type.
+    normalizeAllowedOrigins(originSubject(options.path), subscriptions.allowedOrigins);
+    const sse = subscriptions.sse;
+    if (sse !== undefined && sse !== false) {
+      if (typeof sse !== 'object' || sse === null) {
+        throw new HttpConfigError(
+          `GraphQL subscriptions.sse must be false or an object; got ${String(sse)}.`,
+        );
+      }
+      subscriptionInteger('sse.keepAliveInterval', sse.keepAliveInterval, 1, MAX_TIMER_DELAY);
+    }
   }
 }
 
@@ -381,6 +439,14 @@ export function resolveOptions(
             ),
           },
     subscriptions: options.subscriptions === false ? false : { ...(options.subscriptions ?? {}) },
+    sse:
+      options.subscriptions === false || options.subscriptions?.sse === false
+        ? false
+        : { keepAliveInterval: options.subscriptions?.sse?.keepAliveInterval },
+    allowedOrigins:
+      options.subscriptions === false
+        ? undefined
+        : normalizeAllowedOrigins(originSubject(path), options.subscriptions?.allowedOrigins),
     orphanedTypes: options.orphanedTypes ?? [],
     guards: options.guards ?? [],
     defaultDeny: options.defaultDeny ?? false,

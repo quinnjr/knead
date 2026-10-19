@@ -41,8 +41,8 @@ bootstrapped providers run here.
 
 ### HttpCoreModule
 
-The global module `KneadFactory` registers. It provides and exports `WsRegistry` and `ErrorLog` to
-every module. `HTTP_DEVELOPMENT` (the same token as core's `DEVELOPMENT`) is provided to every
+The global module `KneadFactory` registers. It provides and exports `WsRegistry`, `ErrorLog` and
+the framework-internal `StreamRegistry` to every module. `HTTP_DEVELOPMENT` (the same token as core's `DEVELOPMENT`) is provided to every
 module by the application context, from the `development` option. You never import it yourself.
 
 ### HttpApplication
@@ -52,7 +52,7 @@ module by the application context, from the `development` option. You never impo
 | Member | Description |
 | --- | --- |
 | `listen(options?)` | Compiles the routes, runs the lifecycle init hooks of middleware, guards and filters constructed for them, and binds the listener. Resolves to the Bun `Server`. Rejects with `HttpConfigError` for an invalid option or route definition, when called twice, or once `close()` has started. |
-| `close(signal?)` | Graceful, idempotent shutdown: stops accepting connections, waits up to `shutdownTimeout` for in-flight requests, closes WebSockets with `1001`, then runs the shutdown hooks of the context. |
+| `close(signal?)` | Graceful, idempotent shutdown: stops accepting connections, ends open streams that hold a connection slot (GraphQL SSE subscriptions), waits up to `shutdownTimeout` for in-flight requests, closes WebSockets with `1001`, then runs the shutdown hooks of the context. |
 | `enableShutdownHooks(signals?, options?)` | Calls `close(signal)` on the first of `signals` (default `['SIGTERM', 'SIGINT']`), then exits with code 0, or 1 if shutdown failed. `{ exit: false }` keeps the process alive. Throws after `close()`. |
 | `useGlobalMiddleware(middleware, priority = 0)` | Adds global middleware. Before `listen()` only: throws `HttpConfigError` once `listen()` has started (even while it is still initializing) or `close()` has. |
 | `useGlobalGuards(...guards)` | Adds guards to every route, after `APP_GUARD` guards. Before `listen()` only, like `useGlobalMiddleware()`. |
@@ -89,7 +89,7 @@ failed because a lifecycle hook threw has closed the application. See [the serve
 | `maxRequestBodySize` | `number` | `1048576` (1 MiB) | Largest request body in bytes; Bun answers larger ones with `413`. An integer of at least 1. |
 | `defaultCacheControl` | `string` | none | `Cache-Control` for every response that has none (including 404s, `421`s, rejected WebSocket upgrades, the `redirectHttp` listener's `421`s and the masked `500` of an error that reaches Bun), such as `'no-store'`. Must be a valid header value (no CR, LF or NUL, Latin-1 only). |
 | `validation` | `ValidationOptions` | `{}` | See [`ValidationOptions`](#validationoptions). |
-| `idleTimeout` | `number` | Bun's default (10 seconds) | Seconds a connection may be idle. An integer from 0 to 255. |
+| `idleTimeout` | `number` | Bun's default (10 seconds) | Seconds a connection may be idle. An integer from 0 to 255. GraphQL SSE keep-alives are checked against it ([`SseOptions`](/packages/graphql/#sseoptions)). |
 | `shutdownTimeout` | `number` | `10000` | Milliseconds `close()` waits for in-flight requests, and for a `listen()` still initializing. An integer from 0 to `2 ** 31 - 1`. |
 
 The numeric options must be numbers within those ranges: a string (such as an unparsed environment
@@ -399,6 +399,25 @@ modules register endpoints here). Inject it with `inject(WsRegistry)`.
 | `entries()` | An iterator of `[path, endpoint]` pairs. |
 | `handler()` | The Bun `WebSocketHandler` passed to `Bun.serve`, with the configured limits. Used by `listen()`. |
 
+### StreamRegistry
+
+Framework-internal: do not use it from application code. `StreamRegistry` holds the long-lived
+streaming responses of Knead's own transports (GraphQL SSE subscriptions): each open stream takes
+a connection slot shared with WebSocket connections, so `listen({ websocket })`'s
+`maxConnectionsPerIp` (`429`) and `maxConnections` (`503`) count sockets and streams together.
+`listen()` checks the keep-alive intervals transports declare against the HTTP `idleTimeout`
+(at most half of it) and warns when it is 1 to 4 seconds; `close()` ends every open stream before
+it waits for in-flight requests and refuses new ones with `503`. It is exported only so that
+`@knead-js/graphql` can inject it; its members are `@internal` and may change in any release. A
+stream opened from application code would not be ended by the transport that owns it, and the
+connection slots themselves are not exported.
+
+Like `WsRegistry`, it is a global provider, so application code can inject it; Knead accepts that,
+since application code is trusted. Calling `endStreams()` refuses SSE subscriptions until the
+next `listen()`, and `openStream()` on your own objects uses up the slots sockets and streams
+share. It cannot keep a GraphQL stream open past a revocation or a guard: those streams are
+private to `@knead-js/graphql`.
+
 ### WebSocket types
 
 | Type | Definition |
@@ -432,9 +451,9 @@ when none is free.
 | `backpressureLimit` | `number` | `1048576` (1 MiB) | Bytes buffered for a slow reader before backpressure applies. |
 | `closeOnBackpressureLimit` | `boolean` | `true` | Close a socket over `backpressureLimit`. A non-boolean is an `HttpConfigError`. |
 | `idleTimeout` | `number` | `120` | Seconds without traffic before a socket is closed, 0 to 960. |
-| `maxConnectionsPerIp` | `number \| false` | `100` | Open sockets per client IP; more upgrades get `429`. |
+| `maxConnectionsPerIp` | `number \| false` | `100` | Open sockets (and GraphQL SSE subscription streams) per client IP; more get `429`. |
 | `ipv6Subnet` | `number` | `64` | IPv6 prefix length the per-IP limit groups by, 1 to 128. |
-| `maxConnections` | `number` | no limit | Open sockets in total; more upgrades get `503`. |
+| `maxConnections` | `number` | no limit | Open sockets and GraphQL SSE subscription streams in total; more get `503`. |
 | `messageRate` | `WsMessageRate \| false` | `{ limit: 100, windowMs: 10000 }` | Default per-socket message rate. |
 | `maxPendingRevocations` | `number` | `10000` | `closeWhere()` predicates kept for sockets still upgrading. |
 
@@ -443,9 +462,18 @@ when none is free.
 `originAllowed(origin, host, secure, allowed?)` returns whether a WebSocket upgrade's `Origin` may
 connect: when `origin` is `null` (no header, not a browser), when `allowed` is `'*'` or lists the
 origin (`allowed` is an array of origins, or a `ReadonlySet` of normalized origins, as
-`new URL(entry).origin` writes them), or when it is the request's own origin (scheme from `secure`, host and port from `host`,
-default ports normalized). `Origin: null` is rejected. Exported for transports that check origins
-themselves.
+`new URL(entry).origin` writes them), or when it is the request's own origin (scheme from
+`secure`, host and port from `host`, default ports normalized). `Origin: null` is rejected.
+Exported for transports that check origins themselves.
+
+### normalizeAllowedOrigins
+
+`normalizeAllowedOrigins(subject, origins)` validates an `allowedOrigins` option the way
+`WsRegistry.register()` does and returns it ready for `originAllowed()`: `'*'`, a new `Set` of
+lower-cased origins, or `undefined` when unset. Anything but `'*'` or an array of exact origins
+(`scheme://host[:port]`, no path, query, credentials, default port or wildcard) is an
+`HttpConfigError` whose message names `subject` (for example `WebSocket endpoint /ws`). Transports
+that check origins themselves call it at bootstrap, so a bad entry never fails at request time.
 
 ## Network helpers
 

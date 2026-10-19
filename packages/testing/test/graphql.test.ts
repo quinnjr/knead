@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Injectable, inject, Module, type OnModuleInit } from '@knead-js/core';
 import { Controller, type Ctx, Post, WsRegistry } from '@knead-js/http';
-import { Test, type TestingModule } from '../src/index.js';
+import { readSse, Test, type TestingModule } from '../src/index.js';
 
 // A stand-in GraphQL server: echoes POST bodies and speaks just enough graphql-transport-ws.
 @Controller('/graphql')
@@ -21,6 +21,63 @@ class PlainText {
       status: 502,
       headers: { 'content-type': 'text/plain' },
     });
+  }
+}
+
+const sseBody = (chunks: string[], keepOpen = false) => {
+  const encoder = new TextEncoder();
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+      if (!keepOpen) controller.close();
+    },
+  });
+};
+const sseResponse = (body: ReadableStream<Uint8Array>) =>
+  new Response(body, { headers: { 'content-type': 'text/event-stream' } });
+
+@Controller('/sse')
+class FakeSse {
+  @Post('/') async post(ctx: Ctx) {
+    const body = (await ctx.json()) as { query: string };
+    const seen = JSON.stringify({
+      accept: ctx.req.headers.get('accept'),
+      type: ctx.req.headers.get('content-type'),
+      auth: ctx.req.headers.get('authorization'),
+    });
+    if (body.query.includes('forbidden')) {
+      return new Response(JSON.stringify({ title: 'Forbidden' }), {
+        status: 403,
+        headers: { 'content-type': 'application/problem+json' },
+      });
+    }
+    if (body.query.includes('json')) {
+      return new Response(JSON.stringify({ data: { n: 1 } }), {
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    if (body.query.includes('long')) {
+      return new Response('x'.repeat(2000), { status: 400 });
+    }
+    if (body.query.includes('cut')) {
+      return sseResponse(sseBody([':\n\n', `event: next\ndata: {"data":{"n":1}}\n\n`]));
+    }
+    if (body.query.includes('garbage')) {
+      return sseResponse(
+        sseBody([`event: next\ndata: {"data":{"n":1}}\n\n`, 'event: next\ndata: not json\n\n']),
+      );
+    }
+    if (body.query.includes('hang')) {
+      return sseResponse(sseBody([':\n\n', `event: next\ndata: {"data":{"n":1}}\n\n`], true));
+    }
+    return sseResponse(
+      sseBody([
+        ':\n\n',
+        `event: next\ndata: {"data":{"n":1,"seen":${seen}}}\n\n`,
+        `event: next\ndata: {"data":{"n":2}}\n\n`,
+        'event: complete\ndata:\n\n',
+      ]),
+    );
   }
 }
 
@@ -54,7 +111,7 @@ class FakeSubscriptions implements OnModuleInit {
   }
 }
 
-@Module({ controllers: [FakeGraphQL, PlainText], providers: [FakeSubscriptions] })
+@Module({ controllers: [FakeGraphQL, PlainText, FakeSse], providers: [FakeSubscriptions] })
 class FakeModule {}
 
 let mod: TestingModule | undefined;
@@ -116,6 +173,159 @@ describe('TestApp.graphqlSubscribe', () => {
     const app = await mod.createApp();
     const sub = await app.graphqlSubscribe('subscription { garbage }');
     await expect(sub.next()).rejects.toThrow('not JSON');
+  });
+});
+
+describe('TestApp.subscribeSse', () => {
+  const opts = { path: '/sse' };
+
+  test('yields next payloads and ends on complete', async () => {
+    mod = await Test.createModule({ imports: [FakeModule] }).compile();
+    const app = await mod.createApp();
+    const sub = await app.subscribeSse('subscription { n }', {
+      ...opts,
+      headers: { authorization: 'Bearer t' },
+    });
+    const values = [];
+    for await (const value of sub) values.push(value);
+    expect(values).toEqual([
+      {
+        data: {
+          n: 1,
+          seen: { accept: 'text/event-stream', type: 'application/json', auth: 'Bearer t' },
+        },
+      },
+      { data: { n: 2 } },
+    ]);
+  });
+
+  test('rejects on a 403 with the status and body', async () => {
+    mod = await Test.createModule({ imports: [FakeModule] }).compile();
+    const app = await mod.createApp();
+    const error = (await app
+      .subscribeSse('subscription { forbidden }', opts)
+      .catch((e: unknown) => e)) as Error;
+    expect(error.message).toBe('GraphQL SSE request failed (status 403): {"title":"Forbidden"}');
+  });
+
+  test('a 200 that is not an event stream rejects naming the status, type and body', async () => {
+    mod = await Test.createModule({ imports: [FakeModule] }).compile();
+    const app = await mod.createApp();
+    const error = (await app
+      .subscribeSse('subscription { json }', opts)
+      .catch((e: unknown) => e)) as Error;
+    expect(error.message).toBe(
+      'GraphQL SSE response is not an event stream (status 200, content-type ' +
+        'application/json): {"data":{"n":1}}',
+    );
+  });
+
+  test('a failure body is capped at 1024 characters', async () => {
+    mod = await Test.createModule({ imports: [FakeModule] }).compile();
+    const app = await mod.createApp();
+    const error = (await app
+      .subscribeSse('subscription { long }', opts)
+      .catch((e: unknown) => e)) as Error;
+    expect(error.message).toBe(`GraphQL SSE request failed (status 400): ${'x'.repeat(1024)}…`);
+  });
+
+  test('close() aborts the stream', async () => {
+    mod = await Test.createModule({ imports: [FakeModule] }).compile();
+    const app = await mod.createApp();
+    const sub = await app.subscribeSse('subscription { hang }', opts);
+    expect(await sub.next()).toEqual({ value: { data: { n: 1 } }, done: false });
+    const pending = sub.next();
+    await sub.close();
+    expect(await pending).toEqual({ value: undefined, done: true });
+    expect(await sub.next()).toEqual({ value: undefined, done: true });
+  });
+
+  test('a next event that is not JSON makes next() reject', async () => {
+    mod = await Test.createModule({ imports: [FakeModule] }).compile();
+    const app = await mod.createApp();
+    const sub = await app.subscribeSse('subscription { garbage }', opts);
+    expect(await sub.next()).toEqual({ value: { data: { n: 1 } }, done: false });
+    await expect(sub.next()).rejects.toThrow('next event is not JSON');
+    await expect(sub.next()).rejects.toThrow('next event is not JSON');
+  });
+
+  test('a stream cut without complete makes next() reject', async () => {
+    mod = await Test.createModule({ imports: [FakeModule] }).compile();
+    const app = await mod.createApp();
+    const sub = await app.subscribeSse('subscription { cut }', opts);
+    expect(await sub.next()).toEqual({ value: { data: { n: 1 } }, done: false });
+    await expect(sub.next()).rejects.toThrow('without a complete event');
+    await expect(sub.next()).rejects.toThrow('without a complete event');
+  });
+});
+
+describe('readSse', () => {
+  const collect = async (res: Response) => {
+    const out = [];
+    for await (const event of readSse(res)) out.push(event);
+    return out;
+  };
+
+  test('parses CRLF line endings', async () => {
+    const res = sseResponse(sseBody(['event: next\r\ndata: {"a":1}\r\n\r\n']));
+    expect(await collect(res)).toEqual([{ event: 'next', data: '{"a":1}' }]);
+  });
+
+  test('a CRLF split across chunks still ends the event', async () => {
+    const res = sseResponse(sseBody(['event: next\r', '\ndata: x\r\n\r', '\n', 'data: y\r\n\r\n']));
+    expect(await collect(res)).toEqual([
+      { event: 'next', data: 'x' },
+      { event: 'message', data: 'y' },
+    ]);
+  });
+
+  test('a bare CR is a line terminator', async () => {
+    const res = sseResponse(sseBody(['event: next\rdata: x\r\r']));
+    expect(await collect(res)).toEqual([{ event: 'next', data: 'x' }]);
+  });
+
+  test('joins multi-line data with newlines', async () => {
+    const res = sseResponse(sseBody(['event: next\ndata: a\ndata: b\n\n']));
+    expect(await collect(res)).toEqual([{ event: 'next', data: 'a\nb' }]);
+  });
+
+  test('the event name defaults to message', async () => {
+    expect(await collect(sseResponse(sseBody(['data: hi\n\n'])))).toEqual([
+      { event: 'message', data: 'hi' },
+    ]);
+  });
+
+  test('data without a space after the colon', async () => {
+    expect(await collect(sseResponse(sseBody(['data:x\n\n'])))).toEqual([
+      { event: 'message', data: 'x' },
+    ]);
+  });
+
+  test('skips keep-alive comments', async () => {
+    expect(await collect(sseResponse(sseBody([':\n\n', ': ping\n\ndata: x\n\n'])))).toEqual([
+      { event: 'message', data: 'x' },
+    ]);
+  });
+
+  test('a block split across chunks', async () => {
+    const res = sseResponse(sseBody(['eve', 'nt: next\nda', 'ta: {"a"', ':1}\n', '\n']));
+    expect(await collect(res)).toEqual([{ event: 'next', data: '{"a":1}' }]);
+  });
+
+  test('a response without a body is done', async () => {
+    expect(await readSse(new Response(null)).next()).toEqual({ value: undefined, done: true });
+  });
+
+  test('return() before next() cancels the body', async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const events = readSse(sseResponse(body));
+    expect(await events.return?.()).toEqual({ value: undefined, done: true });
+    expect(cancelled).toBe(true);
   });
 });
 

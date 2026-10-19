@@ -1,15 +1,11 @@
 import { Injectable, inject } from '@knead-js/core';
 import type { ServerWebSocket, WebSocketHandler } from 'bun';
 import { logError } from './error-log.js';
-import {
-  ForbiddenException,
-  HttpConfigError,
-  ServiceUnavailableException,
-  TooManyRequestsException,
-} from './exceptions.js';
+import { ForbiddenException, HttpConfigError } from './exceptions.js';
 import { LOGGER, logValue } from './logger.js';
-import { isIpv6Prefix, maskIp } from './net.js';
+import { isIpv6Prefix } from './net.js';
 import { joinPaths } from './path.js';
+import { ConnectionSlots } from './slots.js';
 import { HTTP_DEVELOPMENT } from './tokens.js';
 import type { Ctx } from './types.js';
 
@@ -234,7 +230,7 @@ function originOf(value: string): string | undefined {
  * query, credentials, default port or wildcard would never be what a browser sends, so the entry
  * would silently match nothing or more than it says.
  */
-function assertOrigin(path: string, entry: unknown): void {
+function assertOrigin(subject: string, entry: unknown): void {
   const origin = typeof entry === 'string' ? originOf(entry) : undefined;
   // `new URL()` accepts `*` in a host, so `https://*.example.com` is an origin that never matches.
   const wildcard = typeof entry === 'string' && entry.includes('*');
@@ -245,9 +241,26 @@ function assertOrigin(path: string, entry: unknown): void {
     : origin === undefined
       ? 'expected scheme://host[:port]'
       : `expected the bare origin ${JSON.stringify(origin)}`;
-  throw new HttpConfigError(
-    `Invalid allowedOrigins entry for WebSocket endpoint ${path}: ${shown} (${hint}).`,
-  );
+  throw new HttpConfigError(`Invalid allowedOrigins entry for ${subject}: ${shown} (${hint}).`);
+}
+
+/**
+ * Validates an `allowedOrigins` option (`'*'` or an array of exact origins) and returns
+ * it normalized for originAllowed(): `'*'`, a new Set of origins, or undefined when unset. Throws
+ * HttpConfigError naming `subject` (for example `WebSocket endpoint /ws`) for anything else.
+ */
+export function normalizeAllowedOrigins(
+  subject: string,
+  origins: unknown,
+): ReadonlySet<string> | '*' | undefined {
+  if (origins === undefined || origins === '*') return origins;
+  if (!Array.isArray(origins)) {
+    throw new HttpConfigError(
+      `allowedOrigins for ${subject} must be an array of origins or "*"; got ${JSON.stringify(origins)}.`,
+    );
+  }
+  for (const entry of origins) assertOrigin(subject, entry);
+  return new Set(origins.map((entry: string) => originOf(entry)!));
 }
 
 /**
@@ -298,6 +311,9 @@ function copyOwn(meta: object): Record<PropertyKey, unknown> {
   return out;
 }
 
+/** Set by WsRegistry's static block: reads a registry's private connection slots. */
+let slotsOf: (registry: WsRegistry) => ConnectionSlots;
+
 /** Bun allows one websocket handler per server; modules register endpoints here instead. */
 @Injectable()
 export class WsRegistry {
@@ -308,15 +324,13 @@ export class WsRegistry {
   readonly #sockets = new Map<WsSocket, SocketState>();
   /** Sockets whose endpoint saw open: only those get message, drain and close. */
   readonly #opened = new WeakSet<WsSocket>();
-  /** Upgrade data objects holding a connection slot, with the IP they count against. */
-  readonly #reserved = new WeakMap<object, string | undefined>();
-  readonly #perIp = new Map<string, number>();
-  #reservedTotal = 0;
   readonly #log = {
     logger: inject(LOGGER),
     development: inject(HTTP_DEVELOPMENT),
   };
   #server: ResolvedServerOptions = resolveServerOptions({});
+  /** Connection slots of sockets, shared with StreamRegistry's streams (connectionSlotsOf()). */
+  readonly #slots = new ConnectionSlots(this.#server);
   #sealed = false;
   /**
    * Upgrades in progress (from the upgrade request until the socket opens or the upgrade
@@ -358,10 +372,11 @@ export class WsRegistry {
     if (this.#endpoints.has(normalized)) {
       throw new HttpConfigError(`Duplicate WebSocket endpoint ${normalized}.`);
     }
-    const origins = options.allowedOrigins;
-    if (origins !== undefined && origins !== '*') {
-      for (const origin of origins) assertOrigin(normalized, origin);
-    }
+    // A copy: changing the caller's array after register() cannot widen the check.
+    const origins = normalizeAllowedOrigins(
+      `WebSocket endpoint ${normalized}`,
+      options.allowedOrigins,
+    );
     assertRate(`messageRate of ${normalized}`, options.messageRate);
     if (options.maxConnectionLifetime !== undefined) {
       assertInteger(
@@ -376,13 +391,7 @@ export class WsRegistry {
       throw new HttpConfigError(`meta of ${normalized} must be an object`);
     }
     this.#endpoints.set(normalized, endpoint);
-    if (origins !== undefined) {
-      // A copy: changing the caller's array after register() cannot widen the check.
-      this.#origins.set(
-        normalized,
-        origins === '*' ? '*' : new Set(origins.map((entry) => originOf(entry)!)),
-      );
-    }
+    if (origins !== undefined) this.#origins.set(normalized, origins);
     this.#options.set(normalized, {
       ...options,
       meta: meta === undefined ? undefined : Object.freeze(copyOwn(meta)),
@@ -394,9 +403,13 @@ export class WsRegistry {
     return this.#options.get(path)?.meta;
   }
 
-  /** @internal Called by HttpApplication.listen() with `listen({ websocket })`. */
+  /**
+   * @internal Called by HttpApplication.listen() with `listen({ websocket })`: the socket limits,
+   * and the connection limits shared with StreamRegistry's streams.
+   */
   configure(options: WsServerOptions): void {
     this.#server = resolveServerOptions(options);
+    this.#slots.configure(this.#server);
   }
 
   /**
@@ -418,12 +431,7 @@ export class WsRegistry {
    * within 30s); a socket that opens after that takes a slot again, or is closed with 1013.
    */
   reserve(data: object, ip: string | undefined, ctx?: object): void {
-    const { maxConnectionsPerIp } = this.#server;
-    const key =
-      maxConnectionsPerIp === false || ip === undefined
-        ? undefined
-        : maskIp(ip, this.#server.ipv6Subnet);
-    this.#take(data, key);
+    this.#slots.take(data, this.#slots.keyOf(ip), 'WebSocket');
     // The in-progress upgrade now follows its socket data, until the socket opens.
     if (ctx === undefined) return;
     const entry = this.#upgrades.get(ctx);
@@ -442,33 +450,6 @@ export class WsRegistry {
       const revived: UpgradeEntry = { ...expired, at: Date.now(), hasData: true };
       this.#upgrades.set(data, revived);
       this.#withData.set(data, revived);
-    }
-  }
-
-  /** Takes a slot counted against `key` (the masked IP, if limited), or throws 429 / 503. */
-  #take(data: object, key: string | undefined): void {
-    const { maxConnections, maxConnectionsPerIp } = this.#server;
-    if (maxConnections !== undefined && this.#reservedTotal >= maxConnections) {
-      throw new ServiceUnavailableException('Too many WebSocket connections.');
-    }
-    if (key !== undefined && (this.#perIp.get(key) ?? 0) >= (maxConnectionsPerIp as number)) {
-      throw new TooManyRequestsException('Too many WebSocket connections from this address.');
-    }
-    this.#reservedTotal++;
-    if (key !== undefined) this.#perIp.set(key, (this.#perIp.get(key) ?? 0) + 1);
-    this.#reserved.set(data, key);
-  }
-
-  /** Returns the slot held by `data`, if any. */
-  #giveBack(data: object): void {
-    if (!this.#reserved.has(data)) return;
-    const key = this.#reserved.get(data);
-    this.#reserved.delete(data);
-    this.#reservedTotal--;
-    if (key !== undefined) {
-      const count = (this.#perIp.get(key) ?? 1) - 1;
-      if (count > 0) this.#perIp.set(key, count);
-      else this.#perIp.delete(key);
     }
   }
 
@@ -520,9 +501,9 @@ export class WsRegistry {
       this.#expiredUpgrades.set(key, entry);
       // Its socket never opened: the slot is returned, so aborted upgrades cannot exhaust the
       // limits. A late open takes one again (#retake).
-      if (entry.hasData && this.#reserved.has(key)) {
-        this.#expiredSlots.set(key, this.#reserved.get(key));
-        this.#giveBack(key);
+      if (entry.hasData && this.#slots.has(key)) {
+        this.#expiredSlots.set(key, this.#slots.keyHeldBy(key));
+        this.#slots.giveBack(key);
       }
     }
   }
@@ -537,7 +518,7 @@ export class WsRegistry {
     const key = this.#expiredSlots.get(data);
     this.#expiredSlots.delete(data);
     try {
-      this.#take(data, key);
+      this.#slots.take(data, key, 'WebSocket');
       return true;
     } catch {
       ws.close(1013, 'Too many WebSocket connections');
@@ -545,11 +526,24 @@ export class WsRegistry {
     }
   }
 
-  /** @internal Returns the connection slot held by an upgrade's data object, if any. */
+  /**
+   * @internal Returns the connection slot held by an upgrade's data object, if any. While a
+   * holdSlot() of it is pending, the slot is returned only when the last hold is done.
+   */
   release(data: object): void {
     this.endUpgrade(data);
     this.#expiredSlots.delete(data);
-    this.#giveBack(data);
+    this.#slots.release(data);
+  }
+
+  /**
+   * @internal Keeps the slot of a socket's data taken while work for the socket is pending (an
+   * endpoint's connection handshake), even after the socket closes, so clients that disconnect
+   * cannot pile up that work past the connection limits. Returns `done`, which ends the hold
+   * (idempotent); a socket that closed meanwhile then gives its slot back.
+   */
+  holdSlot(data: object): () => void {
+    return this.#slots.hold(data);
   }
 
   get(path: string): WsEndpoint | undefined {
@@ -851,4 +845,16 @@ export class WsRegistry {
       return false;
     }
   }
+
+  static {
+    slotsOf = (registry) => registry.#slots;
+  }
+}
+
+/**
+ * @internal The connection slots of `registry`, which StreamRegistry shares. Exported from this
+ * module only (not from the package), so applications cannot reach the slots.
+ */
+export function connectionSlotsOf(registry: WsRegistry): ConnectionSlots {
+  return slotsOf(registry);
 }

@@ -6,6 +6,7 @@ import { HttpConfigError, TooManyRequestsException } from '../src/exceptions.js'
 import { APP_GUARD, originAllowed } from '../src/index.js';
 import { LOGGER, MemoryLogger } from '../src/logger.js';
 import {
+  normalizeAllowedOrigins,
   type WsData,
   type WsEndpoint,
   type WsEndpointOptions,
@@ -189,6 +190,35 @@ describe('WebSocket origin check', () => {
     const ws = await registry();
     expect(() => ws.register('/x', { upgrade: () => ({}) }, { allowedOrigins: ['nope'] })).toThrow(
       HttpConfigError,
+    );
+  });
+
+  test('a non-array allowedOrigins is a configuration error naming the endpoint', async () => {
+    const ws = await registry();
+    for (const value of ['https://app.example', 1, null, { 0: 'https://app.example' }]) {
+      expect(() =>
+        ws.register(
+          '/s',
+          { upgrade: () => ({}) },
+          {
+            allowedOrigins: value as unknown as string[],
+          },
+        ),
+      ).toThrow(
+        `allowedOrigins for WebSocket endpoint /s must be an array of origins or "*"; got ${JSON.stringify(value)}.`,
+      );
+    }
+  });
+
+  test('normalizeAllowedOrigins returns a normalized copy', () => {
+    const entries = ['https://App.Example', 'http://localhost:5173'];
+    const normalized = normalizeAllowedOrigins('test', entries);
+    entries.push('https://evil.example');
+    expect(normalized).toEqual(new Set(['https://app.example', 'http://localhost:5173']));
+    expect(normalizeAllowedOrigins('test', '*')).toBe('*');
+    expect(normalizeAllowedOrigins('test', undefined)).toBeUndefined();
+    expect(() => normalizeAllowedOrigins('GraphQL endpoint /graphql', ['nope'])).toThrow(
+      'Invalid allowedOrigins entry for GraphQL endpoint /graphql: "nope"',
     );
   });
 

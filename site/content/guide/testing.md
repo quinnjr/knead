@@ -174,6 +174,10 @@ Errors arrive in `res.errors`, with the code in `extensions.code`:
 Both methods take `variables`, `operationName`, `headers` and `path` (default `'/graphql'`).
 `graphqlSubscribe()` also takes `connectionParams`, sent as the `connection_init` payload: that is
 where a subscription sends its credentials, since browsers cannot set headers on a WebSocket.
+`app.subscribeSse(query, options)` subscribes over [SSE](/guide/graphql/#subscriptions-over-sse)
+instead, with the same options as `graphql()`: send credentials in `headers`, since `onConnect`
+gets `{}` over SSE. It returns the same iterator, and a stream that ends without `complete` (a
+revoked or expired one) makes `next()` reject with `SSE stream ended without a complete event`.
 
 ### Subscriptions
 

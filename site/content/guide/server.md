@@ -24,7 +24,7 @@ are:
 | `overrides` | `Iterable<readonly [Token, Provider]>` | none | Replaces non-multi providers by token, in every module. A `LOGGER` entry here wins over `logger`. Used by [testing](/guide/testing/). |
 
 The factory also registers `HttpCoreModule`, a global module that provides `WsRegistry` and
-`ErrorLog` to every module; `HTTP_DEVELOPMENT` comes from the application context. See [logging](/guide/logging/) for loggers.
+`ErrorLog` (and the framework-internal `StreamRegistry`) to every module; `HTTP_DEVELOPMENT` comes from the application context. See [logging](/guide/logging/) for loggers.
 
 ## Listening
 
@@ -43,7 +43,7 @@ are an `HttpConfigError` here), constructs middleware, guards and filters, and r
 | `trustProxy` | `false \| number \| readonly string[]` | `false` | Which proxies' `X-Forwarded-*` headers to believe. See [proxies](#running-behind-a-proxy). |
 | `maxRequestBodySize` | `number` | `1048576` (1 MiB) | Largest request body in bytes; a larger one gets `413`. An integer of at least 1. |
 | `maxParams` | `number` | `1000` | Most query parameters (more is a `400`) or urlencoded or multipart body fields (more is a `413`) parsed per request. An integer of at least 1. |
-| `idleTimeout` | `number` | Bun's default (10 seconds) | Seconds a connection may be idle before Bun closes it. An integer from 0 to 255. |
+| `idleTimeout` | `number` | Bun's default (10 seconds) | Seconds a connection may be idle before Bun closes it. An integer from 0 to 255. Streaming responses send keep-alives below it (see [GraphQL SSE](/guide/graphql/#keep-alive-and-the-idle-timeout)). |
 | `defaultCacheControl` | `string` | none | `Cache-Control` value added to responses that have none, for example `'no-store'`, including the `421` and masked `500` answers of both listeners. |
 | `validation` | `ValidationOptions` | `{}` | `{ redactIssueMessages: true }` makes validation issue messages generic. See [validation](/guide/validation/). |
 | `websocket` | `WsServerOptions` | `WS_DEFAULTS` | Server-wide WebSocket limits. See [WebSockets](/guide/websockets/#limits). |
@@ -87,7 +87,9 @@ middleware, guard or filter class) has already closed the application, and canno
 1. If `listen()` is still initializing, wait for it, for at most `shutdownTimeout`. Past that,
    the listen is abandoned and rejects without binding.
 2. Stop accepting connections, and stop the `redirectHttp` listener.
-3. Wait until in-flight requests finish, for at most `shutdownTimeout` milliseconds.
+3. End open streaming responses that hold a connection slot (such as
+   [GraphQL SSE subscriptions](/guide/graphql/#subscriptions-over-sse)), then wait until in-flight
+   requests finish, for at most `shutdownTimeout` milliseconds.
 4. Close open WebSockets with code `1001` (`Server shutting down`), then close the remaining
    connections.
 5. Run `beforeApplicationShutdown(signal)` and `onModuleDestroy()` hooks, in reverse

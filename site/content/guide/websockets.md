@@ -152,6 +152,10 @@ as `WS_DEFAULTS`:
 Invalid values are an `HttpConfigError` at `listen()`, for example
 `WebSocket maxPayloadLength must be an integer >= 1, got 0.`
 
+Open [GraphQL SSE subscription streams](/guide/graphql/#subscriptions-over-sse) count against
+`maxConnectionsPerIp` and `maxConnections` too, sharing the slots with sockets (their refusals read
+`Too many streaming connections`).
+
 > [!WARNING]
 > Behind a reverse proxy without [`trustProxy`](/guide/server/#running-behind-a-proxy), every
 > client has the proxy's IP, so `maxConnectionsPerIp` caps all clients together at 100 sockets.
@@ -162,7 +166,9 @@ The per-IP count uses `ctx.ip`, in which an IPv4-mapped IPv6 address is its IPv4
 connection slot is taken just before the socket is upgraded and given back when it closes, or
 right away when the upgrade fails. An upgrade whose socket has not opened after 30 seconds gives
 its slot back too, so aborted upgrades cannot exhaust the limits; a socket that opens later takes
-a slot again, or is closed with `1013` when none is free.
+a slot again, or is closed with `1013` when none is free. A
+[GraphQL subscription socket](/guide/graphql/#the-websocket-transport) that closes while its
+`onConnect` is pending gives its slot back only once `onConnect` settles.
 
 ## Revoking sockets
 

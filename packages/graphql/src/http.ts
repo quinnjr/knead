@@ -5,7 +5,6 @@ import {
   type Ctx,
   Get,
   type GuardRef,
-  MethodNotAllowedException,
   Post,
   requestUrl,
   UnsupportedMediaTypeException,
@@ -13,9 +12,15 @@ import {
 import type { GraphQLRequest } from '@leaven-graphql/core';
 import type { OperationKind } from './context.js';
 import { queryTooLongMessage } from './options.js';
-import { GraphQLRuntime, rejectionMessage } from './runtime.js';
-
-export const GRAPHQL_RESPONSE_JSON = 'application/graphql-response+json';
+import {
+  acceptQuality,
+  GRAPHQL_RESPONSE_JSON,
+  jsonHeaders,
+  noDataStatus,
+  throwRejected,
+} from './responses.js';
+import { GraphQLRuntime, sseCarriesSubscriptions } from './runtime.js';
+import { assertSseOrigin, handleSse, wantsEventStream } from './sse.js';
 
 /**
  * Route-meta key on the GraphQL endpoint (its POST and GET routes, so also subscription upgrades).
@@ -66,24 +71,6 @@ export function parseGraphQLParams(
   return request;
 }
 
-/** The q value Accept gives `type`: an exact range wins over a type wildcard, then any. */
-export function acceptQuality(accept: string | null, type: string, exact = false): number {
-  if (accept === null || accept.trim() === '') return type === 'application/json' ? 1 : 0;
-  const major = `${type.split('/')[0]}/*`;
-  let best = -1;
-  let specificity = -1;
-  for (const part of accept.split(',')) {
-    const [range, ...params] = part.split(';').map((p) => p.trim().toLowerCase());
-    const rank = range === type ? 2 : exact ? -1 : range === major ? 1 : range === '*/*' ? 0 : -1;
-    if (rank < specificity || rank < 0) continue;
-    const q = params.find((p) => p.startsWith('q='));
-    const quality = q ? Number(q.slice(2)) : 1;
-    if (rank > specificity || quality > best) best = Number.isFinite(quality) ? quality : 0;
-    specificity = rank;
-  }
-  return Math.max(best, 0);
-}
-
 /**
  * True when the client names application/graphql-response+json explicitly and does not prefer
  * application/json; wildcards alone keep the legacy application/json.
@@ -131,39 +118,33 @@ async function execute(
   op.operationName = request.operationName;
   const { response } = await runtime.executor.execute(request, op);
   // The operation type is checked by a Leaven onExecute hook on the document Leaven parsed.
-  if (op.rejectedOperation) {
-    const message = rejectionMessage(op.rejectedOperation, allowed);
-    if (op.rejectedOperation === 'subscription' && ctx.req.method !== 'GET') {
-      throw new BadRequestException(message);
-    }
-    throw new MethodNotAllowedException(message, { headers: { allow: 'POST' } });
-  }
+  throwRejected(op.rejectedOperation, allowed, ctx.req.method, sseCarriesSubscriptions(runtime));
   const graphqlJson = prefersGraphQLResponse(ctx.req.headers.get('accept'));
   // application/json: always 200. application/graphql-response+json: no data entry is 400 for
   // a request error and 500 only for a server failure (INTERNAL_SERVER_ERROR). normalizeResponse
   // has already rewritten Leaven's codes: BAD_REQUEST is BAD_USER_INPUT (400), INTERNAL_ERROR is
   // INTERNAL_SERVER_ERROR (500).
-  let status = 200;
-  if (graphqlJson && response.data === undefined) {
-    const internal = response.errors?.some((e) => e.extensions?.code === 'INTERNAL_SERVER_ERROR');
-    status = internal ? 500 : 400;
-  }
-  const headers: Record<string, string> = {
-    'content-type': `${graphqlJson ? GRAPHQL_RESPONSE_JSON : 'application/json'}; charset=utf-8`,
-    'x-content-type-options': 'nosniff',
-  };
-  const cacheControl = runtime.options.cacheControl;
-  if (cacheControl !== false) headers['cache-control'] = cacheControl;
+  const status = graphqlJson && response.data === undefined ? noDataStatus(response) : 200;
+  const headers = jsonHeaders(runtime, graphqlJson ? GRAPHQL_RESPONSE_JSON : 'application/json');
   return new Response(JSON.stringify(response), { status, headers });
 }
 
+/** Whether SSE is on and the request's Accept header prefers text/event-stream. */
+function sseRequested(runtime: GraphQLRuntime, ctx: Ctx): boolean {
+  return runtime.options.sse !== false && wantsEventStream(ctx.req.headers.get('accept'));
+}
+
 export async function handlePost(runtime: GraphQLRuntime, ctx: Ctx): Promise<Response> {
+  const sse = sseRequested(runtime, ctx);
+  // Before the body is read, as a WebSocket upgrade's origin is checked before its guards.
+  if (sse) assertSseOrigin(runtime, ctx);
   if (mediaType(ctx.req.headers.get('content-type')) !== 'application/json') {
     throw new UnsupportedMediaTypeException(
       'GraphQL POST requests must use Content-Type: application/json.',
     );
   }
   const request = parseGraphQLParams(await ctx.json(), runtime.options.maxQueryLength);
+  if (sse) return handleSse(runtime, ctx, request, 'POST');
   return execute(runtime, ctx, request, ['query', 'mutation']);
 }
 
@@ -175,6 +156,8 @@ export async function handleGet(runtime: GraphQLRuntime, ctx: Ctx): Promise<Resp
       : undefined;
     return runtime.playground.serve(options.path, ws);
   }
+  const sse = sseRequested(runtime, ctx);
+  if (sse) assertSseOrigin(runtime, ctx);
   if (options.csrf !== false) {
     const required = options.csrf.requiredHeaders;
     if (!required.some((name) => ctx.req.headers.has(name))) {
@@ -193,6 +176,7 @@ export async function handleGet(runtime: GraphQLRuntime, ctx: Ctx): Promise<Resp
     },
     options.maxQueryLength,
   );
+  if (sse) return handleSse(runtime, ctx, request, 'GET');
   return execute(runtime, ctx, request, ['query']);
 }
 

@@ -1,5 +1,6 @@
 import type { ModuleInjector, Type } from '@knead-js/core';
 import type { Ctx } from '@knead-js/http';
+import { type ErrorCode, LeavenError } from '@leaven-graphql/errors';
 import DataLoader from 'dataloader';
 import type { GraphQLResolveInfo } from 'graphql';
 
@@ -48,6 +49,19 @@ export interface SubscriptionCtx<A = {}, P = unknown> extends ResolverCtx<A, P> 
   readonly [SUBSCRIPTION_EVENT]?: true;
 }
 
+/**
+ * @internal Thrown by an OperationContext's `beforeExecute` to stop the executor call before the
+ * operation runs (the caller answers the request another way). The hooks' onError does not report
+ * it, and as a LeavenError it is not logged as an internal failure.
+ */
+export class ExecutionHandoff extends LeavenError {
+  constructor() {
+    super('The operation is handled by another call.', 'BAD_USER_INPUT' as ErrorCode, {
+      statusCode: 400,
+    });
+  }
+}
+
 /** @internal One per GraphQL operation; graphql-js passes it to every resolver as contextValue. */
 export class OperationContext {
   readonly state: Record<PropertyKey, unknown> = {};
@@ -59,6 +73,11 @@ export class OperationContext {
   operationName: string | undefined;
   /** Set when the executed document's operation was not allowed on this transport. */
   rejectedOperation: OperationKind | undefined;
+  /**
+   * Run by the onExecute check with the type of the operation about to run, once it is allowed and
+   * before the application's onExecute (GraphQL over SSE dispatches on it). A throw ends the call.
+   */
+  beforeExecute: ((operation: OperationKind) => Promise<void>) | undefined;
 
   constructor(
     readonly http: Ctx,

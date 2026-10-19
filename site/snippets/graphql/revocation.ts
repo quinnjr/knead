@@ -8,7 +8,7 @@ export class SignOutService {
   readonly #sessions = inject(SessionService);
   readonly #subscriptions = inject(GraphQLSubscriptions);
 
-  /** Ends the token and every subscription socket opened with it; returns how many closed. */
+  /** Ends the token and the subscription sockets and SSE streams opened with it; returns how many. */
   signOut(token: string, memberId: string): number {
     this.#sessions.revoke(token);
     return this.#subscriptions.closeWhere(({ context }) => {

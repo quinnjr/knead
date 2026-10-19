@@ -176,7 +176,24 @@ describe('@UseFieldGuards on types that cannot run them', () => {
 });
 
 describe('subscription fields outside a subscription', () => {
-  test('executing a subscription document runs neither guards nor the method', async () => {
+  for (const [label, options, message] of [
+    [
+      'SSE on',
+      {},
+      'Subscriptions are only available over WebSocket or with Accept: text/event-stream.',
+    ],
+    [
+      'sse: false',
+      { subscriptions: { sse: false } },
+      'Subscriptions are only available over WebSocket.',
+    ],
+  ] as const) {
+    test(`executing a subscription document runs neither guards nor the method (${label})`, async () => {
+      await executeSubscriptionAsQuery(options, message);
+    });
+  }
+
+  async function executeSubscriptionAsQuery(options: object, message: string) {
     let calls = 0;
     let guarded = 0;
     @Resolver()
@@ -200,17 +217,17 @@ describe('subscription fields outside a subscription', () => {
     }
     @Module({ providers: [R] })
     class M {}
-    s = await startGraphQL([M]);
+    s = await startGraphQL([M], options);
     const runtime = s.mod.get(GraphQLRuntime);
     const op = new OperationContext({} as Ctx, {}, ['query', 'subscription']);
     const { response } = await runtime.executor.execute({ query: 'subscription { t }' }, op);
     expect(response.errors?.[0]).toMatchObject({
-      message: 'Subscriptions are only available over WebSocket.',
+      message,
       extensions: { code: 'BAD_USER_INPUT' },
     });
     expect(calls).toBe(0);
     expect(guarded).toBe(0);
-  });
+  }
 });
 
 describe('computed subscription topics', () => {

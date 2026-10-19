@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Module } from '@knead-js/core';
-import { APP_GUARD, type Ctx, originAllowed } from '@knead-js/http';
+import { APP_GUARD, type Ctx, originAllowed, WsRegistry } from '@knead-js/http';
 import { RateLimitModule } from '@knead-js/rate-limit';
 import { Int, Mutation, PUBSUB, type PubSub, Query, Resolver, Subscription } from '../src/index.js';
 import { type Started, startGraphQL, until, upgradeStatus } from './helpers.js';
@@ -192,6 +192,15 @@ describe('graphql-transport-ws handshake', () => {
     expect(closed.code).toBe(4403);
     expect(socket.messages).toEqual([]);
     expect(calls).toBe(1);
+    expect(
+      s.mod.logs.some(
+        (e) =>
+          e.level === 'error' &&
+          e.message.includes(
+            'GraphQL context factory threw at connection_init; rejecting the WebSocket connection',
+          ),
+      ),
+    ).toBe(true);
   });
 
   test('frame checks see a type written with JSON escapes', async () => {
@@ -246,5 +255,145 @@ describe('graphql-transport-ws handshake', () => {
     );
     expect(await socket.closed).toEqual({ code: 4409, reason: 'Subscriber for 1 already exists' });
     expect(socket.messages).toEqual([{ type: 'connection_ack' }]);
+  });
+
+  test('a socket closed during onConnect keeps its slot until onConnect settles', async () => {
+    let calls = 0;
+    let pending = 0;
+    let most = 0;
+    const settles: Array<(value: boolean) => void> = [];
+    s = await startGraphQL(
+      [M],
+      {
+        subscriptions: {
+          onConnect: () => {
+            calls++;
+            pending++;
+            most = Math.max(most, pending);
+            return new Promise<boolean>((resolve) => {
+              settles.push((value) => {
+                pending--;
+                resolve(value);
+              });
+            });
+          },
+        },
+      },
+      [],
+      { websocket: { maxConnectionsPerIp: 1 } },
+    );
+    const url = new URL('/graphql', s.app.url);
+    url.protocol = 'ws:';
+    const ws = new WebSocket(url, 'graphql-transport-ws');
+    await new Promise((resolve, reject) => {
+      ws.onopen = resolve;
+      ws.onerror = reject;
+    });
+    ws.send(JSON.stringify({ type: 'connection_init', payload: {} }));
+    await until(() => calls === 1);
+    const closed = new Promise((resolve) => {
+      ws.onclose = resolve;
+    });
+    ws.close();
+    await closed;
+    // Open-and-close cycles cannot pile up onConnect calls: the closed socket still holds the slot.
+    for (let i = 0; i < 20; i++) expect(await upgradeStatus(s.app)).toBe(429);
+    expect(most).toBe(1);
+    expect(calls).toBe(1);
+    settles[0]!(true);
+    await until(async () => (await upgradeStatus(s!.app)) === 101);
+  });
+
+  test('a socket closed by connectionInitTimeout keeps its slot until onConnect settles', async () => {
+    const settle = Promise.withResolvers<boolean>();
+    let calls = 0;
+    s = await startGraphQL(
+      [M],
+      {
+        subscriptions: {
+          connectionInitTimeout: 100,
+          onConnect: () => {
+            calls++;
+            return settle.promise;
+          },
+        },
+      },
+      [],
+      { websocket: { maxConnectionsPerIp: 1 } },
+    );
+    const url = new URL('/graphql', s.app.url);
+    url.protocol = 'ws:';
+    const ws = new WebSocket(url, 'graphql-transport-ws');
+    await new Promise((resolve, reject) => {
+      ws.onopen = resolve;
+      ws.onerror = reject;
+    });
+    const closed = new Promise<{ code: number; reason: string }>((resolve) => {
+      ws.onclose = (event) => resolve({ code: event.code, reason: event.reason });
+    });
+    ws.send(JSON.stringify({ type: 'connection_init', payload: {} }));
+    expect(await closed).toEqual({ code: 4408, reason: 'Connection initialization timeout' });
+    expect(calls).toBe(1);
+    expect(await upgradeStatus(s.app)).toBe(429);
+    const logged = (level: string, text: string) =>
+      s!.mod.logs.some((e) => e.level === level && e.message.includes(text));
+    // The slot is held past the timeout, and the warning says so.
+    await until(() =>
+      logged(
+        'warn',
+        'GraphQL WebSocket subscription: the context factory or onConnect is still pending after 100 ms; its connection slot stays held until it settles.',
+      ),
+    );
+    settle.resolve(true);
+    await until(() => logged('debug', 'GraphQL WebSocket subscription: the pending context'));
+    await until(async () => (await upgradeStatus(s!.app)) === 101);
+  });
+
+  test('onConnect is skipped for a socket closed while the context factory runs', async () => {
+    let factories = 0;
+    let settled = 0;
+    let connects = 0;
+    const gate = Promise.withResolvers<void>();
+    s = await startGraphQL(
+      [M],
+      {
+        context: async () => {
+          factories++;
+          await gate.promise;
+          settled++;
+          return {};
+        },
+        subscriptions: {
+          onConnect: () => {
+            connects++;
+            return true;
+          },
+        },
+      },
+      [],
+      { websocket: { maxConnectionsPerIp: 1 } },
+    );
+    const url = new URL('/graphql', s.app.url);
+    url.protocol = 'ws:';
+    const ws = new WebSocket(url, 'graphql-transport-ws');
+    await new Promise((resolve, reject) => {
+      ws.onopen = resolve;
+      ws.onerror = reject;
+    });
+    ws.send(JSON.stringify({ type: 'connection_init', payload: {} }));
+    await until(() => factories === 1);
+    const closed = new Promise((resolve) => {
+      ws.onclose = resolve;
+    });
+    ws.close();
+    await closed;
+    // The server saw the close (its close handler marks the connection gone in the same tick).
+    const registry = s.mod.get(WsRegistry);
+    await until(() => registry.openSockets === 0);
+    gate.resolve();
+    await until(() => settled === 1);
+    // The slot comes back once the handshake settled: onConnect would have run by then.
+    await until(async () => (await upgradeStatus(s!.app)) === 101);
+    expect(connects).toBe(0);
   });
 });

@@ -1,8 +1,10 @@
 // End-to-end smoke test: starts `bun src/main.ts` as a child process and talks to it over the
-// real network with fetch, a graphql-transport-ws WebSocket and a raw TCP upgrade request.
+// real network with fetch, a graphql-transport-ws WebSocket, a graphql-sse event stream and a raw
+// TCP upgrade request.
 // Usage: bun scripts/smoke.ts (set REDIS_URL to exercise RedisPubSub).
 import { createConnection, createServer } from 'node:net';
 import { fileURLToPath } from 'node:url';
+import { readSse } from '@knead-js/testing';
 
 const RATE_LIMIT = 40;
 const FRONTEND = 'http://localhost:5173';
@@ -131,6 +133,55 @@ function subscribe(query: string, variables: object, token: string) {
     };
   });
   return { ws, events, ready };
+}
+
+/** POSTs an operation asking for text/event-stream (graphql-sse), with a 5 s limit to respond. */
+async function sseRequest(query: string, variables: object, token?: string) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  try {
+    return await fetch(`${base}/graphql`, {
+      method: 'POST',
+      headers: {
+        accept: 'text/event-stream',
+        'content-type': 'application/json',
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ query, variables }),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error('no SSE response within 5 s');
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Collects the `next` payloads of an event stream until `complete` or the body ends. A read or
+ * JSON error is kept in `failure` so the assertion can report it.
+ */
+function sseEvents(res: Response) {
+  const events: GqlBody[] = [];
+  const stream = readSse(res);
+  const state: { failure?: unknown } = {};
+  const done = (async () => {
+    for await (const { event, data } of stream) {
+      if (event === 'complete') return;
+      if (event === 'next') events.push(JSON.parse(data) as GqlBody);
+    }
+  })().catch((error: unknown) => {
+    state.failure = error;
+  });
+  return {
+    events,
+    done,
+    state,
+    close: async () => {
+      await stream.return?.();
+    },
+  };
 }
 
 /** Sends a WebSocket upgrade over raw TCP and returns the HTTP status line. */
@@ -313,6 +364,51 @@ try {
     } finally {
       ws.close();
     }
+  });
+
+  await check('SSE subscription receives an event triggered over HTTP', async () => {
+    const res = await sseRequest(
+      'subscription($a: ID) { postPublished(authorId: $a) { title author { name } } }',
+      { a: 'a2' },
+      'ada-token',
+    );
+    if (res.status !== 200) throw new Error(`status ${res.status}: ${await res.text()}`);
+    const type = res.headers.get('content-type');
+    assert(type?.startsWith('text/event-stream'), `content-type ${type}`);
+    const sub = sseEvents(res);
+    try {
+      for (let i = 1; i <= 10 && sub.events.length === 0; i++) {
+        await gql(
+          'mutation($i: CreatePostInput!) { createPost(input: $i) { id } }',
+          { i: { title: `SSE by Ada ${i}`, body: 'x', publish: true } },
+          'ada-token',
+        );
+        await gql(
+          'mutation($i: CreatePostInput!) { createPost(input: $i) { id } }',
+          { i: { title: `SSE by Grace ${i}`, body: 'x', publish: true } },
+          'grace-token',
+        );
+        await Bun.sleep(50);
+      }
+      const event = sub.events[0];
+      assert(
+        event,
+        `no event received${sub.state.failure ? `: ${String(sub.state.failure)}` : ''}`,
+      );
+      assert(!event.errors, JSON.stringify(event.errors));
+      const post = event.data.postPublished;
+      assert(post.author.name === 'Grace Hopper', `filter failed: ${JSON.stringify(post)}`);
+      return `got "${post.title}" via ${pubsub}`;
+    } finally {
+      await sub.close();
+    }
+  });
+
+  await check('SSE subscription without a token is refused with 403', async () => {
+    const res = await sseRequest('subscription { postPublished { id } }', {});
+    const body = (await res.json()) as GqlBody;
+    const code = body.errors?.[0]?.extensions?.code;
+    assert(res.status === 403 && code === 'FORBIDDEN', `got ${res.status} ${code}`);
   });
 
   await check('cross-origin WebSocket upgrade is rejected with 403', async () => {

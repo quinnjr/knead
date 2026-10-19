@@ -174,6 +174,49 @@ describe('options validated at bootstrap', () => {
       GraphQLModule.forRoot({ subscriptions: { maxConnectionLifetime: 2 ** 31 - 1 } }),
     ).not.toThrow();
   });
+
+  test('sse defaults on with no explicit keep-alive (each stream derives one)', () => {
+    expect(resolveOptions({}, '/graphql').sse).toEqual({ keepAliveInterval: undefined });
+    expect(resolveOptions({ subscriptions: { sse: {} } }, '/graphql').sse).toEqual({
+      keepAliveInterval: undefined,
+    });
+    expect(
+      resolveOptions({ subscriptions: { sse: { keepAliveInterval: 500 } } }, '/graphql').sse,
+    ).toEqual({ keepAliveInterval: 500 });
+  });
+
+  test('subscriptions.sse other than false or an object is an HttpConfigError', () => {
+    for (const sse of [true, 'on', null, 1]) {
+      expect(() => GraphQLModule.forRoot({ subscriptions: { sse: sse as never } })).toThrow(
+        HttpConfigError,
+      );
+      expect(() => GraphQLModule.forRoot({ subscriptions: { sse: sse as never } })).toThrow(
+        'GraphQL subscriptions.sse must be false or an object',
+      );
+    }
+  });
+
+  test('subscriptions: false turns sse off', () => {
+    expect(resolveOptions({ subscriptions: false }, '/graphql').sse).toBe(false);
+  });
+
+  test('subscriptions.sse: false turns only sse off', () => {
+    const o = resolveOptions({ subscriptions: { sse: false } }, '/graphql');
+    expect(o.sse).toBe(false);
+    expect(typeof o.subscriptions).toBe('object');
+  });
+
+  test('sse.keepAliveInterval must be an integer from 1 to 2 ** 31 - 1', () => {
+    for (const value of [0, -1, 1.5, '8000' as never, 2 ** 31, Number.NaN]) {
+      expect(() =>
+        GraphQLModule.forRoot({ subscriptions: { sse: { keepAliveInterval: value } } }),
+      ).toThrow(HttpConfigError);
+    }
+    expect(() =>
+      GraphQLModule.forRoot({ subscriptions: { sse: { keepAliveInterval: 2 ** 31 - 1 } } }),
+    ).not.toThrow();
+    expect(() => GraphQLModule.forRoot({ subscriptions: { sse: false } })).not.toThrow();
+  });
 });
 
 describe('GraphQLModule', () => {

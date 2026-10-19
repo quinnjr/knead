@@ -1,6 +1,6 @@
 ---
 title: GraphQL
-description: Build a code-first GraphQL API from decorated classes, with resolvers that use dependency injection, subscriptions over WebSocket and production-safe limits.
+description: Build a code-first GraphQL API from decorated classes, with resolvers that use dependency injection, subscriptions over WebSocket and SSE, and production-safe limits.
 ---
 
 `@knead-js/graphql` builds a GraphQL schema from TC39-decorated classes and serves it with the
@@ -444,8 +444,9 @@ once, when the operation subscribes.
 
 Subscriptions use the `graphql-transport-ws` protocol on the GraphQL path. The socket runs
 subscription operations only: a query or mutation sent over it gets the error
-`Only subscription operations are allowed over WebSocket.` and never executes. Over HTTP, a
-subscription is a `400`.
+`Only subscription operations are allowed over WebSocket.` and never executes. Over HTTP (without
+[SSE](#subscriptions-over-sse)), a subscription is a `400`; when SSE is on and the schema has a
+Subscription type, its message also points at `Accept: text/event-stream`.
 
 Browsers cannot set an `Authorization` header on a WebSocket, so a client sends its credentials as
 `connectionParams` in `connection_init`. `subscriptions.onConnect(http, params)` receives them:
@@ -458,11 +459,150 @@ token this way.
 > itself or a spread of it, or the client chooses its own context (`member`, roles). The
 > `ConnectionParams` type makes returning or spreading it a compile error.
 
+The `context` factory and `onConnect` must settle within `subscriptions.connectionInitTimeout`
+(default 3000 ms, counted from `connection_init`), or the socket is closed with `4408`
+(`Connection initialization timeout`, and a warning is logged: the socket's slot stays held until
+they settle). A socket that closes while they are pending keeps its connection slot until they
+settle, so clients cannot pile up pending `onConnect` work past `maxConnectionsPerIp` by
+connecting and disconnecting, and `onConnect` is skipped when the socket closed while the factory
+ran.
+
 Browser upgrades must come from the server's own origin, or from one of
 `subscriptions.allowedOrigins` (`'*'` allows any); others get `403`. Upgrades without an `Origin`
 header (non-browser clients) are allowed. The upgrade request also passes global middleware and
 global guards; see [WebSockets](/guide/websockets/) for the origin rules behind proxies and the
 socket limits.
+
+### Subscriptions over SSE
+
+The GraphQL path also speaks [graphql-sse](https://github.com/enisdenjo/graphql-sse) (Server-Sent
+Events) in distinct connections mode: one HTTP request, one operation, one event stream. It is on
+by default, and it works where WebSockets are blocked or awkward, such as some proxies, serverless
+and edge hosts. A `POST` or `GET` is answered over SSE when its `Accept` header prefers
+`text/event-stream` strictly over `application/json` and `application/graphql-response+json`.
+`Accept: */*` alone, or a tie, keeps the JSON response, so existing clients are unaffected.
+
+- A subscription streams each result as an `event: next`, then `event: complete` when it ends.
+- A query or a mutation answers one `next` and then `complete`.
+- A mutation over `GET` is `405` with `Allow: POST`, as over HTTP.
+- Streams carry `cacheControl` (default `no-store`) and `X-Content-Type-Options: nosniff`, as
+  JSON responses do.
+
+The request is an ordinary request to the route, so global middleware and guards, the endpoint's
+`guards`, the body and query limits and the `context` factory apply. The subscription itself
+behaves as over WebSocket: root, `authorize` and field guards, `recheckGuards` with
+`refreshContext`, the `filter`, fresh per-event state, the topic rules and error masking. The
+playground keeps using WebSocket.
+
+The document goes through Leaven once: it is parsed (after the application's `onParse` hook),
+checked against Knead's limits and validated, and only then does the operation type decide what
+happens. A query or mutation runs at once, its `context` factory called just before (so after
+parsing and validation, where the JSON path runs it first); a subscription takes its connection
+slot and runs `onConnect` (below). So a document that fails a limit or validation never takes a
+slot or runs `onConnect`, and the pre-execution hooks run once per request. A
+`runtime.executor` call your guards, resolvers or hooks make is its own request: it goes through
+the limits and every hook.
+
+To keep subscriptions on WebSocket only, set `subscriptions.sse` to `false`; a request asking for
+`text/event-stream` then gets the usual JSON response:
+
+<<< graphql/sse.ts#opt-out title="app.module.ts"
+
+`subscriptions: false` turns off both transports. A schema without a Subscription type keeps SSE
+for queries and mutations.
+
+#### Authenticating SSE subscriptions
+
+graphql-sse has no `connection_init`, so `onConnect` runs once per SSE subscription request, after
+the `context` factory, with the request's `Ctx` and `{}` as `params`. Queries and mutations over SSE
+do not run it: they get the `context` factory alone, as over HTTP. An object result is merged over
+the context; `false`, a throw (logged) or a throwing `context` factory answers `403` with a JSON
+body (`{"errors":[{"message":"Forbidden","extensions":{"code":"FORBIDDEN"}}]}`) before any stream
+starts. An `onConnect` that reads only `params` therefore refuses every SSE subscription: read the
+`Authorization` header or a session cookie from `http.req.headers` as well, as the `app.module.ts`
+above does.
+
+An SSE request with an `Origin` header must come from the server's own origin or one of
+`subscriptions.allowedOrigins`, as for WebSocket upgrades; others get `403`, checked before the body
+or the CSRF header is read, and requests without `Origin` are allowed. A `GET` must carry one of `csrf.requiredHeaders`, as every `GET` does (`400`
+otherwise). The `graphql-sse` client sends a `POST` with `fetch`, which needs no CSRF header
+(`Content-Type: application/json` already forces a CORS preflight) and can carry an
+`Authorization` header. A bare browser `EventSource` sends a `GET` and cannot set headers, so it
+only works with `csrf: false`, which turns the check off for every `GET` on the endpoint, JSON
+queries included.
+
+#### Limits, revocation and lifetime
+
+- An open subscription stream holds a connection slot shared with WebSockets: the same
+  `listen({ websocket: { maxConnectionsPerIp } })` (default 100, `429` past it) and
+  `maxConnections` (`503`), answered as `application/problem+json` before the stream starts. The
+  slot is taken before the `context` factory and `onConnect` run and given back only once they
+  have settled, even when the client aborts first, so clients cannot pile up pending `onConnect`
+  work (database or token lookups) past the limits by opening and aborting requests. A request
+  already aborted runs neither, and one aborted while the factory runs skips `onConnect`. Past
+  `subscriptions.connectionInitTimeout` (default 3000 ms) a pending request answers `503`, and its
+  slot still comes back only when `onConnect` settles: a warning is logged then (over WebSocket
+  too), and a debug line once the pending work settles. After that, the slot is given back when the
+  stream ends or the client disconnects (which also ends the subscription). Queries and mutations
+  over SSE finish at once and take no slot. A `subscription` on a schema without a Subscription
+  type is refused as over JSON (`400` over `POST`, `405` with `Allow: POST` over `GET`), without
+  running `onConnect`.
+- `GraphQLSubscriptions.closeWhere(predicate)` also ends the matching streams and counts them in
+  its result. A revoked stream ends **without** `complete`, so the client can tell it did not finish
+  normally. A stream still in `onConnect` is checked again when `onConnect` settles and then answers
+  `403`; one ended before `onConnect` settles (a predicate already matching on `http`, more than
+  `maxPendingRevocations` kept predicates, or shutdown) answers `503`.
+- `subscriptions.maxConnectionLifetime` ends a stream, also without `complete`, that long after it
+  took its slot, so the client reconnects and passes `onConnect` again.
+- `app.close()` ends every open stream at once, so streams never hold shutdown until
+  `shutdownTimeout`; a stream starting during shutdown gets `503`.
+
+#### Keep-alive and the idle timeout
+
+An open stream is an HTTP request, so Bun's `listen({ idleTimeout })` (10 seconds by default)
+closes it when it stays quiet. Streams are not exempt from it: they send a keep-alive comment (`:`)
+instead, and one comment as soon as the stream starts, so the client sees the response at once.
+Without `subscriptions.sse.keepAliveInterval`, the interval is half the `idleTimeout`, at most
+`SSE_MAX_KEEP_ALIVE` (8000 ms): 5000 ms with Bun's default, 8000 ms with `idleTimeout: 0`. Bun checks idle connections on a
+tick of about 4 seconds, so when the schema has a Subscription type:
+
+- an explicit `keepAliveInterval` above half a non-zero `idleTimeout` makes `listen()` throw an
+  `HttpConfigError`;
+- an `idleTimeout` of 1 to 4 seconds logs one warning at `listen()`, because Bun may close a quiet
+  stream at its next tick whatever the keep-alive. Use `idleTimeout` of 5 or more (or 0), or turn
+  SSE off.
+
+#### Request errors over SSE
+
+A request error, one rejected before any resolver ran, is answered as JSON
+(`Content-Type: application/json; charset=utf-8`, with `cacheControl`), never as a stream: `400`,
+or `500` when an error is `INTERNAL_SERVER_ERROR`. That covers syntax errors and the parser limits,
+Knead's limits (`maxDepth`, `maxFields`, `maxAliases`, `maxIntrospectionDepth`), validation,
+complexity, operation selection, variables that do not coerce, an `onParse`, `onParsed`,
+`onValidate` or `onValidated` hook that throws, and a document `cache` that throws (the `500`
+case: an `INTERNAL_SERVER_ERROR`, masked). Everything after execution started is streamed as a
+`next` carrying `errors`, then `complete`: a resolver error, an argument `validate` failure, a
+throwing `onExecute` or `onExecuted` hook, or `data: null`. Rejections before GraphQL runs (the
+origin and CSRF checks, a too-long query, a malformed body, the connection limits) are
+`application/problem+json`, as on any route.
+
+#### Clients
+
+The [`graphql-sse`](https://github.com/enisdenjo/graphql-sse) client's `createClient()`, given the
+GraphQL path as `url` (and `headers` for credentials), uses its default distinct connections mode.
+It treats every response other than `200` as a network error and retries it, up to `retryAttempts`
+times (default 5) with randomised exponential backoff. That is why only request errors get another
+status: nothing ran, so a retry is harmless, whereas an execution error answered that way would run
+a mutation again on every retry. Set `retryAttempts: 0` to surface request errors at once. A stream
+that ends without `complete` was revoked or expired: reconnect, which runs `onConnect` again.
+
+Without a library, `fetch` is enough. This client yields each result, ends on `complete`, and
+throws when the stream ends without it:
+
+<<< graphql/sse.ts#client title="sse-client.ts"
+
+In tests, `app.subscribeSse(query, options)` from `@knead-js/testing` does the same against the
+test server (see [testing](#testing)).
 
 ### Events
 
@@ -492,15 +632,17 @@ Three tools revoke access later:
   `FORBIDDEN`.
 - `subscriptions.maxConnectionLifetime` (milliseconds) closes every socket with `4408` after that
   long, so clients reconnect and pass `onConnect` again.
-- `GraphQLSubscriptions.closeWhere(predicate)` closes the sockets whose connection matches, for
-  example on sign-out:
+- `GraphQLSubscriptions.closeWhere(predicate)` closes the sockets (and ends the
+  [SSE streams](#limits-revocation-and-lifetime)) whose connection matches, for example on
+  sign-out:
 
 <<< graphql/revocation.ts#close-where title="sign-out.service.ts"
 
-`closeWhere` closes with code `1008` and reason `Connection revoked` by default and returns how many
-sockets it closed. `connection.context` is the `context` factory result (computed once, when the
-connection initializes) with the `onConnect` result merged over it. A socket still in `onConnect` is
-checked again when `onConnect` completes, so it cannot slip through.
+`closeWhere` closes sockets with code `1008` and reason `Connection revoked` by default and returns
+how many sockets and SSE streams it ended. `connection.context` is the `context` factory result
+(computed once, when the connection initializes) with the `onConnect` result merged over it. A
+socket or stream still in `onConnect` is checked again when `onConnect` completes, so it cannot
+slip through.
 
 ### Several instances
 
@@ -603,15 +745,17 @@ name, or a variable that does not coerce, is `BAD_USER_INPUT`.
   Every other client gets `application/json` and `200`, errors included.
 - Rejections before GraphQL runs (`415`, the CSRF check, a too-long query, a malformed body) are
   `application/problem+json` responses, like any other `@knead-js/http` error.
+- A client whose `Accept` prefers `text/event-stream` is answered over
+  [SSE](#subscriptions-over-sse) instead.
 
 ## Limits
 
-Every operation, over HTTP and WebSocket, is checked against these limits before it executes. The
-defaults are exported as `GRAPHQL_LIMITS`.
+Every operation, over HTTP, SSE and WebSocket, is checked against these limits before it
+executes. The defaults are exported as `GRAPHQL_LIMITS`.
 
 | Option | Default | Rejected with |
 | --- | --- | --- |
-| `maxQueryLength` | `102400` characters (100 KiB) | `400` over HTTP; an `error` message over WebSocket. Checked before parsing. |
+| `maxQueryLength` | `102400` characters (100 KiB) | `400` over HTTP and SSE; an `error` message over WebSocket. Checked before parsing. |
 | `parseOptions.maxTokens` | `3000` | A syntax error. Checked while parsing. |
 | `maxFields` | `1000` field selections | `FIELD_LIMIT` |
 | `maxDepth` | `10` | `DEPTH_LIMIT` |
@@ -694,7 +838,7 @@ sorts types and fields so the output is stable:
 `@knead-js/testing` starts the application on a random port and has GraphQL clients:
 `app.graphql(query, { variables, headers })` posts an operation, and
 `app.graphqlSubscribe(query, { connectionParams })` opens a `graphql-transport-ws` connection and
-yields each event.
+yields each event; `app.subscribeSse(query, { headers })` subscribes over SSE the same way.
 
 <<< graphql/blog.test.ts title="blog.test.ts"
 

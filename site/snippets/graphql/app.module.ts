@@ -12,14 +12,18 @@ import { SessionModule, SessionService } from './sessions.js';
       useFactory: () => {
         const sessions = inject(SessionService);
         return {
-          // Over HTTP: once per request. Over WebSocket: on connect and once per subscribe.
+          // Over HTTP: once per request. Over WebSocket and SSE subscriptions: on connect and
+          // once per subscribe.
           context: (http) => ({
             member: sessions.fromAuthorization(http.req.headers.get('authorization')),
           }),
           subscriptions: {
             // Browsers cannot set Authorization on a WebSocket: the token is a connectionParam.
-            onConnect: (_http, params) => {
-              const member = sessions.verify(params.token);
+            // Over SSE, params is {} and the request carries the Authorization header.
+            onConnect: (http, params) => {
+              const member =
+                sessions.verify(params.token) ??
+                sessions.fromAuthorization(http.req.headers.get('authorization'));
               return member ? { member } : false;
             },
           },

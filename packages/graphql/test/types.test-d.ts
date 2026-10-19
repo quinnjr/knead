@@ -9,7 +9,9 @@ import {
   defineUnion,
   Field,
   Float,
+  type GraphQLExecutor,
   type GraphQLModuleOptions,
+  type GraphQLRuntime,
   ID,
   Int,
   Mutation,
@@ -142,6 +144,9 @@ export class UserResolver {
 }
 
 export function typeAssertions(): void {
+  // runtime.executor is the exported GraphQLExecutor, with isRequestError.
+  assertType<Equal<GraphQLRuntime['executor'], GraphQLExecutor>>();
+  assertType<Equal<ReturnType<GraphQLExecutor['isRequestError']>, boolean>>();
   assertType<Equal<TsOf<typeof ID>, string>>();
   assertType<Equal<TsOf<typeof Int>, number>>();
   assertType<Equal<TsOf<StringConstructor>, string>>();
@@ -276,4 +281,20 @@ export const onConnectChecks: GraphQLModuleOptions[] = [
   { subscriptions: { onConnect: (_http, p) => ({ ...p }) } },
   // @ts-expect-error nor a promise of them
   { subscriptions: { onConnect: async (_http, p) => p } },
+];
+
+// subscriptions.sse is false or an options object; anything else is a type error (and an
+// HttpConfigError at bootstrap, see module.test.ts).
+export const sseChecks: GraphQLModuleOptions[] = [
+  { subscriptions: { sse: false } },
+  { subscriptions: { sse: {} } },
+  { subscriptions: { sse: { keepAliveInterval: 1000 } } },
+  // @ts-expect-error true is not an SSE options object
+  { subscriptions: { sse: true } },
+  // @ts-expect-error nor is a string
+  { subscriptions: { sse: 'on' } },
+  // @ts-expect-error nor null
+  { subscriptions: { sse: null } },
+  // @ts-expect-error nor a number
+  { subscriptions: { sse: 1 } },
 ];

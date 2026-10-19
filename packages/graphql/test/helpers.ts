@@ -1,4 +1,5 @@
 import type { ModuleImport, Provider } from '@knead-js/core';
+import type { ListenOptions } from '@knead-js/http';
 import { Test, type TestApp, type TestingModule } from '@knead-js/testing';
 import {
   GraphQLModule,
@@ -12,17 +13,21 @@ export interface Started {
   app: TestApp;
 }
 
-/** Boots an app with GraphQLModule.forRoot(options) plus `imports`, listening on a random port. */
+/**
+ * Boots an app with GraphQLModule.forRoot(options) plus `imports`, listening on a random port
+ * with `listen` (for example `{ websocket: { maxConnectionsPerIp: 1 } }`).
+ */
 export async function startGraphQL(
   imports: ModuleImport[],
   options: GraphQLModuleOptions = {},
   providers: Provider[] = [],
+  listen: ListenOptions = {},
 ): Promise<Started> {
   const mod = await Test.createModule({
     imports: [GraphQLModule.forRoot(options), ...imports],
     providers,
   }).compile({ development: false });
-  const app = await mod.createApp();
+  const app = await mod.createApp(listen);
   return { mod, app };
 }
 
