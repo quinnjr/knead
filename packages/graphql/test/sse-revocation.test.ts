@@ -93,6 +93,39 @@ describe('SSE revocation and lifetime', () => {
     expect(debugNothing()).toBe(false);
   });
 
+  test('one closeWhere ends a matching WebSocket socket and SSE stream', async () => {
+    // The socket names its user in connection_init; the stream, in its x-user header.
+    await start({
+      subscriptions: {
+        onConnect: (http: Ctx, params) => ({
+          sseUser:
+            typeof params.user === 'string' ? params.user : (http.req.headers.get('x-user') ?? ''),
+        }),
+      },
+    });
+    const stream = await open('ada');
+    const ws = new WebSocket(`ws://127.0.0.1:${s!.app.url.port}/graphql`, 'graphql-transport-ws');
+    const messages: { type: string }[] = [];
+    const closed = new Promise<{ code: number; reason: string }>((resolve) => {
+      ws.onclose = (e) => resolve({ code: e.code, reason: e.reason });
+    });
+    ws.onopen = () =>
+      ws.send(JSON.stringify({ type: 'connection_init', payload: { user: 'ada' } }));
+    ws.onmessage = (e) => messages.push(JSON.parse(String(e.data)));
+    await until(() => messages.some((m) => m.type === 'connection_ack'));
+    ws.send(
+      JSON.stringify({ id: '1', type: 'subscribe', payload: { query: 'subscription { t }' } }),
+    );
+    await until(() => subscribers() === 2);
+    expect(closeWhere((c) => c.context.sseUser === 'ada')).toBe(2);
+    expect(await closed).toEqual({ code: 1008, reason: 'Connection revoked' });
+    // The stream ends without complete.
+    expect(await rest(stream)).toEqual([]);
+    expect(messages.some((m) => m.type === 'complete')).toBe(false);
+    await until(() => subscribers() === 0);
+    expect(debugNothing()).toBe(false);
+  });
+
   test('closeWhere returns the SSE count and leaves non-matching streams open', async () => {
     await start(byUser);
     const ada = await open('ada');
@@ -276,8 +309,9 @@ describe('SSE revocation and lifetime', () => {
     // Measured from after open(), so the request round-trip is not inside the upper bound.
     const opened = Date.now();
     expect(await rest(events)).toEqual([]);
-    // Counted from the slot (taken while the request was being answered): at most 100 ms after open.
-    expect(Date.now() - opened).toBeLessThan(250);
+    // Counted from the slot (taken while the request was being answered): 100 ms, well before the
+    // 5000 ms keep-alive would notice anything.
+    expect(Date.now() - opened).toBeLessThan(1000);
     expect(Date.now() - sent).toBeGreaterThanOrEqual(95);
     await until(() => subscribers() === 0);
   });

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Module } from '@knead-js/core';
-import { APP_GUARD, type Ctx, originAllowed } from '@knead-js/http';
+import { APP_GUARD, type Ctx, originAllowed, WsRegistry } from '@knead-js/http';
 import { RateLimitModule } from '@knead-js/rate-limit';
 import { Int, Mutation, PUBSUB, type PubSub, Query, Resolver, Subscription } from '../src/index.js';
 import { type Started, startGraphQL, until, upgradeStatus } from './helpers.js';
@@ -351,21 +351,28 @@ describe('graphql-transport-ws handshake', () => {
 
   test('onConnect is skipped for a socket closed while the context factory runs', async () => {
     let factories = 0;
+    let settled = 0;
     let connects = 0;
     const gate = Promise.withResolvers<void>();
-    s = await startGraphQL([M], {
-      context: async () => {
-        factories++;
-        await gate.promise;
-        return {};
-      },
-      subscriptions: {
-        onConnect: () => {
-          connects++;
-          return true;
+    s = await startGraphQL(
+      [M],
+      {
+        context: async () => {
+          factories++;
+          await gate.promise;
+          settled++;
+          return {};
+        },
+        subscriptions: {
+          onConnect: () => {
+            connects++;
+            return true;
+          },
         },
       },
-    });
+      [],
+      { websocket: { maxConnectionsPerIp: 1 } },
+    );
     const url = new URL('/graphql', s.app.url);
     url.protocol = 'ws:';
     const ws = new WebSocket(url, 'graphql-transport-ws');
@@ -380,9 +387,13 @@ describe('graphql-transport-ws handshake', () => {
     });
     ws.close();
     await closed;
-    await Bun.sleep(20);
+    // The server saw the close (its close handler marks the connection gone in the same tick).
+    const registry = s.mod.get(WsRegistry);
+    await until(() => registry.openSockets === 0);
     gate.resolve();
-    await Bun.sleep(20);
+    await until(() => settled === 1);
+    // The slot comes back once the handshake settled: onConnect would have run by then.
+    await until(async () => (await upgradeStatus(s!.app)) === 101);
     expect(connects).toBe(0);
   });
 });

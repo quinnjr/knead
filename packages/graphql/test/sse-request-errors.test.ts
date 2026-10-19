@@ -121,7 +121,7 @@ describe('GraphQLExecutor.isRequestError', () => {
     });
   });
 
-  describe("true for Knead's pre-execution checks (an onParsed hook Leaven does not mark)", () => {
+  describe("true for Knead's pre-execution checks (an onParsed hook throw, marked by Leaven)", () => {
     test('maxFields', async () => {
       const runtime = await start();
       const { response, requestError } = await classify(runtime, '{ n n n n n n }');
@@ -184,18 +184,23 @@ describe('GraphQLExecutor.isRequestError', () => {
     }
 
     test('overlapping calls keep their own classification', async () => {
-      // One call's hook throws while another call (a mutation) is between its hooks: the flag is
-      // per call, so the mutation that ran is not marked, and the refused call is. The mutation's
-      // onExecuted throws, so its response has no data and only the flag tells the two apart.
+      // One call's hook throws while another call (a mutation) is between its hooks: the mark is
+      // per response, so the mutation that ran is not marked, and the refused call is. The
+      // mutation's onExecuted throws, so its response has no data and only the mark tells the two
+      // apart.
       const refusing = Promise.withResolvers<void>();
       const running = Promise.withResolvers<void>();
+      const refusedEntered = Promise.withResolvers<void>();
+      const mutationEntered = Promise.withResolvers<void>();
       const runtime = await start({
         hooks: {
           onParsed: async (document: { loc?: { source: { body: string } } }) => {
             if (document.loc?.source.body.includes('refuse')) {
+              refusedEntered.resolve();
               await refusing.promise;
               throw new BadRequestException('refused');
             }
+            mutationEntered.resolve();
             await running.promise;
           },
           onExecuted: () => {
@@ -205,11 +210,13 @@ describe('GraphQLExecutor.isRequestError', () => {
       });
       const mutation = classify(runtime, 'mutation { change }');
       const refused = classify(runtime, 'query refuse { n }');
-      await Bun.sleep(5);
+      // Both calls are inside onParsed; the refused one fails while the mutation still waits.
+      await Promise.all([refusedEntered.promise, mutationEntered.promise]);
       refusing.resolve();
-      await Bun.sleep(5);
+      const rejected = await refused;
+      expect(changes).toBe(0);
       running.resolve();
-      const [ran, rejected] = await Promise.all([mutation, refused]);
+      const ran = await mutation;
       expect(ran.response.data).toBeUndefined();
       expect(changes).toBe(1);
       expect(ran.requestError).toBe(false);

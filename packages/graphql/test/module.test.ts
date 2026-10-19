@@ -185,6 +185,17 @@ describe('options validated at bootstrap', () => {
     ).toEqual({ keepAliveInterval: 500 });
   });
 
+  test('subscriptions.sse other than false or an object is an HttpConfigError', () => {
+    for (const sse of [true, 'on', null, 1]) {
+      expect(() => GraphQLModule.forRoot({ subscriptions: { sse: sse as never } })).toThrow(
+        HttpConfigError,
+      );
+      expect(() => GraphQLModule.forRoot({ subscriptions: { sse: sse as never } })).toThrow(
+        'GraphQL subscriptions.sse must be false or an object',
+      );
+    }
+  });
+
   test('subscriptions: false turns sse off', () => {
     expect(resolveOptions({ subscriptions: false }, '/graphql').sse).toBe(false);
   });

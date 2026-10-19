@@ -282,3 +282,19 @@ export const onConnectChecks: GraphQLModuleOptions[] = [
   // @ts-expect-error nor a promise of them
   { subscriptions: { onConnect: async (_http, p) => p } },
 ];
+
+// subscriptions.sse is false or an options object; anything else is a type error (and an
+// HttpConfigError at bootstrap, see module.test.ts).
+export const sseChecks: GraphQLModuleOptions[] = [
+  { subscriptions: { sse: false } },
+  { subscriptions: { sse: {} } },
+  { subscriptions: { sse: { keepAliveInterval: 1000 } } },
+  // @ts-expect-error true is not an SSE options object
+  { subscriptions: { sse: true } },
+  // @ts-expect-error nor is a string
+  { subscriptions: { sse: 'on' } },
+  // @ts-expect-error nor null
+  { subscriptions: { sse: null } },
+  // @ts-expect-error nor a number
+  { subscriptions: { sse: 1 } },
+];

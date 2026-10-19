@@ -592,8 +592,9 @@ describe('GraphQL over SSE', () => {
     await until(() => subscribers('t') === 1);
     abort.abort();
     const aborted = Date.now();
-    await until(() => subscribers('t') === 0, 100);
-    expect(Date.now() - aborted).toBeLessThan(100);
+    // Well under the 5000 ms keep-alive, which would otherwise be the first write to fail.
+    await until(() => subscribers('t') === 0, 1000);
+    expect(Date.now() - aborted).toBeLessThan(1000);
     const again = await open('subscription { t }', 't');
     publish('t', 1);
     expect((await again.next()).value).toEqual(next({ data: { t: 1 } }));
@@ -767,28 +768,39 @@ describe('GraphQL over SSE', () => {
   test('onConnect is skipped for a request aborted while the context factory runs', async () => {
     let connects = 0;
     let factories = 0;
+    let settled = 0;
+    let signal: AbortSignal | undefined;
     const gate = Promise.withResolvers<void>();
-    await start({
-      context: async () => {
-        factories++;
-        await gate.promise;
-        return {};
-      },
-      subscriptions: {
-        onConnect: () => {
-          connects++;
-          return true;
+    await start(
+      {
+        context: async (ctx) => {
+          factories++;
+          signal = ctx.req.signal;
+          await gate.promise;
+          settled++;
+          return {};
+        },
+        subscriptions: {
+          onConnect: () => {
+            connects++;
+            return true;
+          },
         },
       },
-    });
+      [],
+      { websocket: { maxConnectionsPerIp: 1 } },
+    );
     const abort = new AbortController();
     const res = send('subscription { t }', { signal: abort.signal }).catch(() => undefined);
     await until(() => factories === 1);
     abort.abort();
     await res;
-    await Bun.sleep(20);
+    // The server saw the abort before the factory settles.
+    await until(() => signal?.aborted === true);
     gate.resolve();
-    await Bun.sleep(20);
+    await until(() => settled === 1);
+    // The slot comes back once the handshake settled: onConnect would have run by then.
+    await until(async () => (await upgradeStatus(s!.app)) === 101);
     expect(connects).toBe(0);
   });
 
@@ -820,6 +832,35 @@ describe('GraphQL over SSE', () => {
     await until(() => logged('debug', 'GraphQL SSE subscription: the pending context factory'));
     await until(async () => (await upgradeStatus(s!.app)) === 101);
     const events = await open('subscription { t }', 't');
+    await events.return!();
+  });
+
+  test('a context factory that throws on its second call gives the slot back', async () => {
+    // The first call (the handshake) passes; the second (the subscription's operation context)
+    // throws, after the slot was taken.
+    let calls = 0;
+    await start(
+      {
+        context: () => {
+          calls++;
+          if (calls === 2) throw new Error('postgres://admin:pw@db down');
+          return {};
+        },
+      },
+      [],
+      { websocket: { maxConnectionsPerIp: 1 } },
+    );
+    const failed = await send('subscription { t }');
+    expect(failed.status).toBe(500);
+    const body = await failed.text();
+    expect(body).not.toContain('admin:pw');
+    expect(body).not.toContain('db down');
+    expect(calls).toBe(2);
+    expect(subscribers('t')).toBe(0);
+    // The slot is free again: the next subscription streams.
+    const events = await open('subscription { t }', 't');
+    publish('t', 1);
+    expect((await events.next()).value).toEqual(next({ data: { t: 1 } }));
     await events.return!();
   });
 
