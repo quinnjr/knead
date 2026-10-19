@@ -105,11 +105,11 @@ The `subscriptions.sse` option: `false` turns GraphQL over SSE off, an object co
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `keepAliveInterval` | `number` (ms) | half the HTTP `idleTimeout`, at most `8000` | Time between keep-alive comments, an integer from 1 to 2147483647. |
+| `keepAliveInterval` | `number` (ms) | half the HTTP `idleTimeout`, at most `SSE_MAX_KEEP_ALIVE` | Time between keep-alive comments, an integer from 1 to 2147483647. |
 
 Without `keepAliveInterval`, each stream sends a keep-alive every `idleTimeout * 1000 / 2` ms of
-`listen({ idleTimeout })`, at most 8000 ms: 5000 ms with Bun's default of 10 seconds, and 8000 ms
-when `idleTimeout` is `0`. When the schema has a Subscription type, an explicit
+`listen({ idleTimeout })`, at most `SSE_MAX_KEEP_ALIVE` (8000 ms): 5000 ms with Bun's default of 10
+seconds, and 8000 ms when `idleTimeout` is `0`. When the schema has a Subscription type, an explicit
 `keepAliveInterval` above half a non-zero `idleTimeout` makes `listen()` throw `HttpConfigError`
 (Bun checks idle connections on a coarse tick of about 4 seconds), and an `idleTimeout` of 1 to 4
 seconds logs one warning at `listen()`, since Bun may then close a quiet stream whatever its
@@ -117,20 +117,30 @@ keep-alive.
 
 A request is answered over SSE (graphql-sse distinct connections mode) when its `Accept` header
 prefers `text/event-stream` strictly over `application/json` and
-`application/graphql-response+json`; `*/*` alone or a tie stays JSON. A subscription streams each
-result as a `next` event and then `complete`; a query or mutation answers one `next` and
-`complete`; a `GET` mutation is `405` with `Allow: POST`; a `GET` needs the `csrf` header. A request
+`application/graphql-response+json`; `*/*` alone or a tie stays JSON. A cross-origin request not
+admitted by `subscriptions.allowedOrigins` is `403`, checked before the body or the `csrf` header
+is read. A subscription streams each result as a `next` event and then `complete`; a query or
+mutation answers one `next` and `complete`; a `GET` mutation is `405` with `Allow: POST`; a `GET`
+needs the `csrf` header. Streams carry `cacheControl` (default `no-store`; with `false`, Leaven's
+`no-cache, no-transform`) and `X-Content-Type-Options: nosniff`, as JSON responses do. The document
+is parsed, checked and validated once, by the same executor call that then runs a query or
+mutation (the application's `onParse` runs first, and its pre-execution hooks run once per
+request, subscriptions included); the `context` factory of a query or mutation runs once the
+document has passed them. A request
 error (rejected before any resolver ran: syntax, parser and Knead limits, validation, complexity,
 operation selection, variable coercion, a throwing `onParse`, `onParsed`, `onValidate` or
 `onValidated` hook, or a throwing document `cache`) is answered as JSON (`application/json`, with
 `cacheControl`) at `400`, or `500` for an `INTERNAL_SERVER_ERROR`; anything after execution started
-is streamed. A `subscription` on a schema without a Subscription type is refused like the JSON
-path's (`400`), before any `onConnect`. An open subscription stream holds one of the
+is streamed. A subscription document that fails a limit or validation never takes a slot or runs
+`onConnect`. A `subscription` on a schema without a Subscription type is refused like the JSON
+path's (`400` over `POST`, `405` with `Allow: POST` over `GET`), before any `onConnect`. An open
+subscription stream holds one of the
 `listen({ websocket })` connection slots shared with sockets, taken before `onConnect` runs and
 returned only once it has settled, even if the client aborts first: past `maxConnectionsPerIp` it
 is `429`, past `maxConnections` `503`, both `application/problem+json`. A pending `context`
 factory and `onConnect` are bounded by `connectionInitTimeout` (default 3000 ms): past it the
-request answers `503`. `onConnect` refusing (or the `context` factory throwing) answers `403` with
+request answers `503`, and a warning is logged, since the slot stays held until they settle (a
+debug line follows when they do). `onConnect` refusing (or the `context` factory throwing) answers `403` with
 a `FORBIDDEN` JSON body. A stream revoked by `closeWhere`, past `maxConnectionLifetime` or at
 shutdown ends without `complete`. See
 [subscriptions over SSE](/guide/graphql/#subscriptions-over-sse).
@@ -164,7 +174,8 @@ calls it with `HTTP_DEVELOPMENT`.
 The read-only result of `resolveOptions()`: every option above with its default applied, the CSRF
 header names lower-cased, `playground` as a `boolean` plus `playgroundSubscriptionEndpoint`, an
 `sse` field (`false` when `subscriptions` or `subscriptions.sse` is `false`, otherwise
-`{ keepAliveInterval, explicit }`, where `explicit` says whether the application set the interval),
+`{ keepAliveInterval }`: the application's interval, or `undefined` when it set none, in which case
+each stream derives one from the idle timeout),
 `allowedOrigins` (`subscriptions.allowedOrigins` validated and normalized at bootstrap whatever the
 schema: `'*'`, a `ReadonlySet` of origins, or `undefined`), and an `executor` object holding what
 is passed to Leaven (`maxComplexity`, `cache`, `compilerOptions`, `parseOptions` with `maxTokens`,
@@ -652,7 +663,7 @@ The provider that owns the schema and the executor. Inject it to read the built 
 | Member | Description |
 | --- | --- |
 | `schema` | The `GraphQLSchema`. Throws `SchemaBuildError` before `onModuleInit`. |
-| `executor` | The Leaven executor (a `LeavenExecutor` subclass). Its `isRequestError(response)` is `true` for a response its `execute()` or `subscribe()` returned when nothing ran (the SSE request errors above), decided by where the error arose, never by its code. |
+| `executor` | The `GraphQLExecutor` (see below). |
 | `options` | The `ResolvedGraphQLOptions`. |
 | `development` | The application's development flag. |
 | `pubsub` | The `PUBSUB` engine. |
@@ -661,6 +672,24 @@ The provider that owns the schema and the executor. Inject it to read the built 
 | `subscriptionsEnabled` | Whether the subscription endpoint is registered. |
 | `connection(ws)` | The `GraphQLConnection` of a subscription socket, or `undefined`. |
 | `createOperationContext(http, allowed, extra?)` | Builds one operation's context: the `context` factory result with `extra` over it. |
+
+The registry of open SSE subscription streams is private to the package: revoke streams with
+`GraphQLSubscriptions.closeWhere`.
+
+### `GraphQLExecutor`
+
+The type of `GraphQLRuntime.executor`: a `LeavenExecutor` subclass (exported as a type only; the
+runtime builds it) whose request-level errors are normalized (Leaven's `BAD_REQUEST` is
+`BAD_USER_INPUT`, a failure inside Leaven is a logged, masked `INTERNAL_SERVER_ERROR`), used for
+HTTP, WebSocket and SSE. Its `isRequestError(response)` is `true` for a response its `execute()`
+or `subscribe()` returned when nothing ran (the SSE request errors above), decided by where the
+error arose, never by its code; pass the response object as returned.
+
+### `SSE_MAX_KEEP_ALIVE`
+
+`8000`: the longest keep-alive interval (ms) an SSE stream derives from `listen({ idleTimeout })`,
+and the interval used when `idleTimeout` is `0`. An explicit `subscriptions.sse.keepAliveInterval`
+is not capped by it.
 
 ### `GRAPHQL_OPTIONS`
 

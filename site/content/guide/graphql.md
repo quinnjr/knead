@@ -459,7 +459,8 @@ token this way.
 > `ConnectionParams` type makes returning or spreading it a compile error.
 
 The `context` factory and `onConnect` must settle within `subscriptions.connectionInitTimeout`
-(default 3000 ms, counted from `connection_init`), or the socket is closed with `4408`. A socket
+(default 3000 ms, counted from `connection_init`), or the socket is closed with `4408` (and a
+warning is logged: the socket's slot stays held until they settle). A socket
 that closes while they are pending keeps its connection slot until they settle, so clients cannot
 pile up pending `onConnect` work past `maxConnectionsPerIp` by connecting and disconnecting, and
 `onConnect` is skipped when the socket closed while the factory ran.
@@ -482,12 +483,21 @@ and edge hosts. A `POST` or `GET` is answered over SSE when its `Accept` header 
 - A subscription streams each result as an `event: next`, then `event: complete` when it ends.
 - A query or a mutation answers one `next` and then `complete`.
 - A mutation over `GET` is `405` with `Allow: POST`, as over HTTP.
+- Streams carry `cacheControl` (default `no-store`) and `X-Content-Type-Options: nosniff`, as
+  JSON responses do.
 
 The request is an ordinary request to the route, so global middleware and guards, the endpoint's
 `guards`, the body and query limits and the `context` factory apply. The subscription itself
 behaves as over WebSocket: root, `authorize` and field guards, `recheckGuards` with
 `refreshContext`, the `filter`, fresh per-event state, the topic rules and error masking. The
 playground keeps using WebSocket.
+
+The document goes through Leaven once: it is parsed (after the application's `onParse` hook),
+checked against Knead's limits and validated, and only then does the operation type decide what
+happens. A query or mutation runs at once, its `context` factory called just before; a
+subscription takes its connection slot and runs `onConnect` (below). So a document that fails a
+limit or validation never takes a slot or runs `onConnect`, and the pre-execution hooks run once
+per request.
 
 To keep subscriptions on WebSocket only, set `subscriptions.sse` to `false`; a request asking for
 `text/event-stream` then gets the usual JSON response:
@@ -509,8 +519,8 @@ starts. An `onConnect` that reads only `params` therefore refuses every SSE subs
 above does.
 
 An SSE request with an `Origin` header must come from the server's own origin or one of
-`subscriptions.allowedOrigins`, as for WebSocket upgrades; others get `403`, and requests without
-`Origin` are allowed. A `GET` must carry one of `csrf.requiredHeaders`, as every `GET` does (`400`
+`subscriptions.allowedOrigins`, as for WebSocket upgrades; others get `403`, checked before the body
+or the CSRF header is read, and requests without `Origin` are allowed. A `GET` must carry one of `csrf.requiredHeaders`, as every `GET` does (`400`
 otherwise). The `graphql-sse` client sends a `POST` with `fetch`, which needs no CSRF header
 (`Content-Type: application/json` already forces a CORS preflight) and can carry an
 `Authorization` header. A bare browser `EventSource` sends a `GET` and cannot set headers, so it
@@ -527,10 +537,12 @@ queries included.
   work (database or token lookups) past the limits by opening and aborting requests. A request
   already aborted runs neither, and one aborted while the factory runs skips `onConnect`. Past
   `subscriptions.connectionInitTimeout` (default 3000 ms) a pending request answers `503`, and its
-  slot still comes back only when `onConnect` settles. After that, the slot is given back when the
+  slot still comes back only when `onConnect` settles: a warning is logged then (over WebSocket
+  too), and a debug line once the pending work settles. After that, the slot is given back when the
   stream ends or the client disconnects (which also ends the subscription). Queries and mutations
   over SSE finish at once and take no slot. A `subscription` on a schema without a Subscription
-  type is refused with `400`, as over JSON, without running `onConnect`.
+  type is refused as over JSON (`400` over `POST`, `405` with `Allow: POST` over `GET`), without
+  running `onConnect`.
 - `GraphQLSubscriptions.closeWhere(predicate)` also ends the matching streams and counts them in
   its result. A revoked stream ends **without** `complete`, so the client can tell it did not finish
   normally. A stream still in `onConnect` is checked again when `onConnect` settles and then answers
@@ -546,8 +558,8 @@ queries included.
 An open stream is an HTTP request, so Bun's `listen({ idleTimeout })` (10 seconds by default)
 closes it when it stays quiet. Streams are not exempt from it: they send a keep-alive comment (`:`)
 instead, and one comment as soon as the stream starts, so the client sees the response at once.
-Without `subscriptions.sse.keepAliveInterval`, the interval is half the `idleTimeout`, at most 8000
-ms: 5000 ms with Bun's default, 8000 ms with `idleTimeout: 0`. Bun checks idle connections on a
+Without `subscriptions.sse.keepAliveInterval`, the interval is half the `idleTimeout`, at most
+`SSE_MAX_KEEP_ALIVE` (8000 ms): 5000 ms with Bun's default, 8000 ms with `idleTimeout: 0`. Bun checks idle connections on a
 tick of about 4 seconds, so when the schema has a Subscription type:
 
 - an explicit `keepAliveInterval` above half a non-zero `idleTimeout` makes `listen()` throw an

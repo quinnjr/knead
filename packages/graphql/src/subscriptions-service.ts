@@ -1,6 +1,6 @@
 import { Injectable, inject } from '@knead-js/core';
 import { WsRegistry } from '@knead-js/http';
-import { GraphQLRuntime } from './runtime.js';
+import { GraphQLRuntime, sseConnectionsOf } from './runtime.js';
 import type { GraphQLConnection } from './subscriptions.js';
 
 /**
@@ -46,7 +46,7 @@ export class GraphQLSubscriptions {
       code,
       reason,
     );
-    const count = sockets + this.#runtime.sse.closeWhere(predicate);
+    const count = sockets + sseConnectionsOf(this.#runtime).closeWhere(predicate);
     if (count === 0) {
       this.#runtime.logger.debug(
         'GraphQLSubscriptions.closeWhere matched no open sockets or SSE streams (those still initializing are checked when they finish).',

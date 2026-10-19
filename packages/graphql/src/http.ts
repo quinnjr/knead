@@ -5,7 +5,6 @@ import {
   type Ctx,
   Get,
   type GuardRef,
-  MethodNotAllowedException,
   Post,
   requestUrl,
   UnsupportedMediaTypeException,
@@ -18,10 +17,10 @@ import {
   GRAPHQL_RESPONSE_JSON,
   jsonHeaders,
   noDataStatus,
-  rejectionMessage,
+  throwRejected,
 } from './responses.js';
 import { GraphQLRuntime } from './runtime.js';
-import { handleSse, wantsEventStream } from './sse.js';
+import { assertSseOrigin, handleSse, wantsEventStream } from './sse.js';
 
 /**
  * Route-meta key on the GraphQL endpoint (its POST and GET routes, so also subscription upgrades).
@@ -119,13 +118,7 @@ async function execute(
   op.operationName = request.operationName;
   const { response } = await runtime.executor.execute(request, op);
   // The operation type is checked by a Leaven onExecute hook on the document Leaven parsed.
-  if (op.rejectedOperation) {
-    const message = rejectionMessage(op.rejectedOperation, allowed);
-    if (op.rejectedOperation === 'subscription' && ctx.req.method !== 'GET') {
-      throw new BadRequestException(message);
-    }
-    throw new MethodNotAllowedException(message, { headers: { allow: 'POST' } });
-  }
+  throwRejected(op.rejectedOperation, allowed, ctx.req.method, runtime.options.sse !== false);
   const graphqlJson = prefersGraphQLResponse(ctx.req.headers.get('accept'));
   // application/json: always 200. application/graphql-response+json: no data entry is 400 for
   // a request error and 500 only for a server failure (INTERNAL_SERVER_ERROR). normalizeResponse
@@ -142,13 +135,16 @@ function sseRequested(runtime: GraphQLRuntime, ctx: Ctx): boolean {
 }
 
 export async function handlePost(runtime: GraphQLRuntime, ctx: Ctx): Promise<Response> {
+  const sse = sseRequested(runtime, ctx);
+  // Before the body is read, as a WebSocket upgrade's origin is checked before its guards.
+  if (sse) assertSseOrigin(runtime, ctx);
   if (mediaType(ctx.req.headers.get('content-type')) !== 'application/json') {
     throw new UnsupportedMediaTypeException(
       'GraphQL POST requests must use Content-Type: application/json.',
     );
   }
   const request = parseGraphQLParams(await ctx.json(), runtime.options.maxQueryLength);
-  if (sseRequested(runtime, ctx)) return handleSse(runtime, ctx, request, 'POST');
+  if (sse) return handleSse(runtime, ctx, request, 'POST');
   return execute(runtime, ctx, request, ['query', 'mutation']);
 }
 
@@ -160,6 +156,8 @@ export async function handleGet(runtime: GraphQLRuntime, ctx: Ctx): Promise<Resp
       : undefined;
     return runtime.playground.serve(options.path, ws);
   }
+  const sse = sseRequested(runtime, ctx);
+  if (sse) assertSseOrigin(runtime, ctx);
   if (options.csrf !== false) {
     const required = options.csrf.requiredHeaders;
     if (!required.some((name) => ctx.req.headers.has(name))) {
@@ -178,7 +176,7 @@ export async function handleGet(runtime: GraphQLRuntime, ctx: Ctx): Promise<Resp
     },
     options.maxQueryLength,
   );
-  if (sseRequested(runtime, ctx)) return handleSse(runtime, ctx, request, 'GET');
+  if (sse) return handleSse(runtime, ctx, request, 'GET');
   return execute(runtime, ctx, request, ['query']);
 }
 

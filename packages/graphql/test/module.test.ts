@@ -175,18 +175,14 @@ describe('options validated at bootstrap', () => {
     ).not.toThrow();
   });
 
-  test('sse defaults on with an 8000 ms keep-alive', () => {
-    expect(resolveOptions({}, '/graphql').sse).toEqual({
-      keepAliveInterval: 8000,
-      explicit: false,
-    });
+  test('sse defaults on with no explicit keep-alive (each stream derives one)', () => {
+    expect(resolveOptions({}, '/graphql').sse).toEqual({ keepAliveInterval: undefined });
     expect(resolveOptions({ subscriptions: { sse: {} } }, '/graphql').sse).toEqual({
-      keepAliveInterval: 8000,
-      explicit: false,
+      keepAliveInterval: undefined,
     });
     expect(
       resolveOptions({ subscriptions: { sse: { keepAliveInterval: 500 } } }, '/graphql').sse,
-    ).toEqual({ keepAliveInterval: 500, explicit: true });
+    ).toEqual({ keepAliveInterval: 500 });
   });
 
   test('subscriptions: false turns sse off', () => {

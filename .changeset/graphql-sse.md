@@ -12,13 +12,18 @@ mutation as one `next` and `complete`. Clients that send `*/*` or prefer JSON ar
 
 - **Opting out.** `subscriptions.sse: false` keeps subscriptions on WebSocket only;
   `subscriptions: false` turns off both transports. `subscriptions.sse.keepAliveInterval` sets the
-  keep-alive comment interval; by default it is half of `listen({ idleTimeout })`, at most 8000 ms.
+  keep-alive comment interval; by default it is half of `listen({ idleTimeout })`, at most the new
+  `SSE_MAX_KEEP_ALIVE` (8000 ms, also the interval with `idleTimeout: 0`).
   An explicit interval above half a non-zero `idleTimeout` makes `listen()` throw
   `HttpConfigError`, and an `idleTimeout` of 1 to 4 s logs a warning, when the schema has a
   Subscription type.
 - **The same checks as WebSocket.** Route middleware and guards, the `context` factory, root,
   `authorize` and field guards, `recheckGuards`, filters, per-event state, topic rules, masking,
-  the origin check and the CSRF header on `GET` all apply. `onConnect` runs once per SSE
+  the origin check (before the body or the CSRF header is read) and the CSRF header on `GET` all
+  apply. Streams carry `cacheControl` and `X-Content-Type-Options: nosniff`, as JSON responses do.
+  The document is parsed, checked and validated once, by one executor call (the app's `onParse`
+  first, the pre-execution hooks once per request), so a document that fails a limit or validation
+  never takes a slot or runs `onConnect`. `onConnect` runs once per SSE
   subscription request with `params` `{}`: an `onConnect` that reads only `connectionParams`
   refuses SSE subscriptions with `403`, so authenticate SSE clients from headers or cookies.
 - **Shared limits and revocation.** An open SSE subscription stream holds one of the
@@ -26,9 +31,15 @@ mutation as one `next` and `complete`. Clients that send `*/*` or prefer JSON ar
   taken before the `context` factory and `onConnect` run and returned only once they settle, even
   if the client aborts first; a request already aborted runs neither. A pending `onConnect` is
   bounded by `subscriptions.connectionInitTimeout` (default 3000 ms), past which the request
-  answers `503`. `GraphQLSubscriptions.closeWhere`, `maxConnectionLifetime` and shutdown end
-  streams without `complete`; `closeWhere` counts the streams it ended. A `subscription` on a
-  schema without a Subscription type is a `400`, as over JSON, without running `onConnect`.
+  answers `503` and a warning is logged (over WebSocket too), since the slot stays held until it
+  settles. `GraphQLSubscriptions.closeWhere`, `maxConnectionLifetime` and shutdown end
+  streams without `complete`; `closeWhere` counts the streams it ended. Both transports share one
+  handshake and one deferred-revocation cap policy, so a stream ended at the
+  `maxPendingRevocations` cap is counted as a socket closed there is (only when the predicate
+  matches its empty context). A `subscription` on a schema without a Subscription type is refused
+  as over JSON (`400` over `POST`, `405` over `GET`), without running `onConnect`. The rejection
+  message for a subscription over JSON now names SSE when it is on. The context factory and
+  `onConnect` failure logs name the transport (`... rejecting the WebSocket connection`).
 - **WebSocket slot change.** A subscription socket that closes while its `context` factory or
   `onConnect` is pending now keeps its connection slot until they settle (it used to return it at
   once, so connect-and-close cycles could pile up pending `onConnect` calls past
@@ -40,11 +51,12 @@ mutation as one `next` and `complete`. Clients that send `*/*` or prefer JSON ar
 - **`allowedOrigins` is validated at bootstrap whatever the schema.** SSE checks queries and
   mutations against `subscriptions.allowedOrigins`, so a value that is not `'*'` or an array of
   exact origins is an `HttpConfigError` from `GraphQLModule.forRoot()` even without a Subscription
-  type. `ResolvedGraphQLOptions` gains `sse` and the normalized `allowedOrigins`.
+  type. `ResolvedGraphQLOptions` gains `sse` (`false`, or `{ keepAliveInterval }`, undefined
+  when the app set none) and the normalized `allowedOrigins`.
 - **Request errors are JSON.** An operation rejected before any resolver ran is answered as JSON
   at `400` (`500` for `INTERNAL_SERVER_ERROR`); anything after execution started is streamed, so a
-  retrying client never runs a mutation twice. `GraphQLRuntime.executor` gains
-  `isRequestError(response)`.
+  retrying client never runs a mutation twice. `GraphQLRuntime.executor` is the newly exported
+  `GraphQLExecutor` type, which gains `isRequestError(response)`.
 - **Leaven upgrade.** `@leaven-graphql/core` 0.4.0, `@leaven-graphql/ws` 0.3.1 and the new
   `@leaven-graphql/sse` 0.4.0, pinned exactly.
 

@@ -192,6 +192,15 @@ describe('graphql-transport-ws handshake', () => {
     expect(closed.code).toBe(4403);
     expect(socket.messages).toEqual([]);
     expect(calls).toBe(1);
+    expect(
+      s.mod.logs.some(
+        (e) =>
+          e.level === 'error' &&
+          e.message.includes(
+            'GraphQL context factory threw at connection_init; rejecting the WebSocket connection',
+          ),
+      ),
+    ).toBe(true);
   });
 
   test('frame checks see a type written with JSON escapes', async () => {
@@ -326,7 +335,17 @@ describe('graphql-transport-ws handshake', () => {
     expect(await code).toBe(4408);
     expect(calls).toBe(1);
     expect(await upgradeStatus(s.app)).toBe(429);
+    const logged = (level: string, text: string) =>
+      s!.mod.logs.some((e) => e.level === level && e.message.includes(text));
+    // The slot is held past the timeout, and the warning says so.
+    await until(() =>
+      logged(
+        'warn',
+        'GraphQL WebSocket subscription: the context factory or onConnect is still pending after 100 ms; its connection slot stays held until it settles.',
+      ),
+    );
     settle.resolve(true);
+    await until(() => logged('debug', 'GraphQL WebSocket subscription: the pending context'));
     await until(async () => (await upgradeStatus(s!.app)) === 101);
   });
 

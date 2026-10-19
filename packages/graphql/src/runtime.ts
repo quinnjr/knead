@@ -54,6 +54,7 @@ import {
 } from 'graphql';
 import {
   createResolverCtx,
+  ExecutionHandoff,
   OperationContext,
   type OperationKind,
   type ResolverCtx,
@@ -263,6 +264,8 @@ export function buildHooks(
   user: ExecutionHooks | undefined,
   masking: ErrorMaskingOptions,
   limits: DocumentLimits = {},
+  /** Whether GraphQL over SSE is on (for the rejection message). */
+  sse = false,
 ): ExecutionHooks {
   const {
     maxAliases = false,
@@ -303,6 +306,8 @@ export function buildHooks(
     onCacheError: user?.onCacheError,
     onError: userError
       ? async (error) => {
+          // Not a failure: an OperationContext's beforeExecute stopped the call on purpose.
+          if (error instanceof ExecutionHandoff) return;
           try {
             await userError(error);
           } catch (hookError) {
@@ -316,11 +321,12 @@ export function buildHooks(
         if (operation && !context.allowedOperations.includes(operation)) {
           context.rejectedOperation = operation;
           throw new LeavenError(
-            rejectionMessage(operation, context.allowedOperations),
+            rejectionMessage(operation, context.allowedOperations, sse),
             'BAD_USER_INPUT' as ErrorCode,
             { statusCode: 400 },
           );
         }
+        if (operation && context.beforeExecute) await context.beforeExecute(operation);
       }
       await userExecute?.(context, document);
     },
@@ -600,7 +606,10 @@ export function normalizeResponse<T>(
   return { ...response, errors };
 }
 
-/** The hooks Leaven runs before it selects and executes the operation. */
+/**
+ * The hooks Leaven runs before it selects and executes the operation (wrapped by
+ * trackPreExecution and by skipPreExecutionAgain, which outlives it).
+ */
 const PRE_EXECUTION_HOOKS = ['onParse', 'onParsed', 'onValidate', 'onValidated'] as const;
 
 /** What GraphQLExecutor records about one execute() or subscribe() call. */
@@ -645,19 +654,72 @@ function trackPreExecution(
 }
 
 /**
- * LeavenExecutor whose request-level errors are normalized (used for HTTP, WebSocket and SSE),
- * and which remembers which of its responses are request errors.
+ * Wraps the pre-execution hooks (Knead's document limits and the application's onParse, onParsed,
+ * onValidate and onValidated) so that they do nothing inside `again`: a call for a document they
+ * have already passed in this request.
+ */
+function skipPreExecutionAgain(
+  hooks: ExecutionHooks | undefined,
+  again: AsyncLocalStorage<true>,
+): ExecutionHooks | undefined {
+  if (!hooks) return hooks;
+  const wrapped: Record<string, unknown> = { ...hooks };
+  for (const name of PRE_EXECUTION_HOOKS) {
+    const hook = hooks[name] as ((...args: unknown[]) => unknown) | undefined;
+    if (hook)
+      wrapped[name] = (...args: unknown[]) => (again.getStore() ? undefined : hook(...args));
+  }
+  return wrapped as ExecutionHooks;
+}
+
+/** See subscribeAgain(); assigned in GraphQLExecutor's static block. */
+let subscribeAgainOf: (
+  executor: GraphQLExecutor,
+  request: GraphQLRequest,
+  context: unknown,
+) => ReturnType<GraphQLExecutor['subscribe']>;
+
+/**
+ * @internal `executor.subscribe(request, context)` for a request whose document the same executor's
+ * `execute()` has just parsed, checked and validated in this request (GraphQL over SSE, which
+ * learns the operation type there): the pre-execution hooks are not run again, so the
+ * application's hooks run once per request. Leaven's own parse and validation are cache hits
+ * unless the document cache is off. Not exported from the package: it skips the document limits.
+ */
+export function subscribeAgain(
+  executor: GraphQLExecutor,
+  request: GraphQLRequest,
+  context: unknown,
+): ReturnType<GraphQLExecutor['subscribe']> {
+  return subscribeAgainOf(executor, request, context);
+}
+
+/**
+ * The `LeavenExecutor` of a GraphQLRuntime (`runtime.executor`), used for HTTP, WebSocket and
+ * SSE: its request-level errors are normalized, and it remembers which of its responses are
+ * request errors (`isRequestError`).
  */
 export class GraphQLExecutor extends LeavenExecutor {
   readonly #masking: ErrorMaskingOptions;
   readonly #calls: AsyncLocalStorage<CallState>;
+  readonly #again: AsyncLocalStorage<true>;
   readonly #rejected = new WeakSet<object>();
+
+  static {
+    subscribeAgainOf = (executor, request, context) =>
+      executor.#again.run(true, () => executor.subscribe(request, context));
+  }
 
   constructor(config: ExecutorConfig, masking: ErrorMaskingOptions) {
     const calls = new AsyncLocalStorage<CallState>();
-    super({ ...config, hooks: trackPreExecution(config.hooks, calls) });
+    const again = new AsyncLocalStorage<true>();
+    super({
+      ...config,
+      hooks: trackPreExecution(skipPreExecutionAgain(config.hooks, again), calls),
+    });
     this.#masking = masking;
     this.#calls = calls;
+    this.#again = again;
   }
 
   override async execute<TData = Record<string, unknown>, TContext = unknown>(
@@ -707,6 +769,17 @@ export class GraphQLExecutor extends LeavenExecutor {
   }
 }
 
+/** See sseConnectionsOf(); assigned in GraphQLRuntime's static block. */
+let sseConnectionsOfRuntime: (runtime: GraphQLRuntime) => SseConnections;
+
+/**
+ * @internal The open SSE subscription streams of `runtime` (not exported from the package: the
+ * application revokes streams through GraphQLSubscriptions).
+ */
+export function sseConnectionsOf(runtime: GraphQLRuntime): SseConnections {
+  return sseConnectionsOfRuntime(runtime);
+}
+
 /** Owns the schema, the Leaven executor and the subscription endpoint. */
 @Injectable()
 export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
@@ -723,13 +796,20 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
   readonly #modules = inject(MODULES);
   readonly #ws = inject(WsRegistry);
   readonly #streams = inject(StreamRegistry);
-  /** @internal The open SSE subscription streams. */
-  readonly sse = new SseConnections(this);
+  /**
+   * The open SSE subscription streams, reached only through sseConnectionsOf() (GraphQLSubscriptions
+   * and sse.ts), so an application cannot end or register streams past GraphQLSubscriptions.
+   */
+  readonly #sseConnections = new SseConnections(this);
   #schema: GraphQLSchema | undefined;
   #executor: GraphQLExecutor | undefined;
   #playground: PlaygroundGate | undefined;
   #endpoint: SubscriptionEndpoint | undefined;
   readonly #fieldGuards = new Map<Class, FieldGuardSet | undefined>();
+
+  static {
+    sseConnectionsOfRuntime = (runtime) => runtime.#sseConnections;
+  }
 
   get schema(): GraphQLSchema {
     if (!this.#schema)
@@ -804,12 +884,17 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
         compilerOptions: calculator
           ? { complexityCalculator: calculator, ...compilerOptions }
           : compilerOptions,
-        hooks: buildHooks(hooks, this.masking, {
-          maxAliases: this.options.maxAliases,
-          maxDepth: this.options.maxDepth,
-          maxFields: this.options.maxFields,
-          maxIntrospectionDepth: this.options.maxIntrospectionDepth,
-        }),
+        hooks: buildHooks(
+          hooks,
+          this.masking,
+          {
+            maxAliases: this.options.maxAliases,
+            maxDepth: this.options.maxDepth,
+            maxFields: this.options.maxFields,
+            maxIntrospectionDepth: this.options.maxIntrospectionDepth,
+          },
+          this.options.sse !== false,
+        ),
         formatExecutionError: createErrorFormatter(this.masking),
       },
       this.masking,
@@ -834,7 +919,11 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
     if (sse !== false && this.#schema.getSubscriptionType()) {
       this.#streams.expectLongLivedStreams(`GraphQL SSE subscriptions at ${this.options.path}`);
     }
-    if (sse !== false && sse.explicit && this.#schema.getSubscriptionType()) {
+    if (
+      sse !== false &&
+      sse.keepAliveInterval !== undefined &&
+      this.#schema.getSubscriptionType()
+    ) {
       // Checked at listen(): Bun closes a stream quiet for longer than its idleTimeout. Without an
       // explicit interval, streams derive one below the idle timeout (sse.ts), and an app with no
       // Subscription type opens no long-lived stream.
@@ -1116,7 +1205,9 @@ export class GraphQLRuntime implements OnModuleInit, OnModuleDestroy {
       // Without a subscribe call for this operation (a subscription document executed as a
       // query or mutation would be), no guard has run: refuse rather than call the method.
       if (!validated.has(op)) {
-        throw new BadRequestException('Subscriptions are only available over WebSocket.');
+        throw new BadRequestException(
+          rejectionMessage('subscription', ['query', 'mutation'], this.options.sse !== false),
+        );
       }
       if (resetIn === 'resolve') op.resetForEvent();
       const value = sub.resolve ? await sub.resolve(payload) : payload;

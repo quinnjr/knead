@@ -9,7 +9,9 @@ import {
   defineUnion,
   Field,
   Float,
+  type GraphQLExecutor,
   type GraphQLModuleOptions,
+  type GraphQLRuntime,
   ID,
   Int,
   Mutation,
@@ -142,6 +144,9 @@ export class UserResolver {
 }
 
 export function typeAssertions(): void {
+  // runtime.executor is the exported GraphQLExecutor, with isRequestError.
+  assertType<Equal<GraphQLRuntime['executor'], GraphQLExecutor>>();
+  assertType<Equal<ReturnType<GraphQLExecutor['isRequestError']>, boolean>>();
   assertType<Equal<TsOf<typeof ID>, string>>();
   assertType<Equal<TsOf<typeof Int>, number>>();
   assertType<Equal<TsOf<StringConstructor>, string>>();

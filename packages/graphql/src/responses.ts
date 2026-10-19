@@ -1,9 +1,10 @@
+import { BadRequestException, MethodNotAllowedException } from '@knead-js/http';
 import type { GraphQLResponse } from '@leaven-graphql/core';
 import type { OperationKind } from './context.js';
 import type { ResolvedGraphQLOptions } from './options.js';
 
-// Response helpers shared by the JSON and SSE transports. A leaf module (type-only imports), so
-// runtime.ts, http.ts and sse.ts import it without an import cycle.
+// Response helpers shared by the JSON and SSE transports. A leaf module (no imports from this
+// package but types), so runtime.ts, http.ts and sse.ts import it without an import cycle.
 
 export const GRAPHQL_RESPONSE_JSON = 'application/graphql-response+json';
 
@@ -48,14 +49,39 @@ export function jsonHeaders(
   return headers;
 }
 
-/** Messages for an operation the transport does not carry. */
+/**
+ * Messages for an operation the transport does not carry. `sse` is whether GraphQL over SSE is on
+ * (it carries subscriptions too).
+ */
 export function rejectionMessage(
   operation: OperationKind,
   allowed: readonly OperationKind[],
+  sse: boolean,
 ): string {
   if (allowed.length === 1 && allowed[0] === 'subscription') {
     return 'Only subscription operations are allowed over WebSocket.';
   }
-  if (operation === 'subscription') return 'Subscriptions are only available over WebSocket.';
+  if (operation === 'subscription') {
+    return sse
+      ? 'Subscriptions are only available over WebSocket or with Accept: text/event-stream.'
+      : 'Subscriptions are only available over WebSocket.';
+  }
   return `A ${operation} cannot be sent over GET; use POST.`;
+}
+
+/**
+ * Throws the HTTP error for an operation the onExecute check refused on an HTTP request (JSON or
+ * SSE): a subscription sent over POST is a 400; anything else (a mutation, or a subscription over
+ * GET) is a 405 with `Allow: POST`.
+ */
+export function throwRejected(
+  rejected: OperationKind | undefined,
+  allowed: readonly OperationKind[],
+  method: string,
+  sse: boolean,
+): void {
+  if (!rejected) return;
+  const message = rejectionMessage(rejected, allowed, sse);
+  if (rejected === 'subscription' && method !== 'GET') throw new BadRequestException(message);
+  throw new MethodNotAllowedException(message, { headers: { allow: 'POST' } });
 }

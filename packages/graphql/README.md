@@ -250,8 +250,15 @@ both.
   `maxConnectionsPerIp` (`429`) and `maxConnections` (`503`). `closeWhere`,
   `maxConnectionLifetime` and shutdown end streams without `complete`.
 - **Keep-alive.** Streams send a keep-alive comment at half of `listen({ idleTimeout })`, at most
-  8000 ms (`subscriptions.sse.keepAliveInterval` sets it; above half the idle timeout `listen()`
-  throws `HttpConfigError`). An `idleTimeout` of 1 to 4 s logs a warning at `listen()`.
+  `SSE_MAX_KEEP_ALIVE` (8000 ms, also the interval with `idleTimeout: 0`;
+  `subscriptions.sse.keepAliveInterval` sets it; above half the idle timeout `listen()` throws
+  `HttpConfigError`). An `idleTimeout` of 1 to 4 s logs a warning at `listen()`.
+- **Headers and origin.** Streams carry `cacheControl` and `X-Content-Type-Options: nosniff`, as
+  JSON responses do. A cross-origin request is refused (`403`) before its body is read.
+- **One pass over the document.** The document is parsed, checked and validated once (the
+  application's `onParse` first), so an invalid subscription never takes a connection slot or
+  runs `onConnect`. A pending `context` factory or `onConnect` past `connectionInitTimeout` is
+  answered `503` and logged as a warning, since its slot stays held until it settles.
 - **Request errors are JSON.** An operation rejected before any resolver ran (syntax, limits,
   validation, variables) is `400` JSON (`500` for `INTERNAL_SERVER_ERROR`), which the
   `graphql-sse` client retries up to `retryAttempts` times, harmlessly since nothing ran. Errors
@@ -310,7 +317,8 @@ The application calls the engine's `close()` on shutdown, including one you pass
 ## HTTP transport
 
 - `POST` requires `Content-Type: application/json` (`415` otherwise) and runs queries and
-  mutations. A subscription over `POST` is a `400`.
+  mutations. A subscription over `POST` is a `400`, unless the request asks for
+  [SSE](#subscriptions-over-sse).
 - `GET` runs queries only (a mutation or subscription is `405`) and, as a CSRF defense, must carry
   one of `csrf.requiredHeaders` (default `x-graphql-request`). A `GET` puts the query and variables
   in the URL, which proxies and logs record: send tokens and secrets in a `POST` body.

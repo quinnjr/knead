@@ -24,6 +24,7 @@ export {
   type PlaygroundOptions,
   type ResolvedGraphQLOptions,
   resolveOptions,
+  SSE_MAX_KEEP_ALIVE,
   type SseOptions,
   type SubscriptionOptions as GraphQLSubscriptionOptions,
 } from './options.js';
@@ -58,7 +59,7 @@ export {
   type SubscriptionOptions,
 } from './resolvers.js';
 export { GRAPHQL_RESPONSE_JSON } from './responses.js';
-export { GraphQLRuntime } from './runtime.js';
+export { type GraphQLExecutor, GraphQLRuntime } from './runtime.js';
 export { printSortedSchema } from './schema.js';
 export type { GraphQLConnection } from './subscriptions.js';
 export { GraphQLSubscriptions } from './subscriptions-service.js';

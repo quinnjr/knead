@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { Module, type Provider } from '@knead-js/core';
 import { APP_GUARD, type Ctx, type ListenOptions } from '@knead-js/http';
 import { readSse, type SseEvent, Test } from '@knead-js/testing';
-import type { SubscriptionIterator } from '@leaven-graphql/core';
+import { DocumentCache, type SubscriptionIterator } from '@leaven-graphql/core';
 import {
   GraphQLModule,
   type GraphQLModuleOptions,
@@ -167,6 +167,12 @@ async function commentsWithin(res: Response, count: number, ms: number): Promise
     await reader.cancel().catch(() => {});
   }
 }
+
+const logged = (level: string, text: string) =>
+  s!.mod.logs.some((e) => e.level === level && e.message.includes(text));
+
+const STILL_PENDING_SSE =
+  'GraphQL SSE subscription: the context factory or onConnect is still pending after 100 ms; its connection slot stays held until it settles.';
 
 async function expectJson(res: Response, status: number): Promise<any> {
   expect(res.status).toBe(status);
@@ -435,9 +441,10 @@ describe('GraphQL over SSE', () => {
     const text = await res.clone().text();
     expect(text).not.toContain('secret');
     await expectJson(res, 403);
-    expect(s!.mod.logs.some((e) => e.level === 'error' && e.message.includes('onConnect'))).toBe(
-      true,
-    );
+    // The WebSocket wording, naming the transport.
+    expect(
+      logged('error', 'GraphQL subscriptions onConnect threw; rejecting the SSE connection'),
+    ).toBe(true);
     await s!.mod.close();
     await start({
       context: () => {
@@ -448,6 +455,12 @@ describe('GraphQL over SSE', () => {
     expect(await denied.clone().text()).not.toContain('secret');
     await expectJson(denied, 403);
     expect(subscribers('t')).toBe(0);
+    expect(
+      logged(
+        'error',
+        'GraphQL context factory threw at connection_init; rejecting the SSE connection',
+      ),
+    ).toBe(true);
   });
 
   test('onConnect receives {} and its object reaches the context', async () => {
@@ -799,9 +812,12 @@ describe('GraphQL over SSE', () => {
     const timedOut = await send('subscription { t }');
     expect(timedOut.status).toBe(503);
     expect(Date.now() - started).toBeGreaterThanOrEqual(90);
-    // The slot is held until onConnect settles.
+    // The slot is held until onConnect settles, and the warning says so.
     expect((await send('subscription { t }')).status).toBe(429);
+    await until(() => logged('warn', STILL_PENDING_SSE));
+    expect(logged('debug', 'settled after')).toBe(false);
     settle.resolve(true);
+    await until(() => logged('debug', 'GraphQL SSE subscription: the pending context factory'));
     await until(async () => (await upgradeStatus(s!.app)) === 101);
     const events = await open('subscription { t }', 't');
     await events.return!();
@@ -835,5 +851,197 @@ describe('GraphQL over SSE', () => {
     // The stream ended without complete.
     expect((await events.next()).done).toBe(true);
     s = undefined;
+  });
+});
+
+/** Leaven's document cache with every read counted (`get` is what executor.parse() reads). */
+function countingCache() {
+  const inner = new DocumentCache({ maxSize: 100 });
+  const reads = { get: 0, getWithValidation: 0 };
+  const order: string[] = [];
+  const cache = {
+    get: (key: string) => {
+      reads.get++;
+      order.push('cache.get');
+      return inner.get(key);
+    },
+    getWithValidation: (key: string) => {
+      reads.getWithValidation++;
+      order.push('cache.getWithValidation');
+      return inner.getWithValidation(key);
+    },
+    set: inner.set.bind(inner),
+    setValidation: inner.setValidation.bind(inner),
+    setWithValidation: inner.setWithValidation.bind(inner),
+    has: inner.has.bind(inner),
+    delete: inner.delete.bind(inner),
+    clear: inner.clear.bind(inner),
+    getStats: inner.getStats.bind(inner),
+  };
+  return { cache: cache as never, reads, order };
+}
+
+describe('SSE responses, origin and dispatch', () => {
+  test('streams carry the configured Cache-Control and nosniff: a query and a subscription', async () => {
+    await start();
+    const query = await send('{ n }');
+    expect(query.headers.get('content-type')).toBe('text/event-stream; charset=utf-8');
+    expect(query.headers.get('cache-control')).toBe('no-store');
+    expect(query.headers.get('x-content-type-options')).toBe('nosniff');
+    await query.text();
+    const res = await send('subscription { t }');
+    expect(res.status).toBe(200);
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    await res.body!.cancel();
+    await s!.mod.close();
+    await start({ cacheControl: 'private, max-age=0' });
+    const custom = await send('{ n }');
+    expect(custom.headers.get('cache-control')).toBe('private, max-age=0');
+    await custom.text();
+  });
+
+  test('a cross-origin request is refused before its body or CSRF header is read', async () => {
+    await start();
+    const url = new URL('/graphql', s!.app.url);
+    const evil = { accept: 'text/event-stream', origin: 'https://evil.example' };
+    // Malformed JSON and a wrong content type would be 400 and 415 if the body were read first.
+    const malformed = await fetch(url, {
+      method: 'POST',
+      headers: { ...evil, 'content-type': 'application/json' },
+      body: '{',
+    });
+    expect(malformed.status).toBe(403);
+    const plain = await fetch(url, {
+      method: 'POST',
+      headers: { ...evil, 'content-type': 'text/plain' },
+      body: 'x',
+    });
+    expect(plain.status).toBe(403);
+    url.searchParams.set('query', '{ n }');
+    expect((await fetch(url, { headers: evil })).status).toBe(403);
+  });
+
+  test("the document is parsed once, after the app's onParse: no extra cache read", async () => {
+    const { cache, reads, order } = countingCache();
+    let parses = 0;
+    let connects = 0;
+    await start({
+      cache,
+      hooks: {
+        onParse: () => {
+          parses++;
+          order.push('onParse');
+        },
+      },
+      subscriptions: {
+        onConnect: () => {
+          connects++;
+          return true;
+        },
+      },
+    });
+    // An invalid document: the app's hook runs first, Leaven parses it once.
+    expect((await send('{ n')).status).toBe(400);
+    expect(order).toEqual(['onParse', 'cache.getWithValidation']);
+    expect(reads.get).toBe(0);
+    // A query: one pass, hooks once.
+    order.length = 0;
+    parses = 0;
+    await all(await send('{ n }'));
+    expect(parses).toBe(1);
+    expect(reads.get).toBe(0);
+    // A subscription: hooks once, and the second (subscribe) pipeline hits the cache.
+    parses = 0;
+    order.length = 0;
+    const events = await open('subscription { t }', 't');
+    expect(parses).toBe(1);
+    expect(connects).toBe(1);
+    expect(reads.get).toBe(0);
+    expect(order).toEqual(['onParse', 'cache.getWithValidation', 'cache.getWithValidation']);
+    await events.return!();
+  });
+
+  test('an invalid subscription document is a 400 without a slot or onConnect', async () => {
+    let connects = 0;
+    await start(
+      {
+        subscriptions: {
+          onConnect: () => {
+            connects++;
+            return true;
+          },
+        },
+      },
+      [],
+      { websocket: { maxConnectionsPerIp: 1 } },
+    );
+    const res = await send('subscription { nope }');
+    const body = await expectJson(res, 400);
+    expect(body.errors[0].extensions.code).toBe('VALIDATION_ERROR');
+    expect(connects).toBe(0);
+    // Knead's document limits run before any slot too.
+    const aliases = Array.from({ length: 31 }, (_, i) => `a${i}: t`).join(' ');
+    expect((await send(`subscription { ${aliases} }`)).status).toBe(400);
+    expect(connects).toBe(0);
+    const events = await open('subscription { t }', 't');
+    await events.return!();
+  });
+
+  test('a document cache that throws once is a logged 500; the next request works', async () => {
+    const { cache } = countingCache();
+    // Whichever read comes first fails, once (an executor.parse() pre-check would read `get`).
+    const reads = cache as Record<'get' | 'getWithValidation', (key: string) => unknown>;
+    let fail = true;
+    for (const name of ['get', 'getWithValidation'] as const) {
+      const original = reads[name];
+      reads[name] = (key) => {
+        if (fail) {
+          fail = false;
+          throw new Error('cache read failed');
+        }
+        return original(key);
+      };
+    }
+    await start({ cache });
+    const res = await send('subscription { t }');
+    const body = await expectJson(res, 500);
+    expect(body.errors[0].extensions.code).toBe('INTERNAL_SERVER_ERROR');
+    expect(logged('error', 'GraphQL execution failed inside Leaven')).toBe(true);
+    const events = await open('subscription { t }', 't');
+    await events.return!();
+  });
+
+  test('a subscription without a Subscription type over GET is a 405, as over JSON', async () => {
+    @Resolver()
+    class Only {
+      @Query(() => Int) one() {
+        return 1;
+      }
+    }
+    @Module({ providers: [Only] })
+    class OnlyModule {}
+    s = await startGraphQL([OnlyModule]);
+    const res = await send('subscription { one }', { method: 'GET' });
+    // One rule for both paths (throwRejected): a subscription over POST is 400, over GET 405.
+    expect(res.status).toBe(405);
+    expect(res.headers.get('allow')).toBe('POST');
+    const json = await fetch(new URL('/graphql?query=subscription%7Bone%7D', s.app.url), {
+      headers: { 'x-graphql-request': '1' },
+    });
+    expect(res.status).toBe(json.status);
+  });
+});
+
+describe('SSE internals stay private', () => {
+  test('the runtime exposes no SSE connection registry; the package exports no accessor', async () => {
+    await start();
+    const runtime = s!.mod.get(GraphQLRuntime) as unknown as Record<string, unknown>;
+    expect('sse' in runtime).toBe(false);
+    expect('sseConnections' in runtime).toBe(false);
+    const index = await import('../src/index.js');
+    for (const name of ['sseConnectionsOf', 'subscribeAgain', 'SseConnections', 'handleSse']) {
+      expect(name in index).toBe(false);
+    }
   });
 });

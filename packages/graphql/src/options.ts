@@ -34,7 +34,12 @@ export type ConnectContext = Partial<GraphQLContext> & { readonly [CONNECTION_PA
 
 /** Options of the GraphQL-over-SSE transport (`subscriptions.sse`). */
 export interface SseOptions {
-  /** ms between keep-alive comments, an integer from 1 to 2^31 - 1. Default 8000. */
+  /**
+   * ms between keep-alive comments, an integer from 1 to 2^31 - 1. Default: half of
+   * `listen({ idleTimeout })`, at most `SSE_MAX_KEEP_ALIVE` (8000 ms): 5000 at Bun's default
+   * idleTimeout of 10 s, and 8000 with `idleTimeout: 0`. An explicit interval above half a non-zero
+   * idleTimeout makes `listen()` throw.
+   */
   keepAliveInterval?: number;
 }
 
@@ -214,11 +219,11 @@ export interface ResolvedGraphQLOptions {
   readonly cacheControl: string | false;
   readonly subscriptions: SubscriptionOptions | false;
   /**
-   * `false` when `subscriptions` or `subscriptions.sse` is `false`. `explicit` is whether the
-   * application set `keepAliveInterval`; otherwise each stream derives its interval from the
-   * HTTP idle timeout (see sse.ts).
+   * `false` when `subscriptions` or `subscriptions.sse` is `false`. `keepAliveInterval` is the
+   * application's, or undefined when it set none: each stream then derives its interval from the
+   * HTTP idle timeout, at most `SSE_MAX_KEEP_ALIVE`.
    */
-  readonly sse: { readonly keepAliveInterval: number; readonly explicit: boolean } | false;
+  readonly sse: { readonly keepAliveInterval: number | undefined } | false;
   /**
    * `subscriptions.allowedOrigins` validated and normalized at bootstrap (whatever the schema):
    * `'*'`, a Set of origins, or undefined (same origin only). SSE checks requests against it.
@@ -255,6 +260,12 @@ export const GRAPHQL_LIMITS = Object.freeze({
  * context factory and `onConnect` over WebSocket and SSE.
  */
 export const DEFAULT_CONNECTION_INIT_TIMEOUT = 3000;
+
+/**
+ * The longest keep-alive interval (ms) an SSE stream derives from the HTTP idle timeout: Leaven's
+ * own default, used as is when there is no idle timeout.
+ */
+export const SSE_MAX_KEEP_ALIVE = 8000;
 
 /** Default Leaven document cache: at most 100 parsed documents. */
 export const DEFAULT_DOCUMENT_CACHE = Object.freeze({ maxSize: 100 });
@@ -431,10 +442,7 @@ export function resolveOptions(
     sse:
       options.subscriptions === false || options.subscriptions?.sse === false
         ? false
-        : {
-            keepAliveInterval: options.subscriptions?.sse?.keepAliveInterval ?? 8000,
-            explicit: options.subscriptions?.sse?.keepAliveInterval !== undefined,
-          },
+        : { keepAliveInterval: options.subscriptions?.sse?.keepAliveInterval },
     allowedOrigins:
       options.subscriptions === false
         ? undefined
