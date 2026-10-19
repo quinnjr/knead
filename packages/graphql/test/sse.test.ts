@@ -200,6 +200,7 @@ describe('GraphQL over SSE', () => {
     // A source that ends after two events, so the stream's completion is observable.
     const executor = s!.mod.get(GraphQLRuntime).executor;
     const real = executor.subscribe.bind(executor);
+    let returns = 0;
     executor.subscribe = (async (request: never, context: never) => {
       const result = await real(request, context);
       if (!(Symbol.asyncIterator in result)) return result;
@@ -210,13 +211,14 @@ describe('GraphQL over SSE', () => {
           return this;
         },
         async next() {
-          if (left-- <= 0) {
-            await it.return?.();
-            return { value: undefined, done: true };
-          }
+          if (left-- <= 0) return { value: undefined, done: true };
           return it.next();
         },
-        return: () => it.return!(),
+        // Not called by the wrapper itself: only Leaven, once the source has ended.
+        async return() {
+          returns++;
+          return it.return!();
+        },
       };
     }) as typeof executor.subscribe;
     const events = await open('subscription { t }', 't');
@@ -225,7 +227,40 @@ describe('GraphQL over SSE', () => {
     const received: SseEvent[] = [];
     for await (const event of events) received.push(event);
     expect(received).toEqual([next({ data: { t: 1 } }), next({ data: { t: 2 } }), COMPLETE]);
-    expect(subscribers('t')).toBe(0);
+    // Leaven returns an iterator that completed on its own, which ends its topic subscription.
+    await until(() => subscribers('t') === 0);
+    expect(returns).toBe(1);
+  });
+
+  test('an iterator without return() closes without a logged failure', async () => {
+    await start({}, [], { websocket: { maxConnectionsPerIp: 1 } });
+    const executor = s!.mod.get(GraphQLRuntime).executor;
+    const real = executor.subscribe.bind(executor);
+    executor.subscribe = (async (request: never, context: never) => {
+      const result = await real(request, context);
+      if (!(Symbol.asyncIterator in result)) return result;
+      const it = result as SubscriptionIterator<unknown>;
+      let left = 1;
+      return {
+        [Symbol.asyncIterator]() {
+          return this;
+        },
+        async next() {
+          if (left-- <= 0) return { value: undefined, done: true };
+          return it.next();
+        },
+      };
+    }) as typeof executor.subscribe;
+    const events = await open('subscription { t }', 't');
+    publish('t', 1);
+    const received: SseEvent[] = [];
+    for await (const event of events) received.push(event);
+    expect(received).toEqual([next({ data: { t: 1 } }), COMPLETE]);
+    // The slot comes back once the stream has closed (after Leaven's return attempt).
+    await until(async () => (await upgradeStatus(s!.app)) === 101);
+    expect(
+      s!.mod.logs.filter((e) => e.message.includes('subscription iterator failed')),
+    ).toHaveLength(0);
   });
 
   test('a rejecting iterator return() is logged once and the stream still closes', async () => {

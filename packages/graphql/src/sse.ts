@@ -410,8 +410,10 @@ async function subscribe(
           toSafeError(error, runtime.masking, 'a GraphQL SSE subscription')
             .toGraphQLError()
             .toJSON(),
-        // Leaven has returned the iterator (its topic subscriptions) before onClose runs, however
-        // the stream ended.
+        // However the stream ended, Leaven has called the iterator's return() (which ends its
+        // topic subscriptions) before onClose runs, but does not await it: the slot can come
+        // back while an asynchronous unsubscribe (Redis UNSUBSCRIBE) is still in flight. Not
+        // awaited here either, so a hung unsubscribe cannot hold the slot.
         onClose: () => slot.release(),
       }),
     ),
@@ -421,6 +423,7 @@ async function subscribe(
 /**
  * `iterator` with a `return()` that logs a failure before rethrowing it: Leaven calls `return()`
  * on every close but has no logger and swallows what it throws (e.g. a failed Redis UNSUBSCRIBE).
+ * An iterator without `return()` has nothing to end.
  */
 function loggingReturn(
   runtime: GraphQLRuntime,
@@ -431,7 +434,10 @@ function loggingReturn(
     next: (...args) => iterator.next(...args),
     return: async (value?: unknown) => {
       try {
-        return await iterator.return!(value);
+        // Leaven tolerates an iterator without return(); so does the wrapper.
+        return iterator.return
+          ? await iterator.return(value)
+          : { done: true as const, value: value as undefined };
       } catch (error) {
         logInternalError(
           runtime.masking,
