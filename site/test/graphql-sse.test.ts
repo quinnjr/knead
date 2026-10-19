@@ -425,11 +425,12 @@ describe('guide: subscriptions over SSE', () => {
     gated.release();
   }, 10_000);
 
-  test('over WebSocket, a pending onConnect is closed with 4408 after connectionInitTimeout', async () => {
+  test('over WebSocket, a pending onConnect is closed with 4408 and keeps its slot', async () => {
     const gated = gatedOnConnect();
-    const app = await blog({
-      subscriptions: { connectionInitTimeout: 100, onConnect: () => gated.onConnect() },
-    });
+    const app = await blog(
+      { subscriptions: { connectionInitTimeout: 100, onConnect: () => gated.onConnect() } },
+      { websocket: { maxConnectionsPerIp: 1 } },
+    );
     const url = new URL('/graphql', app.url);
     url.protocol = 'ws:';
     const ws = new WebSocket(url, 'graphql-transport-ws');
@@ -443,7 +444,24 @@ describe('guide: subscriptions over SSE', () => {
     ws.send(JSON.stringify({ type: 'connection_init', payload: {} }));
     await gated.called;
     expect(await closed).toBe(4408);
+    /** Whether a new socket opens (false: the upgrade was refused, here with 429). */
+    const opens = () =>
+      new Promise<boolean>((resolve) => {
+        const socket = new WebSocket(url, 'graphql-transport-ws');
+        socket.onopen = () => {
+          socket.close();
+          resolve(true);
+        };
+        socket.onerror = () => resolve(false);
+      });
+    // The socket is gone, but its onConnect is pending: the slot is still taken.
+    expect(await opens()).toBe(false);
     gated.release();
+    const deadline = Date.now() + 2000;
+    while (!(await opens())) {
+      if (Date.now() > deadline) throw new Error('the slot was not returned');
+      await Bun.sleep(10);
+    }
   });
 
   test('a subscription without a Subscription type is a 400, as over JSON, without onConnect', async () => {
