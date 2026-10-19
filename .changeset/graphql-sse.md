@@ -46,7 +46,8 @@ mutation as one `next` and `complete`. Clients that send `*/*` or prefer JSON ar
   `maxConnectionsPerIp`), and `onConnect` is skipped when the socket closed during the factory.
 - **WebSocket `onConnect` timeout (can close sockets in existing apps).** A subscription socket
   whose `onConnect` is still pending `subscriptions.connectionInitTimeout` (default 3000 ms) after
-  `connection_init` is now closed with `4408` (Leaven's own timer stops at `connection_init`). An
+  `connection_init` is now closed with `4408` (`Connection initialization timeout`, from Leaven,
+  which now bounds `onConnect` and ignores a late result). An
   existing app whose `onConnect` takes longer than that must raise `connectionInitTimeout`.
 - **`allowedOrigins` is validated at bootstrap whatever the schema.** SSE checks queries and
   mutations against `subscriptions.allowedOrigins`, so a value that is not `'*'` or an array of
@@ -57,8 +58,8 @@ mutation as one `next` and `complete`. Clients that send `*/*` or prefer JSON ar
   at `400` (`500` for `INTERNAL_SERVER_ERROR`); anything after execution started is streamed, so a
   retrying client never runs a mutation twice. `GraphQLRuntime.executor` is the newly exported
   `GraphQLExecutor` type, which gains `isRequestError(response)`.
-- **Leaven upgrade.** `@leaven-graphql/core` 0.4.0, `@leaven-graphql/ws` 0.3.1 and the new
-  `@leaven-graphql/sse` 0.4.0, pinned exactly.
+- **Leaven upgrade.** `@leaven-graphql/core` 0.4.1, `@leaven-graphql/ws` 0.3.2 and the new
+  `@leaven-graphql/sse` 0.4.1, pinned exactly.
 
 `@knead-js/http`: `app.close()` ends open streaming responses that hold a connection slot before
 it waits for in-flight requests. The new framework-internal `StreamRegistry` (provided by

@@ -219,25 +219,6 @@ function dropPending(state: SocketState, id: string): void {
   }
 }
 
-/**
- * Leaven shim: Leaven stops its connection-init timer at connection_init, so a pending context
- * factory or onConnect is bounded here by `connectionInitTimeout` too, closing the socket with
- * 4408 as Leaven does before init. Returns the function that stops the timer. Delete it (and its
- * one call) once Leaven bounds onConnect itself.
- */
-function closeOnInitTimeout(
-  socket: ServerWebSocket<WebSocketContext>,
-  state: SocketState,
-  timeout: number,
-): () => void {
-  const timer = setTimeout(() => {
-    if (!state.initDone) {
-      (socket as unknown as SocketFacade).close(4408, 'Connection initialization timeout');
-    }
-  }, timeout);
-  return () => clearTimeout(timer);
-}
-
 /** The graphql-transport-ws endpoint registered with WsRegistry at the GraphQL path. */
 export function createSubscriptionEndpoint(
   runtime: GraphQLRuntime,
@@ -315,7 +296,7 @@ export function createSubscriptionEndpoint(
   const handler = createHandler({
     schema: runtime.schema,
     logger: leavenLogger(runtime.logger, runtime.development),
-    connectionInitTimeout: options.connectionInitTimeout,
+    connectionInitTimeout: initTimeout,
     keepAliveInterval: options.keepAliveInterval,
     subscriptionManager: {
       executor,
@@ -338,12 +319,12 @@ export function createSubscriptionEndpoint(
       if (state.closed) return false;
       // The socket's slot stays taken until the factory and onConnect settle, even if the client
       // closes meanwhile, so pending connection_init work is bounded by the connection limits.
+      // Leaven bounds onConnect by connectionInitTimeout, closing the socket with 4408 and
+      // ignoring a late result.
       const done = runtime.ws.holdSlot(state.slot);
-      const stopInitTimer = closeOnInitTimeout(socket, state, initTimeout);
       try {
         return await initialize(socket, state, params);
       } finally {
-        stopInitTimer();
         done();
       }
     },

@@ -459,11 +459,12 @@ token this way.
 > `ConnectionParams` type makes returning or spreading it a compile error.
 
 The `context` factory and `onConnect` must settle within `subscriptions.connectionInitTimeout`
-(default 3000 ms, counted from `connection_init`), or the socket is closed with `4408` (and a
-warning is logged: the socket's slot stays held until they settle). A socket
-that closes while they are pending keeps its connection slot until they settle, so clients cannot
-pile up pending `onConnect` work past `maxConnectionsPerIp` by connecting and disconnecting, and
-`onConnect` is skipped when the socket closed while the factory ran.
+(default 3000 ms, counted from `connection_init`), or the socket is closed with `4408`
+(`Connection initialization timeout`, and a warning is logged: the socket's slot stays held until
+they settle). A socket that closes while they are pending keeps its connection slot until they
+settle, so clients cannot pile up pending `onConnect` work past `maxConnectionsPerIp` by
+connecting and disconnecting, and `onConnect` is skipped when the socket closed while the factory
+ran.
 
 Browser upgrades must come from the server's own origin, or from one of
 `subscriptions.allowedOrigins` (`'*'` allows any); others get `403`. Upgrades without an `Origin`

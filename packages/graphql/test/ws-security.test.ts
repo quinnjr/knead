@@ -328,11 +328,11 @@ describe('graphql-transport-ws handshake', () => {
       ws.onopen = resolve;
       ws.onerror = reject;
     });
-    const code = new Promise<number>((resolve) => {
-      ws.onclose = (event) => resolve(event.code);
+    const closed = new Promise<{ code: number; reason: string }>((resolve) => {
+      ws.onclose = (event) => resolve({ code: event.code, reason: event.reason });
     });
     ws.send(JSON.stringify({ type: 'connection_init', payload: {} }));
-    expect(await code).toBe(4408);
+    expect(await closed).toEqual({ code: 4408, reason: 'Connection initialization timeout' });
     expect(calls).toBe(1);
     expect(await upgradeStatus(s.app)).toBe(429);
     const logged = (level: string, text: string) =>

@@ -607,51 +607,10 @@ export function normalizeResponse<T>(
 }
 
 /**
- * The hooks Leaven runs before it selects and executes the operation (wrapped by
- * trackPreExecution and by skipPreExecutionAgain, which outlives it).
+ * The hooks Leaven runs before it selects and executes the operation, which
+ * skipPreExecutionAgain skips for a document this request already passed.
  */
 const PRE_EXECUTION_HOOKS = ['onParse', 'onParsed', 'onValidate', 'onValidated'] as const;
-
-/** What GraphQLExecutor records about one execute() or subscribe() call. */
-interface CallState {
-  /** A pre-execution hook threw. */
-  rejected: boolean;
-  /** Leaven reached onExecute: its pipeline (parse, cache, validation, compile) completed. */
-  executing: boolean;
-}
-
-/**
- * Wraps the pre-execution hooks so a throw from one (Knead's document limits run in `onParsed`)
- * flags the current call: Leaven reports those throws without marking them as request
- * rejections. `onExecute` (always set, so a call that never reaches it is known) records that
- * Leaven's pipeline completed.
- */
-function trackPreExecution(
-  hooks: ExecutionHooks | undefined,
-  calls: AsyncLocalStorage<CallState>,
-): ExecutionHooks {
-  const tracked: Record<string, unknown> = { ...hooks };
-  for (const name of PRE_EXECUTION_HOOKS) {
-    const hook = hooks?.[name] as ((...args: unknown[]) => unknown) | undefined;
-    if (!hook) continue;
-    tracked[name] = async (...args: unknown[]) => {
-      try {
-        await hook(...args);
-      } catch (error) {
-        const call = calls.getStore();
-        if (call) call.rejected = true;
-        throw error;
-      }
-    };
-  }
-  const onExecute = hooks?.onExecute;
-  tracked.onExecute = async (context: unknown, document: DocumentNode) => {
-    const call = calls.getStore();
-    if (call) call.executing = true;
-    await onExecute?.(context, document);
-  };
-  return tracked as ExecutionHooks;
-}
 
 /**
  * Wraps the pre-execution hooks (Knead's document limits and the application's onParse, onParsed,
@@ -701,7 +660,6 @@ export function subscribeAgain(
  */
 export class GraphQLExecutor extends LeavenExecutor {
   readonly #masking: ErrorMaskingOptions;
-  readonly #calls: AsyncLocalStorage<CallState>;
   readonly #again: AsyncLocalStorage<true>;
   readonly #rejected = new WeakSet<object>();
 
@@ -711,14 +669,9 @@ export class GraphQLExecutor extends LeavenExecutor {
   }
 
   constructor(config: ExecutorConfig, masking: ErrorMaskingOptions) {
-    const calls = new AsyncLocalStorage<CallState>();
     const again = new AsyncLocalStorage<true>();
-    super({
-      ...config,
-      hooks: trackPreExecution(skipPreExecutionAgain(config.hooks, again), calls),
-    });
+    super({ ...config, hooks: skipPreExecutionAgain(config.hooks, again) });
     this.#masking = masking;
-    this.#calls = calls;
     this.#again = again;
   }
 
@@ -726,33 +679,27 @@ export class GraphQLExecutor extends LeavenExecutor {
     request: GraphQLRequest,
     context?: TContext,
   ): Promise<ExecutionResult<TData>> {
-    const call: CallState = { rejected: false, executing: false };
-    const result = await this.#calls.run(call, () =>
-      super.execute<TData, TContext>(request, context),
-    );
-    return { ...result, response: this.#normalize(result.response, call) };
+    const result = await super.execute<TData, TContext>(request, context);
+    return { ...result, response: this.#normalize(result.response) };
   }
 
   override async subscribe<TData = Record<string, unknown>, TContext = unknown>(
     request: GraphQLRequest,
     context?: TContext,
   ): Promise<SubscriptionIterator<TData> | GraphQLResponse<TData>> {
-    const call: CallState = { rejected: false, executing: false };
-    const result = await this.#calls.run(call, () =>
-      super.subscribe<TData, TContext>(request, context),
-    );
-    return Symbol.asyncIterator in result ? result : this.#normalize(result, call);
+    const result = await super.subscribe<TData, TContext>(request, context);
+    return Symbol.asyncIterator in result ? result : this.#normalize(result);
   }
 
   /**
    * True for a response this executor's `execute` or `subscribe` returned when nothing ran: Leaven
-   * rejected the request before execution (`isRequestError` from `@leaven-graphql/sse`: syntax,
-   * parser limits, validation, operation selection, complexity, variable coercion) or a
-   * pre-execution hook threw (Knead's `maxFields`, `maxAliases`, `maxDepth` and
-   * `maxIntrospectionDepth` checks, or the application's `onParse`/`onParsed`/`onValidate`/
-   * `onValidated`), or Leaven's pipeline failed before execution (a document cache that throws:
-   * INTERNAL_SERVER_ERROR). Identity-based: pass the response object as returned. Classified by where
-   * the error arose, never by its code, so an error raised after execution started (a resolver,
+   * marked it as rejected before `onExecute` (`isRequestError` from `@leaven-graphql/sse`): syntax,
+   * parser limits, validation, operation selection, complexity, variable coercion, a throw from a
+   * pre-execution hook (Knead's `maxFields`, `maxAliases`, `maxDepth` and `maxIntrospectionDepth`
+   * checks, or the application's `onParse`/`onParsed`/`onValidate`/`onValidated`) or a document
+   * cache that throws (INTERNAL_SERVER_ERROR). Identity-based: pass the response object as
+   * returned; the mark is kept on the copy normalization makes. Classified by where the error
+   * arose, never by its code, so an error raised after execution started (a resolver,
    * `onExecute`, `onExecuted`) is never a request error.
    */
   isRequestError(response: GraphQLResponse<unknown>): boolean {
@@ -760,11 +707,9 @@ export class GraphQLExecutor extends LeavenExecutor {
   }
 
   /** Normalizes a response, keeping the request-error mark on the copy normalizeResponse may make. */
-  #normalize<TData>(response: GraphQLResponse<TData>, call: CallState): GraphQLResponse<TData> {
-    const preExecution = call.rejected || !call.executing;
-    const rejected = isRequestError(response) || (preExecution && response.data === undefined);
+  #normalize<TData>(response: GraphQLResponse<TData>): GraphQLResponse<TData> {
     const normalized = normalizeResponse(response, this.#masking);
-    if (rejected) this.#rejected.add(normalized);
+    if (isRequestError(response)) this.#rejected.add(normalized);
     return normalized;
   }
 }

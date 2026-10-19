@@ -17,7 +17,7 @@ import {
   revokes,
 } from './connect.js';
 import { ExecutionHandoff, OperationContext, type OperationKind } from './context.js';
-import { type ErrorMaskingOptions, logInternalError, toSafeError } from './errors.js';
+import { type ErrorMaskingOptions, toSafeError } from './errors.js';
 import { SSE_MAX_KEEP_ALIVE } from './options.js';
 import {
   acceptQuality,
@@ -397,42 +397,24 @@ async function subscribe(
     if (runtime.executor.isRequestError(result)) return requestError(runtime, result);
     return sseResponse(runtime, createEventStreamResponse(result, { keepAliveInterval }));
   }
-  const iterator = result;
   // An already aborted signal (the client left, or end() ran) makes the stream return the
   // iterator and close at once.
   return sseResponse(
     runtime,
     withOpeningComment(
-      createEventStreamResponse(iterator, {
+      createEventStreamResponse(result, {
         signal: slot.signal,
         keepAliveInterval,
         formatError: (error) =>
           toSafeError(error, runtime.masking, 'a GraphQL SSE subscription')
             .toGraphQLError()
             .toJSON(),
-        onClose: () => {
-          slot.release();
-          returnAfterThrow(runtime, iterator);
-        },
+        // Leaven has returned the iterator (its topic subscriptions) before onClose runs, however
+        // the stream ended.
+        onClose: () => slot.release(),
       }),
     ),
   );
-}
-
-/**
- * Leaven shim: Leaven returns the iterator only when the stream ends early; after the iterator
- * threw it does not, and the event source (its topic subscriptions) would stay open. A failing
- * return() is logged. Delete it (and its call in onClose) once Leaven returns the iterator on
- * every close.
- */
-export function returnAfterThrow(runtime: GraphQLRuntime, iterator: AsyncIterator<unknown>): void {
-  const failed = (error: unknown) =>
-    logInternalError(runtime.masking, 'GraphQL SSE subscription iterator return() failed', error);
-  try {
-    void Promise.resolve(iterator.return?.()).catch(failed);
-  } catch (error) {
-    failed(error);
-  }
 }
 
 const OPENING_COMMENT = new TextEncoder().encode(':\n\n');

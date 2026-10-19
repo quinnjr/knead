@@ -1,9 +1,7 @@
-// The rejection rules shared by the JSON and SSE paths, and the SSE iterator shim's logging.
+// The rejection rules shared by the JSON and SSE paths.
 import { describe, expect, test } from 'bun:test';
-import { HttpException, MemoryLogger } from '@knead-js/http';
+import { HttpException } from '@knead-js/http';
 import { rejectionMessage, throwRejected } from '../src/responses.js';
-import type { GraphQLRuntime } from '../src/runtime.js';
-import { returnAfterThrow } from '../src/sse.js';
 
 function thrown(fn: () => void): HttpException | undefined {
   try {
@@ -51,36 +49,5 @@ describe('rejectionMessage', () => {
     expect(rejectionMessage('mutation', ['query'], false)).toBe(
       'A mutation cannot be sent over GET; use POST.',
     );
-  });
-});
-
-describe('returnAfterThrow (Leaven shim)', () => {
-  const runtime = (logger: MemoryLogger) =>
-    ({ masking: { maskErrors: true, logger } }) as unknown as GraphQLRuntime;
-
-  test('a return() that rejects or throws is logged', async () => {
-    const logger = new MemoryLogger();
-    returnAfterThrow(runtime(logger), {
-      next: async () => ({ value: undefined, done: true }),
-      return: () => Promise.reject(new Error('rejected')),
-    });
-    returnAfterThrow(runtime(logger), {
-      next: async () => ({ value: undefined, done: true }),
-      return: () => {
-        throw new Error('thrown');
-      },
-    });
-    await Bun.sleep(0);
-    const failures = logger.entries.filter((e) =>
-      e.message.includes('GraphQL SSE subscription iterator return() failed'),
-    );
-    expect(failures).toHaveLength(2);
-  });
-
-  test('an iterator without return() is fine', async () => {
-    const logger = new MemoryLogger();
-    returnAfterThrow(runtime(logger), { next: async () => ({ value: undefined, done: true }) });
-    await Bun.sleep(0);
-    expect(logger.entries).toEqual([]);
   });
 });
