@@ -1,6 +1,6 @@
 ---
 '@knead-js/graphql': minor
-'@knead-js/http': patch
+'@knead-js/http': minor
 '@knead-js/testing': minor
 ---
 
@@ -32,9 +32,11 @@ mutation as one `next` and `complete`. Clients that send `*/*` or prefer JSON ar
 - **WebSocket slot change.** A subscription socket that closes while its `context` factory or
   `onConnect` is pending now keeps its connection slot until they settle (it used to return it at
   once, so connect-and-close cycles could pile up pending `onConnect` calls past
-  `maxConnectionsPerIp`), `onConnect` is skipped when the socket closed during the factory, and a
-  socket whose `onConnect` is still pending `connectionInitTimeout` after `connection_init` is
-  closed with `4408` (Leaven's own timer stops at `connection_init`).
+  `maxConnectionsPerIp`), and `onConnect` is skipped when the socket closed during the factory.
+- **WebSocket `onConnect` timeout (can close sockets in existing apps).** A subscription socket
+  whose `onConnect` is still pending `subscriptions.connectionInitTimeout` (default 3000 ms) after
+  `connection_init` is now closed with `4408` (Leaven's own timer stops at `connection_init`). An
+  existing app whose `onConnect` takes longer than that must raise `connectionInitTimeout`.
 - **`allowedOrigins` is validated at bootstrap whatever the schema.** SSE checks queries and
   mutations against `subscriptions.allowedOrigins`, so a value that is not `'*'` or an array of
   exact origins is an `HttpConfigError` from `GraphQLModule.forRoot()` even without a Subscription
@@ -47,8 +49,10 @@ mutation as one `next` and `complete`. Clients that send `*/*` or prefer JSON ar
   `@leaven-graphql/sse` 0.4.0, pinned exactly.
 
 `@knead-js/http`: `app.close()` ends open streaming responses that hold a connection slot before
-it waits for in-flight requests, and `WsRegistry` gains internal stream slots, slot holds for
-pending connection work and a keep-alive check against the HTTP idle timeout. The new
+it waits for in-flight requests. The new framework-internal `StreamRegistry` (provided by
+`HttpCoreModule`, used by GraphQL SSE) holds those streams, sharing the WebSocket connection slots,
+and checks stream keep-alives against the HTTP idle timeout; `WsRegistry` gains an internal slot
+hold for pending connection work. The new
 `normalizeAllowedOrigins(subject, origins)` validates and normalizes an `allowedOrigins` option as
 `WsRegistry.register()` does, and `register()` now reports a non-array `allowedOrigins` by name.
 
