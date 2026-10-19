@@ -4,6 +4,7 @@
 // Usage: bun scripts/smoke.ts (set REDIS_URL to exercise RedisPubSub).
 import { createConnection, createServer } from 'node:net';
 import { fileURLToPath } from 'node:url';
+import { readSse } from '@knead-js/testing';
 
 const RATE_LIMIT = 40;
 const FRONTEND = 'http://localhost:5173';
@@ -157,27 +158,30 @@ async function sseRequest(query: string, variables: object, token?: string) {
   }
 }
 
-/** Collects the `next` payloads of an event stream until `complete` or the body ends. */
+/**
+ * Collects the `next` payloads of an event stream until `complete` or the body ends. A read or
+ * JSON error is kept in `failure` so the assertion can report it.
+ */
 function sseEvents(res: Response) {
   const events: GqlBody[] = [];
-  const reader = res.body!.pipeThrough(new TextDecoderStream()).getReader();
+  const stream = readSse(res);
+  const state: { failure?: unknown } = {};
   const done = (async () => {
-    let buffer = '';
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) return;
-      buffer += value;
-      for (let end = buffer.indexOf('\n\n'); end !== -1; end = buffer.indexOf('\n\n')) {
-        const block = buffer.slice(0, end);
-        buffer = buffer.slice(end + 2);
-        const event = /^event: (.*)$/m.exec(block)?.[1];
-        if (event === 'complete') return;
-        const data = /^data: (.*)$/m.exec(block)?.[1];
-        if (event === 'next' && data) events.push(JSON.parse(data) as GqlBody);
-      }
+    for await (const { event, data } of stream) {
+      if (event === 'complete') return;
+      if (event === 'next') events.push(JSON.parse(data) as GqlBody);
     }
-  })().catch(() => {});
-  return { events, done, close: () => reader.cancel().catch(() => {}) };
+  })().catch((error: unknown) => {
+    state.failure = error;
+  });
+  return {
+    events,
+    done,
+    state,
+    close: async () => {
+      await stream.return?.();
+    },
+  };
 }
 
 /** Sends a WebSocket upgrade over raw TCP and returns the HTTP status line. */
@@ -387,7 +391,10 @@ try {
         await Bun.sleep(50);
       }
       const event = sub.events[0];
-      assert(event, 'no event received');
+      assert(
+        event,
+        `no event received${sub.state.failure ? `: ${String(sub.state.failure)}` : ''}`,
+      );
       assert(!event.errors, JSON.stringify(event.errors));
       const post = event.data.postPublished;
       assert(post.author.name === 'Grace Hopper', `filter failed: ${JSON.stringify(post)}`);
