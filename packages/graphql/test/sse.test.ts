@@ -228,6 +228,40 @@ describe('GraphQL over SSE', () => {
     expect(subscribers('t')).toBe(0);
   });
 
+  test('a rejecting iterator return() is logged once and the stream still closes', async () => {
+    await start();
+    const executor = s!.mod.get(GraphQLRuntime).executor;
+    const real = executor.subscribe.bind(executor);
+    let returns = 0;
+    executor.subscribe = (async (request: never, context: never) => {
+      const result = await real(request, context);
+      if (!(Symbol.asyncIterator in result)) return result;
+      const it = result as SubscriptionIterator<unknown>;
+      return {
+        [Symbol.asyncIterator]() {
+          return this;
+        },
+        next: () => it.next(),
+        async return() {
+          returns++;
+          await it.return?.();
+          throw new Error('UNSUBSCRIBE failed');
+        },
+      };
+    }) as typeof executor.subscribe;
+    const events = await open('subscription { t }', 't');
+    publish('t', 1);
+    expect((await events.next()).value).toEqual(next({ data: { t: 1 } }));
+    await events.return!();
+    await until(() => returns > 0);
+    await Bun.sleep(50);
+    const entries = s!.mod.logs.filter((e) =>
+      e.message.includes('Ending a GraphQL SSE subscription iterator failed'),
+    );
+    expect(entries).toHaveLength(1);
+    expect(returns).toBe(1);
+  });
+
   test('a subscription over GET streams too', async () => {
     await start();
     const events = await open('subscription { t }', 't', { method: 'GET' });

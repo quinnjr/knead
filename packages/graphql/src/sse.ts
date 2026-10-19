@@ -4,7 +4,7 @@ import {
   originAllowed,
   ServiceUnavailableException,
 } from '@knead-js/http';
-import type { GraphQLRequest, GraphQLResponse } from '@leaven-graphql/core';
+import type { GraphQLRequest, GraphQLResponse, SubscriptionIterator } from '@leaven-graphql/core';
 import { createEventStreamResponse, isSubscriptionIterator } from '@leaven-graphql/sse';
 import {
   type ConnectionIdentity,
@@ -17,7 +17,7 @@ import {
   revokes,
 } from './connect.js';
 import { ExecutionHandoff, OperationContext, type OperationKind } from './context.js';
-import { type ErrorMaskingOptions, toSafeError } from './errors.js';
+import { type ErrorMaskingOptions, logInternalError, toSafeError } from './errors.js';
 import { SSE_MAX_KEEP_ALIVE } from './options.js';
 import {
   acceptQuality,
@@ -402,7 +402,7 @@ async function subscribe(
   return sseResponse(
     runtime,
     withOpeningComment(
-      createEventStreamResponse(result, {
+      createEventStreamResponse(loggingReturn(runtime, result), {
         signal: slot.signal,
         keepAliveInterval,
         formatError: (error) =>
@@ -415,6 +415,34 @@ async function subscribe(
       }),
     ),
   );
+}
+
+/**
+ * `iterator` with a `return()` that logs a failure before rethrowing it: Leaven calls `return()`
+ * on every close but has no logger and swallows what it throws (e.g. a failed Redis UNSUBSCRIBE).
+ */
+function loggingReturn(
+  runtime: GraphQLRuntime,
+  iterator: SubscriptionIterator<unknown>,
+): SubscriptionIterator<unknown> {
+  const wrapped: SubscriptionIterator<unknown> = {
+    [Symbol.asyncIterator]: () => wrapped,
+    next: (...args) => iterator.next(...args),
+    return: async (value?: unknown) => {
+      try {
+        return await iterator.return!(value);
+      } catch (error) {
+        logInternalError(
+          runtime.masking,
+          'Ending a GraphQL SSE subscription iterator failed',
+          error,
+        );
+        throw error;
+      }
+    },
+  };
+  if (iterator.throw) wrapped.throw = (error) => iterator.throw!(error);
+  return wrapped;
 }
 
 const OPENING_COMMENT = new TextEncoder().encode(':\n\n');
