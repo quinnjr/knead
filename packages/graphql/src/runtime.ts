@@ -613,21 +613,37 @@ export function normalizeResponse<T>(
 const PRE_EXECUTION_HOOKS = ['onParse', 'onParsed', 'onValidate', 'onValidated'] as const;
 
 /**
+ * The store of one subscribeAgain() call. `skip` holds only until that call reaches onExecute:
+ * AsyncLocalStorage carries the store into everything the call starts (the application's
+ * onExecute, guards, resolvers and their timers), and an executor call made from there is a new
+ * document that must pass the limits and the application's hooks.
+ */
+interface AgainToken {
+  skip: boolean;
+}
+
+/**
  * Wraps the pre-execution hooks (Knead's document limits and the application's onParse, onParsed,
- * onValidate and onValidated) so that they do nothing inside `again`: a call for a document they
- * have already passed in this request.
+ * onValidate and onValidated) so that they do nothing for a subscribeAgain() call, which is for a
+ * document they have already passed in this request, up to that call's onExecute (which ends the
+ * skip before any application code runs).
  */
 function skipPreExecutionAgain(
   hooks: ExecutionHooks | undefined,
-  again: AsyncLocalStorage<true>,
-): ExecutionHooks | undefined {
-  if (!hooks) return hooks;
+  again: AsyncLocalStorage<AgainToken>,
+): ExecutionHooks {
   const wrapped: Record<string, unknown> = { ...hooks };
   for (const name of PRE_EXECUTION_HOOKS) {
-    const hook = hooks[name] as ((...args: unknown[]) => unknown) | undefined;
+    const hook = hooks?.[name] as ((...args: unknown[]) => unknown) | undefined;
     if (hook)
-      wrapped[name] = (...args: unknown[]) => (again.getStore() ? undefined : hook(...args));
+      wrapped[name] = (...args: unknown[]) => (again.getStore()?.skip ? undefined : hook(...args));
   }
+  const onExecute = hooks?.onExecute;
+  wrapped.onExecute = (...args: Parameters<NonNullable<ExecutionHooks['onExecute']>>) => {
+    const token = again.getStore();
+    if (token) token.skip = false;
+    return onExecute?.(...args);
+  };
   return wrapped as ExecutionHooks;
 }
 
@@ -660,16 +676,24 @@ export function subscribeAgain(
  */
 export class GraphQLExecutor extends LeavenExecutor {
   readonly #masking: ErrorMaskingOptions;
-  readonly #again: AsyncLocalStorage<true>;
+  readonly #again: AsyncLocalStorage<AgainToken>;
   readonly #rejected = new WeakSet<object>();
 
   static {
-    subscribeAgainOf = (executor, request, context) =>
-      executor.#again.run(true, () => executor.subscribe(request, context));
+    subscribeAgainOf = (executor, request, context) => {
+      const token: AgainToken = { skip: true };
+      return executor.#again.run(token, async () => {
+        try {
+          return await executor.subscribe(request, context);
+        } finally {
+          token.skip = false;
+        }
+      });
+    };
   }
 
   constructor(config: ExecutorConfig, masking: ErrorMaskingOptions) {
-    const again = new AsyncLocalStorage<true>();
+    const again = new AsyncLocalStorage<AgainToken>();
     super({ ...config, hooks: skipPreExecutionAgain(config.hooks, again) });
     this.#masking = masking;
     this.#again = again;
