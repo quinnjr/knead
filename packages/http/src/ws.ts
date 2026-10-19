@@ -234,7 +234,7 @@ function originOf(value: string): string | undefined {
  * query, credentials, default port or wildcard would never be what a browser sends, so the entry
  * would silently match nothing or more than it says.
  */
-function assertOrigin(path: string, entry: unknown): void {
+function assertOrigin(subject: string, entry: unknown): void {
   const origin = typeof entry === 'string' ? originOf(entry) : undefined;
   // `new URL()` accepts `*` in a host, so `https://*.example.com` is an origin that never matches.
   const wildcard = typeof entry === 'string' && entry.includes('*');
@@ -245,9 +245,26 @@ function assertOrigin(path: string, entry: unknown): void {
     : origin === undefined
       ? 'expected scheme://host[:port]'
       : `expected the bare origin ${JSON.stringify(origin)}`;
-  throw new HttpConfigError(
-    `Invalid allowedOrigins entry for WebSocket endpoint ${path}: ${shown} (${hint}).`,
-  );
+  throw new HttpConfigError(`Invalid allowedOrigins entry for ${subject}: ${shown} (${hint}).`);
+}
+
+/**
+ * @internal Validates an `allowedOrigins` option (`'*'` or an array of exact origins) and returns
+ * it normalized for originAllowed(): `'*'`, a new Set of origins, or undefined when unset. Throws
+ * HttpConfigError naming `subject` (for example `WebSocket endpoint /ws`) for anything else.
+ */
+export function normalizeAllowedOrigins(
+  subject: string,
+  origins: unknown,
+): ReadonlySet<string> | '*' | undefined {
+  if (origins === undefined || origins === '*') return origins;
+  if (!Array.isArray(origins)) {
+    throw new HttpConfigError(
+      `allowedOrigins for ${subject} must be an array of origins or "*"; got ${JSON.stringify(origins)}.`,
+    );
+  }
+  for (const entry of origins) assertOrigin(subject, entry);
+  return new Set(origins.map((entry: string) => originOf(entry)!));
 }
 
 /**
@@ -372,10 +389,11 @@ export class WsRegistry {
     if (this.#endpoints.has(normalized)) {
       throw new HttpConfigError(`Duplicate WebSocket endpoint ${normalized}.`);
     }
-    const origins = options.allowedOrigins;
-    if (origins !== undefined && origins !== '*') {
-      for (const origin of origins) assertOrigin(normalized, origin);
-    }
+    // A copy: changing the caller's array after register() cannot widen the check.
+    const origins = normalizeAllowedOrigins(
+      `WebSocket endpoint ${normalized}`,
+      options.allowedOrigins,
+    );
     assertRate(`messageRate of ${normalized}`, options.messageRate);
     if (options.maxConnectionLifetime !== undefined) {
       assertInteger(
@@ -390,13 +408,7 @@ export class WsRegistry {
       throw new HttpConfigError(`meta of ${normalized} must be an object`);
     }
     this.#endpoints.set(normalized, endpoint);
-    if (origins !== undefined) {
-      // A copy: changing the caller's array after register() cannot widen the check.
-      this.#origins.set(
-        normalized,
-        origins === '*' ? '*' : new Set(origins.map((entry) => originOf(entry)!)),
-      );
-    }
+    if (origins !== undefined) this.#origins.set(normalized, origins);
     this.#options.set(normalized, {
       ...options,
       meta: meta === undefined ? undefined : Object.freeze(copyOwn(meta)),

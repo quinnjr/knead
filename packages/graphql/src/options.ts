@@ -5,6 +5,7 @@ import {
   HttpConfigError,
   type HttpException,
   isHeaderValue,
+  normalizeAllowedOrigins,
   type WsMessageRate,
 } from '@knead-js/http';
 import type {
@@ -218,6 +219,11 @@ export interface ResolvedGraphQLOptions {
    * HTTP idle timeout (see sse.ts).
    */
   readonly sse: { readonly keepAliveInterval: number; readonly explicit: boolean } | false;
+  /**
+   * `subscriptions.allowedOrigins` validated and normalized at bootstrap (whatever the schema):
+   * `'*'`, a Set of origins, or undefined (same origin only). SSE checks requests against it.
+   */
+  readonly allowedOrigins: ReadonlySet<string> | '*' | undefined;
   readonly orphanedTypes: readonly Class[];
   readonly guards: readonly GuardRef<ResolverCtx<any, any>>[];
   readonly defaultDeny: boolean;
@@ -305,6 +311,10 @@ function subscriptionInteger(
   }
 }
 
+/** How allowedOrigins errors name the endpoint. */
+const originSubject = (path: string | undefined) =>
+  `GraphQL endpoint ${normalizePath(path ?? '/graphql')}`;
+
 export function validateGraphQLOptions(options: GraphQLModuleOptions): void {
   if (options.path !== undefined && /[:*]/.test(options.path)) {
     throw new HttpConfigError(`GraphQL path must be exact; got ${options.path}`);
@@ -372,6 +382,8 @@ export function validateGraphQLOptions(options: GraphQLModuleOptions): void {
       1,
       MAX_TIMER_DELAY,
     );
+    // Checked whatever the schema: SSE queries and mutations read it without a Subscription type.
+    normalizeAllowedOrigins(originSubject(options.path), subscriptions.allowedOrigins);
     const sse = subscriptions.sse;
     if (sse !== undefined && sse !== false) {
       if (typeof sse !== 'object' || sse === null) {
@@ -423,6 +435,10 @@ export function resolveOptions(
             keepAliveInterval: options.subscriptions?.sse?.keepAliveInterval ?? 8000,
             explicit: options.subscriptions?.sse?.keepAliveInterval !== undefined,
           },
+    allowedOrigins:
+      options.subscriptions === false
+        ? undefined
+        : normalizeAllowedOrigins(originSubject(path), options.subscriptions?.allowedOrigins),
     orphanedTypes: options.orphanedTypes ?? [],
     guards: options.guards ?? [],
     defaultDeny: options.defaultDeny ?? false,

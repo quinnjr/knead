@@ -336,6 +336,34 @@ describe('GraphQL over SSE', () => {
     expect(await all(listed)).toEqual([next({ data: { n: 1 } }), COMPLETE]);
   });
 
+  test('allowedOrigins is validated at bootstrap without a Subscription type', async () => {
+    @Resolver()
+    class QueryOnly {
+      @Query(() => Int) n() {
+        return 1;
+      }
+    }
+    @Module({ providers: [QueryOnly] })
+    class Q {}
+    const boot = (allowedOrigins: unknown) =>
+      startGraphQL([Q], { subscriptions: { allowedOrigins: allowedOrigins as string[] } });
+    await expect(boot('https://a.example')).rejects.toThrow(
+      'allowedOrigins for GraphQL endpoint /graphql must be an array of origins or "*"; got ' +
+        '"https://a.example".',
+    );
+    await expect(boot(['https://a.example/x'])).rejects.toThrow(
+      'Invalid allowedOrigins entry for GraphQL endpoint /graphql: "https://a.example/x" ' +
+        '(expected the bare origin "https://a.example").',
+    );
+    // Entries are normalized once (any case) and copied: changing the array later widens nothing.
+    const origins = ['HTTPS://App.Example'];
+    s = await startGraphQL([Q], { subscriptions: { allowedOrigins: origins } });
+    origins.push('https://evil.example');
+    const listed = await send('{ n }', { headers: { origin: 'https://app.example' } });
+    expect(await all(listed)).toEqual([next({ data: { n: 1 } }), COMPLETE]);
+    expect((await send('{ n }', { headers: { origin: 'https://evil.example' } })).status).toBe(403);
+  });
+
   test('GET without the CSRF header is 400', async () => {
     await start();
     const res = await send('{ n }', { method: 'GET', noCsrf: true });

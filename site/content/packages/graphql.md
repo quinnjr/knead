@@ -85,7 +85,7 @@ The `subscriptions` option (exported under this name; it is `SubscriptionOptions
 | `connectionInitTimeout` | `number` (ms) | `3000` (Leaven) | Time allowed for `connection_init`, an integer from 1 to 2147483647. |
 | `keepAliveInterval` | `number` (ms) | `12000` (Leaven) | Server pings, an integer up to 2147483647; `0` disables them. |
 | `maxSubscriptionsPerConnection` | `number` | `100` (Leaven) | Concurrent subscriptions per socket, a positive integer. |
-| `allowedOrigins` | `readonly string[] \| '*'` | same origin only | Browser origins allowed to open a socket or send an SSE request besides the server's own. Requests without `Origin` are allowed; others get `403`. |
+| `allowedOrigins` | `readonly string[] \| '*'` | same origin only | Browser origins allowed to open a socket or send an SSE request besides the server's own. Requests without `Origin` are allowed; others get `403`. Validated at bootstrap (exact `scheme://host[:port]` origins), with or without a Subscription type. |
 | `messageRate` | `WsMessageRate \| false` | the server's, 100 messages per 10 s | Per-socket token bucket; exceeding it closes the socket with `1008`. |
 | `maxConnectionLifetime` | `number` (ms) | no limit | Closes every socket with `4408` after this long, and ends every SSE subscription stream (without `complete`), an integer from 1 to 2147483647. |
 | `sse` | `false \| SseOptions` | `{}` | GraphQL over SSE on the GraphQL path, on by default; `false` turns it off and keeps WebSockets. |
@@ -159,10 +159,13 @@ calls it with `HTTP_DEVELOPMENT`.
 ### `ResolvedGraphQLOptions`
 
 The read-only result of `resolveOptions()`: every option above with its default applied, the CSRF
-header names lower-cased, `playground` as a `boolean` plus `playgroundSubscriptionEndpoint`, and an
-`executor` object holding what is passed to Leaven (`maxComplexity`, `cache`, `compilerOptions`,
-`parseOptions` with `maxTokens`, `hooks`; `maxDepth` there is always `undefined` because Knead checks
-depth itself).
+header names lower-cased, `playground` as a `boolean` plus `playgroundSubscriptionEndpoint`, an
+`sse` field (`false` when `subscriptions` or `subscriptions.sse` is `false`, otherwise
+`{ keepAliveInterval, explicit }`, where `explicit` says whether the application set the interval),
+`allowedOrigins` (`subscriptions.allowedOrigins` validated and normalized at bootstrap whatever the
+schema: `'*'`, a `ReadonlySet` of origins, or `undefined`), and an `executor` object holding what
+is passed to Leaven (`maxComplexity`, `cache`, `compilerOptions`, `parseOptions` with `maxTokens`,
+`hooks`; `maxDepth` there is always `undefined` because Knead checks depth itself).
 
 ## Type decorators
 

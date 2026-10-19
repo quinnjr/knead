@@ -43,6 +43,7 @@ export {
   type ValidationSource,
 } from './validation.js';
 export {
+  normalizeAllowedOrigins,
   originAllowed,
   WS_DEFAULTS,
   type WsData,

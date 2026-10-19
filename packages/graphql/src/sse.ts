@@ -210,11 +210,10 @@ export async function handleSse(
   request: GraphQLRequest,
   method: 'POST' | 'GET',
 ): Promise<Response> {
-  const { sse, subscriptions } = runtime.options;
+  const { sse, allowedOrigins } = runtime.options;
   if (sse === false) throw new Error('GraphQL SSE is disabled; handleSse must not be called.');
   const keepAliveInterval = keepAliveOf(runtime, sse);
   const headers = ctx.req.headers;
-  const allowedOrigins = subscriptions === false ? undefined : subscriptions.allowedOrigins;
   if (!originAllowed(headers.get('origin'), headers.get('host'), ctx.secure, allowedOrigins)) {
     throw new ForbiddenException('Cross-origin GraphQL SSE requests are not allowed.');
   }

@@ -443,9 +443,18 @@ when none is free.
 `originAllowed(origin, host, secure, allowed?)` returns whether a WebSocket upgrade's `Origin` may
 connect: when `origin` is `null` (no header, not a browser), when `allowed` is `'*'` or lists the
 origin (`allowed` is an array of origins, or a `ReadonlySet` of normalized origins, as
-`new URL(entry).origin` writes them), or when it is the request's own origin (scheme from `secure`, host and port from `host`,
-default ports normalized). `Origin: null` is rejected. Exported for transports that check origins
-themselves.
+`new URL(entry).origin` writes them), or when it is the request's own origin (scheme from
+`secure`, host and port from `host`, default ports normalized). `Origin: null` is rejected.
+Exported for transports that check origins themselves.
+
+### normalizeAllowedOrigins
+
+`normalizeAllowedOrigins(subject, origins)` validates an `allowedOrigins` option the way
+`WsRegistry.register()` does and returns it ready for `originAllowed()`: `'*'`, a new `Set` of
+lower-cased origins, or `undefined` when unset. Anything but `'*'` or an array of exact origins
+(`scheme://host[:port]`, no path, query, credentials, default port or wildcard) is an
+`HttpConfigError` whose message names `subject` (for example `WebSocket endpoint /ws`). Transports
+that check origins themselves call it at bootstrap, so a bad entry never fails at request time.
 
 ## Network helpers
 
