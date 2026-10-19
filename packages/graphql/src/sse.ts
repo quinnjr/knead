@@ -190,8 +190,9 @@ function assertNotRejected(op: OperationContext, allowed: readonly OperationKind
  * The operation type the request selects, or undefined when the document does not parse (under
  * the executor's parser limits) or selects no single operation: execute() then answers the
  * request error. executor.parse() reads Leaven's document cache, which execute() and subscribe()
- * fill, so a document is parsed twice only on a cache miss (its first request, or one that fails
- * to parse), bounded by maxQueryLength and parseOptions.maxTokens.
+ * fill, so a document is parsed twice on a cache miss: its first request, or every request for a
+ * document that fails to parse or to validate (only validated documents are cached), bounded by
+ * maxQueryLength and parseOptions.maxTokens.
  */
 async function operationKind(
   runtime: GraphQLRuntime,

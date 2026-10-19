@@ -249,7 +249,7 @@ function assertOrigin(subject: string, entry: unknown): void {
 }
 
 /**
- * @internal Validates an `allowedOrigins` option (`'*'` or an array of exact origins) and returns
+ * Validates an `allowedOrigins` option (`'*'` or an array of exact origins) and returns
  * it normalized for originAllowed(): `'*'`, a new Set of origins, or undefined when unset. Throws
  * HttpConfigError naming `subject` (for example `WebSocket endpoint /ws`) for anything else.
  */
