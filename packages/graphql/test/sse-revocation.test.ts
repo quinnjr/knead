@@ -136,6 +136,56 @@ describe('SSE revocation and lifetime', () => {
     expect(subscribers()).toBe(0);
   });
 
+  test('a pending stream whose http already matches is ended at once and counted (503)', async () => {
+    let calls = 0;
+    await start({
+      subscriptions: {
+        onConnect: () => {
+          calls++;
+          return new Promise(() => {});
+        },
+      },
+    });
+    const pending = send('ada');
+    await until(() => calls === 1);
+    // Checked against the empty context right away: the request's headers are already known.
+    expect(closeWhere((c) => c.http.req.headers.get('x-user') === 'ada')).toBe(1);
+    expect((await pending).status).toBe(503);
+    expect(subscribers()).toBe(0);
+  });
+
+  test('a kept predicate that throws at settle is logged and skipped: the stream starts', async () => {
+    let resolve!: (value: { sseUser: string }) => void;
+    await start({
+      subscriptions: {
+        onConnect: () =>
+          new Promise((r) => {
+            resolve = r;
+          }),
+      },
+    });
+    const pending = send('grace');
+    await until(() => resolve !== undefined);
+    // Does not throw for the empty context, only for the settled identity.
+    expect(
+      closeWhere((c) => {
+        if (c.context.sseUser !== undefined) throw new Error('bad predicate');
+        return false;
+      }),
+    ).toBe(0);
+    resolve({ sseUser: 'grace' });
+    const res = await pending;
+    expect(res.status).toBe(200);
+    const events = readSse(res);
+    await until(() => subscribers() === 1);
+    expect(
+      s!.mod.logs.some(
+        (e) => e.level === 'error' && e.message.includes('closeWhere predicate threw'),
+      ),
+    ).toBe(true);
+    await events.return!();
+  });
+
   test('a kept predicate that does not match lets the stream start', async () => {
     let resolve!: (value: { sseUser: string }) => void;
     await start({
@@ -221,10 +271,14 @@ describe('SSE revocation and lifetime', () => {
 
   test('maxConnectionLifetime ends an SSE stream', async () => {
     await start({ subscriptions: { maxConnectionLifetime: 100 } });
-    const started = Date.now();
+    const sent = Date.now();
     const events = await open();
+    // Measured from after open(), so the request round-trip is not inside the upper bound.
+    const opened = Date.now();
     expect(await rest(events)).toEqual([]);
-    expect(Date.now() - started).toBeLessThan(300);
+    // Counted from the slot (taken while the request was being answered): at most 100 ms after open.
+    expect(Date.now() - opened).toBeLessThan(250);
+    expect(Date.now() - sent).toBeGreaterThanOrEqual(95);
     await until(() => subscribers() === 0);
   });
 });

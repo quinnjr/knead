@@ -153,11 +153,14 @@ async function commentsWithin(res: Response, count: number, ms: number): Promise
   const seen = () => text.split(':\n\n').length - 1;
   try {
     while (seen() < count && Date.now() < deadline) {
-      const chunk = await Promise.race([reader.read(), Bun.sleep(deadline - Date.now())]);
-      if (chunk && typeof chunk === 'object') {
-        if (chunk.done) break;
-        text += chunk.value;
-      }
+      // Only the deadline can win the race, and the loop ends then: no read is left pending
+      // while another starts, so no chunk is lost.
+      const chunk = await Promise.race([
+        reader.read(),
+        Bun.sleep(Math.max(0, deadline - Date.now())).then(() => undefined),
+      ]);
+      if (chunk === undefined || chunk.done) break;
+      text += chunk.value;
     }
     return seen();
   } finally {
