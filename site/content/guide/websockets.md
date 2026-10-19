@@ -166,7 +166,9 @@ The per-IP count uses `ctx.ip`, in which an IPv4-mapped IPv6 address is its IPv4
 connection slot is taken just before the socket is upgraded and given back when it closes, or
 right away when the upgrade fails. An upgrade whose socket has not opened after 30 seconds gives
 its slot back too, so aborted upgrades cannot exhaust the limits; a socket that opens later takes
-a slot again, or is closed with `1013` when none is free.
+a slot again, or is closed with `1013` when none is free. A
+[GraphQL subscription socket](/guide/graphql/#the-websocket-transport) that closes while its
+`onConnect` is pending gives its slot back only once `onConnect` settles.
 
 ## Revoking sockets
 

@@ -458,6 +458,12 @@ token this way.
 > itself or a spread of it, or the client chooses its own context (`member`, roles). The
 > `ConnectionParams` type makes returning or spreading it a compile error.
 
+The `context` factory and `onConnect` must settle within `subscriptions.connectionInitTimeout`
+(default 3000 ms, counted from `connection_init`), or the socket is closed with `4408`. A socket
+that closes while they are pending keeps its connection slot until they settle, so clients cannot
+pile up pending `onConnect` work past `maxConnectionsPerIp` by connecting and disconnecting, and
+`onConnect` is skipped when the socket closed while the factory ran.
+
 Browser upgrades must come from the server's own origin, or from one of
 `subscriptions.allowedOrigins` (`'*'` allows any); others get `403`. Upgrades without an `Origin`
 header (non-browser clients) are allowed. The upgrade request also passes global middleware and
@@ -516,9 +522,15 @@ queries included.
 - An open subscription stream holds a connection slot shared with WebSockets: the same
   `listen({ websocket: { maxConnectionsPerIp } })` (default 100, `429` past it) and
   `maxConnections` (`503`), answered as `application/problem+json` before the stream starts. The
-  slot is taken before `onConnect` runs, so pending `onConnect` calls are bounded too, and given
-  back when the stream ends or the client disconnects (which also ends the subscription). Queries
-  and mutations over SSE finish at once and take no slot.
+  slot is taken before the `context` factory and `onConnect` run and given back only once they
+  have settled, even when the client aborts first, so clients cannot pile up pending `onConnect`
+  work (database or token lookups) past the limits by opening and aborting requests. A request
+  already aborted runs neither, and one aborted while the factory runs skips `onConnect`. Past
+  `subscriptions.connectionInitTimeout` (default 3000 ms) a pending request answers `503`, and its
+  slot still comes back only when `onConnect` settles. After that, the slot is given back when the
+  stream ends or the client disconnects (which also ends the subscription). Queries and mutations
+  over SSE finish at once and take no slot. A `subscription` on a schema without a Subscription
+  type is refused with `400`, as over JSON, without running `onConnect`.
 - `GraphQLSubscriptions.closeWhere(predicate)` also ends the matching streams and counts them in
   its result. A revoked stream ends **without** `complete`, so the client can tell it did not finish
   normally. A stream still in `onConnect` is checked again when `onConnect` settles and then answers

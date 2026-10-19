@@ -82,7 +82,7 @@ The `subscriptions` option (exported under this name; it is `SubscriptionOptions
 | --- | --- | --- | --- |
 | `onConnect` | `(http: Ctx, params: ConnectionParams) => boolean \| ConnectContext \| Promise<...>` | none | Runs on `connection_init`, after the `context` factory (a factory that throws there closes the socket with `4403` and `onConnect` does not run). `false` (or a throw, which is logged) closes the socket with `4403`; an object is merged into every operation's context on the socket. Over SSE it runs once per subscription request with `params` `{}`, and a refusal answers `403`. |
 | `refreshContext` | `({ http, context }) => ConnectContext \| false \| Promise<...>` | none | Runs before every recheck of a `recheckGuards: true` subscription. An object is merged over the context; anything else (`false`, but also `undefined`, `null` or `true`) ends the subscription with `FORBIDDEN`. |
-| `connectionInitTimeout` | `number` (ms) | `3000` (Leaven) | Time allowed for `connection_init`, an integer from 1 to 2147483647. |
+| `connectionInitTimeout` | `number` (ms) | `3000` | Time allowed for `connection_init`, and then for the `context` factory and `onConnect` to settle (a socket still pending is closed with `4408`; over SSE, counted from the request, `503`), an integer from 1 to 2147483647. |
 | `keepAliveInterval` | `number` (ms) | `12000` (Leaven) | Server pings, an integer up to 2147483647; `0` disables them. |
 | `maxSubscriptionsPerConnection` | `number` | `100` (Leaven) | Concurrent subscriptions per socket, a positive integer. |
 | `allowedOrigins` | `readonly string[] \| '*'` | same origin only | Browser origins allowed to open a socket or send an SSE request besides the server's own. Requests without `Origin` are allowed; others get `403`. Validated at bootstrap (exact `scheme://host[:port]` origins), with or without a Subscription type. |
@@ -124,11 +124,14 @@ error (rejected before any resolver ran: syntax, parser and Knead limits, valida
 operation selection, variable coercion, a throwing `onParse`, `onParsed`, `onValidate` or
 `onValidated` hook, or a throwing document `cache`) is answered as JSON (`application/json`, with
 `cacheControl`) at `400`, or `500` for an `INTERNAL_SERVER_ERROR`; anything after execution started
-is streamed. An open subscription
-stream holds one of the `listen({ websocket })` connection slots shared with sockets, taken before
-`onConnect` runs: past `maxConnectionsPerIp` it is `429`, past `maxConnections` `503`, both
-`application/problem+json`. `onConnect` refusing (or the `context` factory throwing) answers `403`
-with a `FORBIDDEN` JSON body. A stream revoked by `closeWhere`, past `maxConnectionLifetime` or at
+is streamed. A `subscription` on a schema without a Subscription type is refused like the JSON
+path's (`400`), before any `onConnect`. An open subscription stream holds one of the
+`listen({ websocket })` connection slots shared with sockets, taken before `onConnect` runs and
+returned only once it has settled, even if the client aborts first: past `maxConnectionsPerIp` it
+is `429`, past `maxConnections` `503`, both `application/problem+json`. A pending `context`
+factory and `onConnect` are bounded by `connectionInitTimeout` (default 3000 ms): past it the
+request answers `503`. `onConnect` refusing (or the `context` factory throwing) answers `403` with
+a `FORBIDDEN` JSON body. A stream revoked by `closeWhere`, past `maxConnectionLifetime` or at
 shutdown ends without `complete`. See
 [subscriptions over SSE](/guide/graphql/#subscriptions-over-sse).
 
@@ -574,7 +577,8 @@ whose `onConnect` is still pending are checked again when it completes (at most
 socket is closed with `1008` and the stream ended). A pending stream that matches then answers
 `403`; one ended before its `onConnect` completed answers `503`. A socket or stream ended only
 because it was past that limit counts when the predicate matches its still-empty context. A
-predicate that throws for a socket or stream is logged and that one skipped. When nothing matched, a debug entry is logged.
+truthy result matches (a revocation errs towards closing). A predicate that throws for a socket or
+stream is logged and that one skipped. When nothing matched, a debug entry is logged.
 
 ### `GraphQLConnection`
 

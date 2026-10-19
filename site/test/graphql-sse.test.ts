@@ -1,12 +1,14 @@
 // Pins the claims of the guide's "Subscriptions over SSE" section and the snippets it includes.
-import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import { dirname } from 'node:path';
-import { LOGGER, type Provider } from '@knead-js/core';
+import { LOGGER, Module, type Provider } from '@knead-js/core';
 import {
   GraphQLModule,
   type GraphQLModuleOptions,
   GraphQLSubscriptions,
   PUBSUB,
+  Query,
+  Resolver,
 } from '@knead-js/graphql';
 import { HttpConfigError, type ListenOptions, WS_DEFAULTS } from '@knead-js/http';
 import { readSse, Test, type TestApp, type TestingModule } from '@knead-js/testing';
@@ -34,6 +36,10 @@ mock.module(ssePath, () => ({
 }));
 beforeEach(() => {
   keepAlives.length = 0;
+});
+// mock.module is process-wide: later test files must see the original module again.
+afterAll(() => {
+  mock.module(ssePath, () => leavenSse);
 });
 
 let mod: TestingModule | undefined;
@@ -367,6 +373,116 @@ describe('guide: subscriptions over SSE', () => {
     expect((await pending).status).toBe(503);
     gated.release();
     await closing;
+  });
+
+  test('an aborted request keeps its slot until onConnect settles; onConnect is bounded', async () => {
+    const gated = gatedOnConnect();
+    const app = await blog(
+      { subscriptions: { onConnect: () => gated.onConnect() } },
+      { websocket: { maxConnectionsPerIp: 1 } },
+    );
+    const abort = new AbortController();
+    const url = new URL('/graphql', app.url);
+    const aborted = fetch(url, {
+      method: 'POST',
+      headers: sse,
+      body: JSON.stringify({ query: MESSAGE }),
+      signal: abort.signal,
+    }).catch(() => undefined);
+    await gated.called;
+    abort.abort();
+    await aborted;
+    // The client left, but its onConnect is still pending: the slot is still taken.
+    const refused = await app.request('POST', '/graphql', {
+      headers: sse,
+      json: { query: MESSAGE },
+    });
+    expect(refused.status).toBe(429);
+    gated.release();
+    // Once it settles the slot is free again (retried briefly: it is returned asynchronously).
+    const deadline = Date.now() + 2000;
+    for (;;) {
+      const sub = await app.subscribeSse(MESSAGE).catch((error: unknown) => {
+        if (Date.now() > deadline) throw error;
+        return undefined;
+      });
+      if (sub) {
+        await sub.close();
+        break;
+      }
+      await Bun.sleep(10);
+    }
+  });
+
+  test('a pending onConnect answers 503 after connectionInitTimeout, default 3000 ms', async () => {
+    const gated = gatedOnConnect();
+    const app = await blog({ subscriptions: { onConnect: () => gated.onConnect() } });
+    const started = Date.now();
+    const res = await app.request('POST', '/graphql', { headers: sse, json: { query: MESSAGE } });
+    expect(res.status).toBe(503);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(2900);
+    expect(Date.now() - started).toBeLessThan(4500);
+    gated.release();
+  }, 10_000);
+
+  test('over WebSocket, a pending onConnect is closed with 4408 after connectionInitTimeout', async () => {
+    const gated = gatedOnConnect();
+    const app = await blog({
+      subscriptions: { connectionInitTimeout: 100, onConnect: () => gated.onConnect() },
+    });
+    const url = new URL('/graphql', app.url);
+    url.protocol = 'ws:';
+    const ws = new WebSocket(url, 'graphql-transport-ws');
+    await new Promise((resolve, reject) => {
+      ws.onopen = resolve;
+      ws.onerror = reject;
+    });
+    const closed = new Promise<number>((resolve) => {
+      ws.onclose = (event) => resolve(event.code);
+    });
+    ws.send(JSON.stringify({ type: 'connection_init', payload: {} }));
+    await gated.called;
+    expect(await closed).toBe(4408);
+    gated.release();
+  });
+
+  test('a subscription without a Subscription type is a 400, as over JSON, without onConnect', async () => {
+    @Resolver()
+    class Hello {
+      @Query(() => String) hello() {
+        return 'hi';
+      }
+    }
+    @Module({ providers: [Hello] })
+    class HelloModule {}
+    let connects = 0;
+    const app = await boot([
+      GraphQLModule.forRoot({
+        emitSchemaFile: false,
+        subscriptions: {
+          onConnect: () => {
+            connects++;
+            return true;
+          },
+        },
+      }),
+      HelloModule,
+    ]);
+    const res = await app.request('POST', '/graphql', {
+      headers: sse,
+      json: { query: 'subscription { hello }' },
+    });
+    expect(res.status).toBe(400);
+    expect(connects).toBe(0);
+  });
+
+  test('allowedOrigins entries are validated at bootstrap, with or without subscriptions', () => {
+    for (const allowedOrigins of [['https://app.example/path'], 'https://app.example']) {
+      expect(() =>
+        GraphQLModule.forRoot({ subscriptions: { allowedOrigins: allowedOrigins as string[] } }),
+      ).toThrow(HttpConfigError);
+    }
+    GraphQLModule.forRoot({ subscriptions: { allowedOrigins: ['https://App.Example'] } });
   });
 
   test('closeWhere ends a matching stream without complete', async () => {

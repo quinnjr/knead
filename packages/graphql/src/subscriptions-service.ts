@@ -14,7 +14,8 @@ export class GraphQLSubscriptions {
   readonly #ws = inject(WsRegistry);
 
   /**
-   * Closes every GraphQL subscription socket whose connection matches `predicate` (default code
+   * Closes every GraphQL subscription socket whose connection matches `predicate` (a truthy
+   * result matches, so a revocation errs towards closing; default code
    * 1008, reason "Connection revoked"), ending its subscriptions, and ends every matching SSE
    * subscription stream (without `complete`); returns how many sockets and streams it ended.
    * The predicate sees `connection.context`, the merged identity: the `context(http)` factory
