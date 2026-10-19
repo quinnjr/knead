@@ -496,10 +496,12 @@ playground keeps using WebSocket.
 
 The document goes through Leaven once: it is parsed (after the application's `onParse` hook),
 checked against Knead's limits and validated, and only then does the operation type decide what
-happens. A query or mutation runs at once, its `context` factory called just before; a
-subscription takes its connection slot and runs `onConnect` (below). So a document that fails a
-limit or validation never takes a slot or runs `onConnect`, and the pre-execution hooks run once
-per request.
+happens. A query or mutation runs at once, its `context` factory called just before (so after
+parsing and validation, where the JSON path runs it first); a subscription takes its connection
+slot and runs `onConnect` (below). So a document that fails a limit or validation never takes a
+slot or runs `onConnect`, and the pre-execution hooks run once per request. A
+`runtime.executor` call your guards, resolvers or hooks make is its own request: it goes through
+the limits and every hook.
 
 To keep subscriptions on WebSocket only, set `subscriptions.sse` to `false`; a request asking for
 `text/event-stream` then gets the usual JSON response:

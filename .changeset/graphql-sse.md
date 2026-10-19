@@ -23,7 +23,8 @@ mutation as one `next` and `complete`. Clients that send `*/*` or prefer JSON ar
   apply. Streams carry `cacheControl` and `X-Content-Type-Options: nosniff`, as JSON responses do.
   The document is parsed, checked and validated once, by one executor call (the app's `onParse`
   first, the pre-execution hooks once per request), so a document that fails a limit or validation
-  never takes a slot or runs `onConnect`. `onConnect` runs once per SSE
+  never takes a slot or runs `onConnect`. A query or mutation over SSE runs the `context` factory
+  only then, after parsing and validation (the JSON path still runs it first). `onConnect` runs once per SSE
   subscription request with `params` `{}`: an `onConnect` that reads only `connectionParams`
   refuses SSE subscriptions with `403`, so authenticate SSE clients from headers or cookies.
 - **Shared limits and revocation.** An open SSE subscription stream holds one of the
@@ -64,7 +65,8 @@ mutation as one `next` and `complete`. Clients that send `*/*` or prefer JSON ar
 
 `@knead-js/http`: `app.close()` ends open streaming responses that hold a connection slot before
 it waits for in-flight requests. The new framework-internal `StreamRegistry` (provided by
-`HttpCoreModule`, used by GraphQL SSE) holds those streams, sharing the WebSocket connection slots,
+`HttpCoreModule`, used by GraphQL SSE; injectable by application code, like `WsRegistry`, but not
+meant for it) holds those streams, sharing the WebSocket connection slots,
 and checks stream keep-alives against the HTTP idle timeout; `WsRegistry` gains an internal slot
 hold for pending connection work. The new
 `normalizeAllowedOrigins(subject, origins)` validates and normalizes an `allowedOrigins` option as

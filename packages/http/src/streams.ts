@@ -13,7 +13,8 @@ export const BUN_DEFAULT_IDLE_TIMEOUT = 10;
  * their connection slots, shared with WebSocket connections (`listen({ websocket })` limits:
  * `429` per IP, `503` in total). HttpApplication configures it at `listen()` and ends its streams
  * at `close()`. Application code should not call it: a stream opened here is never ended by the
- * transport that owns it.
+ * transport that owns it. It stays injectable (a global provider, like WsRegistry), which is
+ * accepted: application code is trusted, and GraphQL's own streams are private to that package.
  */
 @Injectable()
 export class StreamRegistry {

@@ -412,6 +412,12 @@ it waits for in-flight requests and refuses new ones with `503`. It is exported 
 stream opened from application code would not be ended by the transport that owns it, and the
 connection slots themselves are not exported.
 
+Like `WsRegistry`, it is a global provider, so application code can inject it; Knead accepts that,
+since application code is trusted. Calling `endStreams()` refuses SSE subscriptions until the
+next `listen()`, and `openStream()` on your own objects uses up the slots sockets and streams
+share. It cannot keep a GraphQL stream open past a revocation or a guard: those streams are
+private to `@knead-js/graphql`.
+
 ### WebSocket types
 
 | Type | Definition |
