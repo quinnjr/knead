@@ -11,7 +11,6 @@ export { FIELD_GUARDS, UseFieldGuards } from './field-guards.js';
 export {
   createGraphQLController,
   GRAPHQL_ENDPOINT,
-  GRAPHQL_RESPONSE_JSON,
   type GraphQLEndpointGuards,
 } from './http.js';
 export type { ArgMap, ArgSpec, FieldOptions } from './metadata.js';
@@ -58,6 +57,7 @@ export {
   type SubscriptionMethodDecorator,
   type SubscriptionOptions,
 } from './resolvers.js';
+export { GRAPHQL_RESPONSE_JSON } from './responses.js';
 export { GraphQLRuntime } from './runtime.js';
 export { printSortedSchema } from './schema.js';
 export type { GraphQLConnection } from './subscriptions.js';

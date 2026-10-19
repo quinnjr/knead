@@ -10,13 +10,18 @@ import {
   requestUrl,
   UnsupportedMediaTypeException,
 } from '@knead-js/http';
-import type { GraphQLRequest, GraphQLResponse } from '@leaven-graphql/core';
+import type { GraphQLRequest } from '@leaven-graphql/core';
 import type { OperationKind } from './context.js';
 import { queryTooLongMessage } from './options.js';
-import { GraphQLRuntime, rejectionMessage } from './runtime.js';
+import {
+  acceptQuality,
+  GRAPHQL_RESPONSE_JSON,
+  jsonHeaders,
+  noDataStatus,
+  rejectionMessage,
+} from './responses.js';
+import { GraphQLRuntime } from './runtime.js';
 import { handleSse, wantsEventStream } from './sse.js';
-
-export const GRAPHQL_RESPONSE_JSON = 'application/graphql-response+json';
 
 /**
  * Route-meta key on the GraphQL endpoint (its POST and GET routes, so also subscription upgrades).
@@ -67,24 +72,6 @@ export function parseGraphQLParams(
   return request;
 }
 
-/** The q value Accept gives `type`: an exact range wins over a type wildcard, then any. */
-export function acceptQuality(accept: string | null, type: string, exact = false): number {
-  if (accept === null || accept.trim() === '') return type === 'application/json' ? 1 : 0;
-  const major = `${type.split('/')[0]}/*`;
-  let best = -1;
-  let specificity = -1;
-  for (const part of accept.split(',')) {
-    const [range, ...params] = part.split(';').map((p) => p.trim().toLowerCase());
-    const rank = range === type ? 2 : exact ? -1 : range === major ? 1 : range === '*/*' ? 0 : -1;
-    if (rank < specificity || rank < 0) continue;
-    const q = params.find((p) => p.startsWith('q='));
-    const quality = q ? Number(q.slice(2)) : 1;
-    if (rank > specificity || quality > best) best = Number.isFinite(quality) ? quality : 0;
-    specificity = rank;
-  }
-  return Math.max(best, 0);
-}
-
 /**
  * True when the client names application/graphql-response+json explicitly and does not prefer
  * application/json; wildcards alone keep the legacy application/json.
@@ -120,26 +107,6 @@ function jsonParam(params: URLSearchParams, name: string): unknown {
   } catch {
     throw new BadRequestException(`Malformed JSON in "${name}".`);
   }
-}
-
-/**
- * The status of a GraphQL response with no `data` under the graphql-response+json mapping: 500
- * when any error is INTERNAL_SERVER_ERROR (a server failure), otherwise 400.
- */
-export function noDataStatus(response: GraphQLResponse<unknown>): 400 | 500 {
-  const internal = response.errors?.some((e) => e.extensions?.code === 'INTERNAL_SERVER_ERROR');
-  return internal ? 500 : 400;
-}
-
-/** Headers of a JSON GraphQL response: `contentType`, nosniff and `options.cacheControl`. */
-export function jsonHeaders(runtime: GraphQLRuntime, contentType: string): Record<string, string> {
-  const headers: Record<string, string> = {
-    'content-type': `${contentType}; charset=utf-8`,
-    'x-content-type-options': 'nosniff',
-  };
-  const cacheControl = runtime.options.cacheControl;
-  if (cacheControl !== false) headers['cache-control'] = cacheControl;
-  return headers;
 }
 
 async function execute(

@@ -85,6 +85,7 @@ import {
 import { PlaygroundGate } from './playground.js';
 import { eventIterator, PUBSUB } from './pubsub.js';
 import { IS_PUBLIC } from './resolvers.js';
+import { rejectionMessage } from './responses.js';
 import { argNames, type FieldSpec, printSortedSchema, SchemaBuilder } from './schema.js';
 import { SseConnections } from './sse.js';
 import {
@@ -243,18 +244,6 @@ export function complexityCalculator(
   }
   if (costs.size === 0) return undefined;
   return (field, depth) => (costs.get(field.name.value) ?? 1) + depth * 0.5;
-}
-
-/** Messages for an operation the transport does not carry. */
-export function rejectionMessage(
-  operation: OperationKind,
-  allowed: readonly OperationKind[],
-): string {
-  if (allowed.length === 1 && allowed[0] === 'subscription') {
-    return 'Only subscription operations are allowed over WebSocket.';
-  }
-  if (operation === 'subscription') return 'Subscriptions are only available over WebSocket.';
-  return `A ${operation} cannot be sent over GET; use POST.`;
 }
 
 /**
