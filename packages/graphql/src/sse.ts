@@ -183,7 +183,9 @@ function assertNotRejected(op: OperationContext, allowed: readonly OperationKind
 /**
  * The operation type the request selects, or undefined when the document does not parse (under
  * the executor's parser limits) or selects no single operation: execute() then answers the
- * request error.
+ * request error. executor.parse() reads Leaven's document cache, which execute() and subscribe()
+ * fill, so a document is parsed twice only on a cache miss (its first request, or one that fails
+ * to parse), bounded by maxQueryLength and parseOptions.maxTokens.
  */
 async function operationKind(
   runtime: GraphQLRuntime,
@@ -218,7 +220,10 @@ export async function handleSse(
     throw new ForbiddenException('Cross-origin GraphQL SSE requests are not allowed.');
   }
   const kind = await operationKind(runtime, request);
-  if (kind === 'subscription') return subscribe(runtime, ctx, request, keepAliveInterval);
+  // Without a Subscription type, execute() answers the validation error: no slot, no onConnect.
+  if (kind === 'subscription' && runtime.schema.getSubscriptionType()) {
+    return subscribe(runtime, ctx, request, keepAliveInterval);
+  }
   const allowed: OperationKind[] = method === 'GET' ? ['query'] : ['query', 'mutation'];
   if (kind === 'mutation' && method === 'GET') {
     throw new MethodNotAllowedException(rejectionMessage('mutation', allowed), {

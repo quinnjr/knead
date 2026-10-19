@@ -336,6 +336,34 @@ describe('GraphQL over SSE', () => {
     expect(await all(listed)).toEqual([next({ data: { n: 1 } }), COMPLETE]);
   });
 
+  test('a subscription on a schema without one is a 400 without onConnect', async () => {
+    @Resolver()
+    class QueryOnly {
+      @Query(() => Int) n() {
+        return 1;
+      }
+    }
+    @Module({ providers: [QueryOnly] })
+    class Q {}
+    let connects = 0;
+    s = await startGraphQL([Q], {
+      subscriptions: {
+        onConnect: () => {
+          connects++;
+          return true;
+        },
+      },
+    });
+    // As over JSON: the operation type is refused on this transport before anything runs.
+    const res = await send('subscription { t }');
+    expect(res.status).toBe(400);
+    const json = await send('subscription { t }', { accept: 'application/json' });
+    expect(json.status).toBe(400);
+    expect(await detail(res)).toBe(await detail(json));
+    expect(connects).toBe(0);
+    expect(await upgradeStatus(s.app)).not.toBe(101);
+  });
+
   test('allowedOrigins is validated at bootstrap without a Subscription type', async () => {
     @Resolver()
     class QueryOnly {
