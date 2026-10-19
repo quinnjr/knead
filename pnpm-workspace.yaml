@@ -11,10 +11,10 @@ minimumReleaseAge: 1440
 # remove each once it is older than minimumReleaseAge. Publish times from the
 # npm registry; each line says when it may be removed (UTC).
 minimumReleaseAgeExclude:
-  - '@leaven-graphql/core@0.4.0' # published 2026-10-18T20:02Z, remove after 2026-10-19T20:03Z
+  - '@leaven-graphql/core@0.4.1' # published 2026-10-19T13:03Z, remove after 2026-10-20T13:04Z
   - '@leaven-graphql/errors@0.3.0' # published 2026-10-18T17:45Z, remove after 2026-10-19T17:46Z
-  - '@leaven-graphql/sse@0.4.0' # published 2026-10-18T20:02Z, remove after 2026-10-19T20:03Z
-  - '@leaven-graphql/ws@0.3.1' # published 2026-10-18T20:01Z, remove after 2026-10-19T20:02Z
+  - '@leaven-graphql/sse@0.4.1' # published 2026-10-19T13:04Z, remove after 2026-10-20T13:05Z
+  - '@leaven-graphql/ws@0.3.2' # published 2026-10-19T13:05Z, remove after 2026-10-20T13:06Z
 # Refuse a version whose publish trust evidence (provenance / trusted
 # publisher) is weaker than an earlier version of the same package.
 trustPolicy: no-downgrade

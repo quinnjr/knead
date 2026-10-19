@@ -323,8 +323,8 @@ importers:
   packages/graphql:
     dependencies:
       '@leaven-graphql/core':
-        specifier: 0.4.0
-        version: 0.4.0(graphql@16.14.2)
+        specifier: 0.4.1
+        version: 0.4.1(graphql@16.14.2)
       '@leaven-graphql/errors':
         specifier: 0.3.0
         version: 0.3.0(graphql@16.14.2)
@@ -332,11 +332,11 @@ importers:
         specifier: 0.2.2
         version: 0.2.2
       '@leaven-graphql/sse':
-        specifier: 0.4.0
-        version: 0.4.0(graphql@16.14.2)
+        specifier: 0.4.1
+        version: 0.4.1(graphql@16.14.2)
       '@leaven-graphql/ws':
-        specifier: 0.3.1
-        version: 0.3.1(graphql@16.14.2)
+        specifier: 0.3.2
+        version: 0.3.2(graphql@16.14.2)
       '@standard-schema/spec':
         specifier: ^1.1.0
         version: 1.1.0
@@ -777,8 +777,8 @@ packages:
   '@leaven-graphql/context@0.2.1':
     resolution: {integrity: sha512-QUyIFbMS8s7BAWj56eN+AumuRkQ+gS7JBZ6RNk1iS6S1zBGmFnw1bzwqxc0x4pu1KRSVGUX3P1wbXEe9DOcDdg==}
 
-  '@leaven-graphql/core@0.4.0':
-    resolution: {integrity: sha512-CJPwFSLslyf2GEigRBbtEit9zXDgMtk7isqorqWj/SBcS6p7aY2VMj9K8oxZmFgKyReivytJWgMRF3O4uPE+sQ==}
+  '@leaven-graphql/core@0.4.1':
+    resolution: {integrity: sha512-lfGzhPNMWbG130Lq4tsUBjsZaMij3Dr0LXoKYRRoI4h9rIhRupA30jMQT0P/dIVLxJjFpxUCxlb8rIUPgpcaYg==}
     peerDependencies:
       graphql: ^16.0.0
 
@@ -790,13 +790,13 @@ packages:
   '@leaven-graphql/playground@0.2.2':
     resolution: {integrity: sha512-1cEIxqpMX7KpTWcsg9dfh+t0cJocwAcw+ZcFXqJsSBtTkTel60qZAJmKfIymlZOhdXhJIhWKlF0F9LPDLzBpIQ==}
 
-  '@leaven-graphql/sse@0.4.0':
-    resolution: {integrity: sha512-kDJ814ugTSZnwAse5odVuCqew05kaop8Z101U2CsanTbyWlgYyyw4ZmgkPFGkeIMSUBcn6UZ0f1dg7pazMLolg==}
+  '@leaven-graphql/sse@0.4.1':
+    resolution: {integrity: sha512-Nkg2NzAzwt+pByk1sOpINV1a69+GGXqYAlHFiD3NYZSPgsd+0S+S8+ShKUOsc6AbY90n5pLDOrMmKlPbNryvUQ==}
     peerDependencies:
       graphql: ^16.0.0
 
-  '@leaven-graphql/ws@0.3.1':
-    resolution: {integrity: sha512-lucDPHwjTjRER4ocZhvujGV7+oBtMUq92CeUnHwx8Th3sESnvVwBMU77LI+tOyG4hpkd9t5px/rv6cUB07MfOg==}
+  '@leaven-graphql/ws@0.3.2':
+    resolution: {integrity: sha512-Z5e9bnZp0K86AzkgalCd4fn1tEUYs4r62QpXIYgRG22nYuMxaUXB4gSnBAjyMRxhQ6gPIPFc2Lyz9EArsh4RSQ==}
     peerDependencies:
       graphql: ^16.0.0
 
@@ -2492,7 +2492,7 @@ snapshots:
 
   '@leaven-graphql/context@0.2.1': {}
 
-  '@leaven-graphql/core@0.4.0(graphql@16.14.2)':
+  '@leaven-graphql/core@0.4.1(graphql@16.14.2)':
     dependencies:
       '@leaven-graphql/errors': 0.3.0(graphql@16.14.2)
       graphql: 16.14.2
@@ -2503,16 +2503,16 @@ snapshots:
 
   '@leaven-graphql/playground@0.2.2': {}
 
-  '@leaven-graphql/sse@0.4.0(graphql@16.14.2)':
+  '@leaven-graphql/sse@0.4.1(graphql@16.14.2)':
     dependencies:
-      '@leaven-graphql/core': 0.4.0(graphql@16.14.2)
+      '@leaven-graphql/core': 0.4.1(graphql@16.14.2)
       '@leaven-graphql/errors': 0.3.0(graphql@16.14.2)
       graphql: 16.14.2
 
-  '@leaven-graphql/ws@0.3.1(graphql@16.14.2)':
+  '@leaven-graphql/ws@0.3.2(graphql@16.14.2)':
     dependencies:
       '@leaven-graphql/context': 0.2.1
-      '@leaven-graphql/core': 0.4.0(graphql@16.14.2)
+      '@leaven-graphql/core': 0.4.1(graphql@16.14.2)
       '@leaven-graphql/errors': 0.3.0(graphql@16.14.2)
       graphql: 16.14.2
 
