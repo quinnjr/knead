@@ -163,6 +163,59 @@ describe('GraphQLExecutor.isRequestError', () => {
       });
       expect((await classify(runtime, '{ n }')).requestError).toBe(true);
     });
+
+    for (const hook of ['onParse', 'onValidate', 'onValidated'] as const) {
+      test(`a user ${hook} hook that throws`, async () => {
+        let calls = 0;
+        const runtime = await start({
+          hooks: {
+            [hook]: () => {
+              calls++;
+              throw new BadRequestException('refused');
+            },
+          },
+        });
+        const { response, requestError } = await classify(runtime, 'mutation { change }');
+        expect(calls).toBe(1);
+        expect(response.data).toBeUndefined();
+        expect(changes).toBe(0);
+        expect(requestError).toBe(true);
+      });
+    }
+
+    test('overlapping calls keep their own classification', async () => {
+      // One call's hook throws while another call (a mutation) is between its hooks: the flag is
+      // per call, so the mutation that ran is not marked, and the refused call is. The mutation's
+      // onExecuted throws, so its response has no data and only the flag tells the two apart.
+      const refusing = Promise.withResolvers<void>();
+      const running = Promise.withResolvers<void>();
+      const runtime = await start({
+        hooks: {
+          onParsed: async (document: { loc?: { source: { body: string } } }) => {
+            if (document.loc?.source.body.includes('refuse')) {
+              await refusing.promise;
+              throw new BadRequestException('refused');
+            }
+            await running.promise;
+          },
+          onExecuted: () => {
+            throw new BadRequestException('after the fact');
+          },
+        },
+      });
+      const mutation = classify(runtime, 'mutation { change }');
+      const refused = classify(runtime, 'query refuse { n }');
+      await Bun.sleep(5);
+      refusing.resolve();
+      await Bun.sleep(5);
+      running.resolve();
+      const [ran, rejected] = await Promise.all([mutation, refused]);
+      expect(ran.response.data).toBeUndefined();
+      expect(changes).toBe(1);
+      expect(ran.requestError).toBe(false);
+      expect(rejected.requestError).toBe(true);
+    });
+
     test('a document cache that throws (Leaven fails before execution)', async () => {
       const failing = () => {
         throw new Error('cache down');
@@ -260,10 +313,9 @@ describe('GraphQLExecutor.isRequestError', () => {
           { query },
           op(['query', 'mutation', 'subscription']),
         );
-        expect(Symbol.asyncIterator in result).toBe(false);
-        if (!(Symbol.asyncIterator in result)) {
-          expect(runtime.executor.isRequestError(result)).toBe(true);
-        }
+        // A response, not an iterator (narrows the type for isRequestError).
+        if (Symbol.asyncIterator in result) throw new Error(`${query} returned an iterator`);
+        expect(runtime.executor.isRequestError(result)).toBe(true);
       }
     });
   });
