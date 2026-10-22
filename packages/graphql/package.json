@@ -49,11 +49,11 @@
     "prepack": "bun ../../scripts/copy-licenses.ts"
   },
   "dependencies": {
-    "@leaven-graphql/core": "0.4.1",
-    "@leaven-graphql/errors": "0.3.0",
+    "@leaven-graphql/core": "0.5.0",
+    "@leaven-graphql/errors": "0.4.0",
     "@leaven-graphql/playground": "0.2.2",
-    "@leaven-graphql/sse": "0.4.1",
-    "@leaven-graphql/ws": "0.3.2",
+    "@leaven-graphql/sse": "0.5.0",
+    "@leaven-graphql/ws": "0.4.0",
     "@standard-schema/spec": "^1.1.0",
     "dataloader": "2.2.3"
   },

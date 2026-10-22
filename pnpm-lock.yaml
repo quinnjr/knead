@@ -323,20 +323,20 @@ importers:
   packages/graphql:
     dependencies:
       '@leaven-graphql/core':
-        specifier: 0.4.1
-        version: 0.4.1(graphql@16.14.2)
+        specifier: 0.5.0
+        version: 0.5.0(graphql@16.14.2)
       '@leaven-graphql/errors':
-        specifier: 0.3.0
-        version: 0.3.0(graphql@16.14.2)
+        specifier: 0.4.0
+        version: 0.4.0(graphql@16.14.2)
       '@leaven-graphql/playground':
         specifier: 0.2.2
         version: 0.2.2
       '@leaven-graphql/sse':
-        specifier: 0.4.1
-        version: 0.4.1(graphql@16.14.2)
+        specifier: 0.5.0
+        version: 0.5.0(graphql@16.14.2)
       '@leaven-graphql/ws':
-        specifier: 0.3.2
-        version: 0.3.2(graphql@16.14.2)
+        specifier: 0.4.0
+        version: 0.4.0(graphql@16.14.2)
       '@standard-schema/spec':
         specifier: ^1.1.0
         version: 1.1.0
@@ -774,31 +774,31 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
-  '@leaven-graphql/context@0.2.1':
-    resolution: {integrity: sha512-QUyIFbMS8s7BAWj56eN+AumuRkQ+gS7JBZ6RNk1iS6S1zBGmFnw1bzwqxc0x4pu1KRSVGUX3P1wbXEe9DOcDdg==}
+  '@leaven-graphql/context@0.2.2':
+    resolution: {integrity: sha512-7eponIaym9K2YI5ne1kWSac/0FIo2D7yOcRYeovpve5by/csA8f9f41S8E3vPtygeA50JmrK2B0gwOfU4ENaZA==}
 
-  '@leaven-graphql/core@0.4.1':
-    resolution: {integrity: sha512-lfGzhPNMWbG130Lq4tsUBjsZaMij3Dr0LXoKYRRoI4h9rIhRupA30jMQT0P/dIVLxJjFpxUCxlb8rIUPgpcaYg==}
+  '@leaven-graphql/core@0.5.0':
+    resolution: {integrity: sha512-IQTsqttSBG1AlWqMhiMY7NijlsZ8jk44KswxvmiMxbsE1LnoeDEyZmry54GFmlWEz4glPBwhDe7vrgHwT1CbUg==}
     peerDependencies:
-      graphql: ^16.0.0
+      graphql: ^16.0.0 || ^17.0.0
 
-  '@leaven-graphql/errors@0.3.0':
-    resolution: {integrity: sha512-1AMUNMeLGvzC6e/NdR9fPqkg1FSseYHp/Q6halFs4Q5Fw7X4y5JjlDkeAU/k+fotvqLrWbhkzn+9XTBsluZINw==}
+  '@leaven-graphql/errors@0.4.0':
+    resolution: {integrity: sha512-KfmaWwRHJxuHhayoHPsjF66nXHWbkjFfmaMh03iHsffyswQGaZrdc6xXtj0xpwDYvtEw6S7fA3Sg/XZPn3KYWw==}
     peerDependencies:
-      graphql: ^16.0.0
+      graphql: ^16.0.0 || ^17.0.0
 
   '@leaven-graphql/playground@0.2.2':
     resolution: {integrity: sha512-1cEIxqpMX7KpTWcsg9dfh+t0cJocwAcw+ZcFXqJsSBtTkTel60qZAJmKfIymlZOhdXhJIhWKlF0F9LPDLzBpIQ==}
 
-  '@leaven-graphql/sse@0.4.1':
-    resolution: {integrity: sha512-Nkg2NzAzwt+pByk1sOpINV1a69+GGXqYAlHFiD3NYZSPgsd+0S+S8+ShKUOsc6AbY90n5pLDOrMmKlPbNryvUQ==}
+  '@leaven-graphql/sse@0.5.0':
+    resolution: {integrity: sha512-fLhZR3qrTn1Z2QL9dBuf1KWME3I2Dm6BGbz1o5gNmnQdyZP/uQsWYtTuhcYfuXXJnb0OZ6eTlYDFLO0iPCClZg==}
     peerDependencies:
-      graphql: ^16.0.0
+      graphql: ^16.0.0 || ^17.0.0
 
-  '@leaven-graphql/ws@0.3.2':
-    resolution: {integrity: sha512-Z5e9bnZp0K86AzkgalCd4fn1tEUYs4r62QpXIYgRG22nYuMxaUXB4gSnBAjyMRxhQ6gPIPFc2Lyz9EArsh4RSQ==}
+  '@leaven-graphql/ws@0.4.0':
+    resolution: {integrity: sha512-zi3yP60xC3rucTCoJZsQWBc5wsMHPjud8LLU6SLDiC+EVv7DpecBcqjfuPxNH/D1xgBQL5d7Wx4Gp/kbIt3KrA==}
     peerDependencies:
-      graphql: ^16.0.0
+      graphql: ^16.0.0 || ^17.0.0
 
   '@manypkg/find-root@3.1.0':
     resolution: {integrity: sha512-BcSqCyKhBVZ5YkSzOiheMCV41kqAFptW6xGqYSTjkVTl9XQpr+pqHhwgGCOHQtjDCv7Is6EFyA14Sm5GVbVABA==}
@@ -2490,30 +2490,30 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.6.0
 
-  '@leaven-graphql/context@0.2.1': {}
+  '@leaven-graphql/context@0.2.2': {}
 
-  '@leaven-graphql/core@0.4.1(graphql@16.14.2)':
+  '@leaven-graphql/core@0.5.0(graphql@16.14.2)':
     dependencies:
-      '@leaven-graphql/errors': 0.3.0(graphql@16.14.2)
+      '@leaven-graphql/errors': 0.4.0(graphql@16.14.2)
       graphql: 16.14.2
 
-  '@leaven-graphql/errors@0.3.0(graphql@16.14.2)':
+  '@leaven-graphql/errors@0.4.0(graphql@16.14.2)':
     dependencies:
       graphql: 16.14.2
 
   '@leaven-graphql/playground@0.2.2': {}
 
-  '@leaven-graphql/sse@0.4.1(graphql@16.14.2)':
+  '@leaven-graphql/sse@0.5.0(graphql@16.14.2)':
     dependencies:
-      '@leaven-graphql/core': 0.4.1(graphql@16.14.2)
-      '@leaven-graphql/errors': 0.3.0(graphql@16.14.2)
+      '@leaven-graphql/core': 0.5.0(graphql@16.14.2)
+      '@leaven-graphql/errors': 0.4.0(graphql@16.14.2)
       graphql: 16.14.2
 
-  '@leaven-graphql/ws@0.3.2(graphql@16.14.2)':
+  '@leaven-graphql/ws@0.4.0(graphql@16.14.2)':
     dependencies:
-      '@leaven-graphql/context': 0.2.1
-      '@leaven-graphql/core': 0.4.1(graphql@16.14.2)
-      '@leaven-graphql/errors': 0.3.0(graphql@16.14.2)
+      '@leaven-graphql/context': 0.2.2
+      '@leaven-graphql/core': 0.5.0(graphql@16.14.2)
+      '@leaven-graphql/errors': 0.4.0(graphql@16.14.2)
       graphql: 16.14.2
 
   '@manypkg/find-root@3.1.0':
