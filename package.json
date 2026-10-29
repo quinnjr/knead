@@ -19,9 +19,9 @@
     "trust:npm": "bash scripts/trust-npm-publishers.sh"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.15",
+    "@biomejs/biome": "^2.6.3",
     "@changesets/cli": "^3.0.3",
-    "@types/bun": "^1.4.3",
+    "@types/bun": "^1.4.4",
     "typescript": "^7.0.2"
   }
 }
