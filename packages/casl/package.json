@@ -48,7 +48,7 @@
     "prepack": "bun ../../scripts/copy-licenses.ts"
   },
   "dependencies": {
-    "@casl/ability": "7.0.2"
+    "@casl/ability": "7.1.1"
   },
   "peerDependencies": {
     "@knead-js/core": "workspace:^",
