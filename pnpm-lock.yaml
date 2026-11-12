@@ -206,8 +206,8 @@ importers:
         specifier: workspace:^
         version: link:../../packages/security-headers
       graphql:
-        specifier: ^16.14.2
-        version: 16.14.2
+        specifier: ^16.15.0
+        version: 16.15.0
       valibot:
         specifier: ^1.5.0
         version: 1.5.0(typescript@7.0.2)
@@ -246,8 +246,8 @@ importers:
         specifier: workspace:^
         version: link:../../packages/security-headers
       graphql:
-        specifier: ^16.14.2
-        version: 16.14.2
+        specifier: ^16.15.0
+        version: 16.15.0
       valibot:
         specifier: ^1.5.0
         version: 1.5.0(typescript@7.0.2)
@@ -259,8 +259,8 @@ importers:
   packages/casl:
     dependencies:
       '@casl/ability':
-        specifier: 7.0.2
-        version: 7.0.2
+        specifier: 7.1.2
+        version: 7.1.2
     devDependencies:
       '@knead-js/core':
         specifier: workspace:^
@@ -275,8 +275,8 @@ importers:
         specifier: workspace:^
         version: link:../testing
       graphql:
-        specifier: ^16.14.2
-        version: 16.14.2
+        specifier: ^16.15.0
+        version: 16.15.0
 
   packages/config:
     dependencies:
@@ -323,20 +323,20 @@ importers:
   packages/graphql:
     dependencies:
       '@leaven-graphql/core':
-        specifier: 0.4.1
-        version: 0.4.1(graphql@16.14.2)
+        specifier: 0.5.0
+        version: 0.5.0(graphql@16.15.0)
       '@leaven-graphql/errors':
-        specifier: 0.3.0
-        version: 0.3.0(graphql@16.14.2)
+        specifier: 0.4.0
+        version: 0.4.0(graphql@16.15.0)
       '@leaven-graphql/playground':
         specifier: 0.2.2
         version: 0.2.2
       '@leaven-graphql/sse':
-        specifier: 0.4.1
-        version: 0.4.1(graphql@16.14.2)
+        specifier: 0.5.0
+        version: 0.5.0(graphql@16.15.0)
       '@leaven-graphql/ws':
-        specifier: 0.3.2
-        version: 0.3.2(graphql@16.14.2)
+        specifier: 0.4.0
+        version: 0.4.0(graphql@16.15.0)
       '@standard-schema/spec':
         specifier: ^1.1.0
         version: 1.1.0
@@ -360,8 +360,8 @@ importers:
         specifier: workspace:^
         version: link:../testing
       graphql:
-        specifier: ^16.14.2
-        version: 16.14.2
+        specifier: ^16.15.0
+        version: 16.15.0
 
   packages/http:
     dependencies:
@@ -480,8 +480,8 @@ importers:
   site:
     devDependencies:
       '@casl/ability':
-        specifier: 7.0.2
-        version: 7.0.2
+        specifier: 7.1.2
+        version: 7.1.2
       '@fontsource-variable/geist':
         specifier: 5.3.0
         version: 5.3.0
@@ -558,8 +558,8 @@ importers:
         specifier: ^1.8.0
         version: 1.8.0(valibot@1.5.0(typescript@6.0.3))
       graphql:
-        specifier: ^16.14.2
-        version: 16.14.2
+        specifier: ^16.15.0
+        version: 16.15.0
       marked:
         specifier: ^18.1.1
         version: 18.1.1
@@ -647,8 +647,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@casl/ability@7.0.2':
-    resolution: {integrity: sha512-NOYbLTaw080a1Na4CpBtyGpL+i9NZhtGGt/tPrrNpLEv8EawFusHZCgc58ewyPBiZ0NER0iudB0et+IP8xJbLg==}
+  '@casl/ability@7.1.2':
+    resolution: {integrity: sha512-7Bnd893os1JQ15U2hUUqFCQyT3HrREmroMaAPCdLkliitLpYi+GY4cyf/1q92IeWLxK0FxECVAMjELX86kxPtA==}
 
   '@changesets/apply-release-plan@8.1.1':
     resolution: {integrity: sha512-nk2Hbq3M9NeHMdaIRBDvawKrQJzXB9sGyBUE5yWnIKtvdcNCPj75zBekJYr0gTT2ecJH3eFeTrc8eisPImcv0Q==}
@@ -774,31 +774,31 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
-  '@leaven-graphql/context@0.2.1':
-    resolution: {integrity: sha512-QUyIFbMS8s7BAWj56eN+AumuRkQ+gS7JBZ6RNk1iS6S1zBGmFnw1bzwqxc0x4pu1KRSVGUX3P1wbXEe9DOcDdg==}
+  '@leaven-graphql/context@0.2.2':
+    resolution: {integrity: sha512-7eponIaym9K2YI5ne1kWSac/0FIo2D7yOcRYeovpve5by/csA8f9f41S8E3vPtygeA50JmrK2B0gwOfU4ENaZA==}
 
-  '@leaven-graphql/core@0.4.1':
-    resolution: {integrity: sha512-lfGzhPNMWbG130Lq4tsUBjsZaMij3Dr0LXoKYRRoI4h9rIhRupA30jMQT0P/dIVLxJjFpxUCxlb8rIUPgpcaYg==}
+  '@leaven-graphql/core@0.5.0':
+    resolution: {integrity: sha512-IQTsqttSBG1AlWqMhiMY7NijlsZ8jk44KswxvmiMxbsE1LnoeDEyZmry54GFmlWEz4glPBwhDe7vrgHwT1CbUg==}
     peerDependencies:
-      graphql: ^16.0.0
+      graphql: ^16.0.0 || ^17.0.0
 
-  '@leaven-graphql/errors@0.3.0':
-    resolution: {integrity: sha512-1AMUNMeLGvzC6e/NdR9fPqkg1FSseYHp/Q6halFs4Q5Fw7X4y5JjlDkeAU/k+fotvqLrWbhkzn+9XTBsluZINw==}
+  '@leaven-graphql/errors@0.4.0':
+    resolution: {integrity: sha512-KfmaWwRHJxuHhayoHPsjF66nXHWbkjFfmaMh03iHsffyswQGaZrdc6xXtj0xpwDYvtEw6S7fA3Sg/XZPn3KYWw==}
     peerDependencies:
-      graphql: ^16.0.0
+      graphql: ^16.0.0 || ^17.0.0
 
   '@leaven-graphql/playground@0.2.2':
     resolution: {integrity: sha512-1cEIxqpMX7KpTWcsg9dfh+t0cJocwAcw+ZcFXqJsSBtTkTel60qZAJmKfIymlZOhdXhJIhWKlF0F9LPDLzBpIQ==}
 
-  '@leaven-graphql/sse@0.4.1':
-    resolution: {integrity: sha512-Nkg2NzAzwt+pByk1sOpINV1a69+GGXqYAlHFiD3NYZSPgsd+0S+S8+ShKUOsc6AbY90n5pLDOrMmKlPbNryvUQ==}
+  '@leaven-graphql/sse@0.5.0':
+    resolution: {integrity: sha512-fLhZR3qrTn1Z2QL9dBuf1KWME3I2Dm6BGbz1o5gNmnQdyZP/uQsWYtTuhcYfuXXJnb0OZ6eTlYDFLO0iPCClZg==}
     peerDependencies:
-      graphql: ^16.0.0
+      graphql: ^16.0.0 || ^17.0.0
 
-  '@leaven-graphql/ws@0.3.2':
-    resolution: {integrity: sha512-Z5e9bnZp0K86AzkgalCd4fn1tEUYs4r62QpXIYgRG22nYuMxaUXB4gSnBAjyMRxhQ6gPIPFc2Lyz9EArsh4RSQ==}
+  '@leaven-graphql/ws@0.4.0':
+    resolution: {integrity: sha512-zi3yP60xC3rucTCoJZsQWBc5wsMHPjud8LLU6SLDiC+EVv7DpecBcqjfuPxNH/D1xgBQL5d7Wx4Gp/kbIt3KrA==}
     peerDependencies:
-      graphql: ^16.0.0
+      graphql: ^16.0.0 || ^17.0.0
 
   '@manypkg/find-root@3.1.0':
     resolution: {integrity: sha512-BcSqCyKhBVZ5YkSzOiheMCV41kqAFptW6xGqYSTjkVTl9XQpr+pqHhwgGCOHQtjDCv7Is6EFyA14Sm5GVbVABA==}
@@ -1669,8 +1669,8 @@ packages:
   graphmatch@1.1.1:
     resolution: {integrity: sha512-5ykVn/EXM1hF0XCaWh05VbYvEiOL2lY1kBxZtaYsyvjp7cmWOU1XsAdfQBwClraEofXDT197lFbXOEVMHpvQOg==}
 
-  graphql@16.14.2:
-    resolution: {integrity: sha512-Chq1s4CY7jmh8gO2qvLIJyfCDIN+EHLFW/9iShnp1z8FjBQMoodWP1kDC36VAMXXIvAjj4ARa7ntfAV2BrjsbA==}
+  graphql@16.15.0:
+    resolution: {integrity: sha512-32kz9FecohDiC/tgcViwnRXM7HFBVTPiW7pHO+DikKOI5KjhU/jNULOReXsrFqt2WAYbE9xFXsTffJw6iTO8qw==}
     engines: {node: ^12.22.0 || ^14.16.0 || ^16.0.0 || >=17.0.0}
 
   hast-util-to-html@9.0.5:
@@ -2321,7 +2321,7 @@ snapshots:
   '@biomejs/cli-win32-x64@2.5.15':
     optional: true
 
-  '@casl/ability@7.0.2':
+  '@casl/ability@7.1.2':
     dependencies:
       '@ucast/mongo2js': 2.0.0
 
@@ -2490,31 +2490,31 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.6.0
 
-  '@leaven-graphql/context@0.2.1': {}
+  '@leaven-graphql/context@0.2.2': {}
 
-  '@leaven-graphql/core@0.4.1(graphql@16.14.2)':
+  '@leaven-graphql/core@0.5.0(graphql@16.15.0)':
     dependencies:
-      '@leaven-graphql/errors': 0.3.0(graphql@16.14.2)
-      graphql: 16.14.2
+      '@leaven-graphql/errors': 0.4.0(graphql@16.15.0)
+      graphql: 16.15.0
 
-  '@leaven-graphql/errors@0.3.0(graphql@16.14.2)':
+  '@leaven-graphql/errors@0.4.0(graphql@16.15.0)':
     dependencies:
-      graphql: 16.14.2
+      graphql: 16.15.0
 
   '@leaven-graphql/playground@0.2.2': {}
 
-  '@leaven-graphql/sse@0.4.1(graphql@16.14.2)':
+  '@leaven-graphql/sse@0.5.0(graphql@16.15.0)':
     dependencies:
-      '@leaven-graphql/core': 0.4.1(graphql@16.14.2)
-      '@leaven-graphql/errors': 0.3.0(graphql@16.14.2)
-      graphql: 16.14.2
+      '@leaven-graphql/core': 0.5.0(graphql@16.15.0)
+      '@leaven-graphql/errors': 0.4.0(graphql@16.15.0)
+      graphql: 16.15.0
 
-  '@leaven-graphql/ws@0.3.2(graphql@16.14.2)':
+  '@leaven-graphql/ws@0.4.0(graphql@16.15.0)':
     dependencies:
-      '@leaven-graphql/context': 0.2.1
-      '@leaven-graphql/core': 0.4.1(graphql@16.14.2)
-      '@leaven-graphql/errors': 0.3.0(graphql@16.14.2)
-      graphql: 16.14.2
+      '@leaven-graphql/context': 0.2.2
+      '@leaven-graphql/core': 0.5.0(graphql@16.15.0)
+      '@leaven-graphql/errors': 0.4.0(graphql@16.15.0)
+      graphql: 16.15.0
 
   '@manypkg/find-root@3.1.0':
     dependencies:
@@ -3336,7 +3336,7 @@ snapshots:
 
   graphmatch@1.1.1: {}
 
-  graphql@16.14.2: {}
+  graphql@16.15.0: {}
 
   hast-util-to-html@9.0.5:
     dependencies:
