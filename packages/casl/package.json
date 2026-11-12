@@ -48,7 +48,7 @@
     "prepack": "bun ../../scripts/copy-licenses.ts"
   },
   "dependencies": {
-    "@casl/ability": "7.0.2"
+    "@casl/ability": "7.1.2"
   },
   "peerDependencies": {
     "@knead-js/core": "workspace:^",
@@ -65,7 +65,7 @@
     "@knead-js/graphql": "workspace:^",
     "@knead-js/http": "workspace:^",
     "@knead-js/testing": "workspace:^",
-    "graphql": "^16.14.2"
+    "graphql": "^16.15.0"
   },
   "publishConfig": {
     "access": "public",
